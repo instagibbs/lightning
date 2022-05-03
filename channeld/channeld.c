@@ -149,6 +149,8 @@ struct peer {
 	bool stfu_sent[NUM_SIDES];
 	/* Updates master asked, which we've deferred while quiescing */
 	struct msg_queue *update_queue;
+	/* Is it our turn to propose htlc updates? */
+	bool our_turn;
 #endif
 
 #if DEVELOPER
@@ -3277,6 +3279,11 @@ static void handle_offer_htlc(struct peer *peer, const u8 *inmsg)
 	struct amount_sat htlc_fee;
 	struct pubkey *blinding;
 
+    if (!peer->our_turn) {
+        status_failed(STATUS_FAIL_MASTER_IO,
+            "we are proposing out of turn");
+    }
+
 	if (!peer->funding_locked[LOCAL] || !peer->funding_locked[REMOTE])
 		status_failed(STATUS_FAIL_MASTER_IO,
 			      "funding not locked for offer_htlc");
@@ -3973,6 +3980,7 @@ int main(int argc, char *argv[])
 	peer->stfu = false;
 	peer->stfu_sent[LOCAL] = peer->stfu_sent[REMOTE] = false;
 	peer->update_queue = msg_queue_new(peer, false);
+    peer->our_turn = true; /* async updates */
 #endif
 
 	/* We send these to HSM to get real signatures; don't have valgrind
