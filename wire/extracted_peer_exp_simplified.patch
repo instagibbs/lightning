@@ -1,0 +1,14 @@
+--- a/wire/peer_wire.csv
++++ b/wire/peer_wire.csv
+@@ -204,6 +204,10 @@ msgdata,closing_signed,tlvs,closing_signed_tlvs,
+ tlvtype,closing_signed_tlvs,fee_range,1
+ tlvdata,closing_signed_tlvs,fee_range,min_fee_satoshis,u64,
+ tlvdata,closing_signed_tlvs,fee_range,max_fee_satoshis,u64,
++msgtype,update_noop,129,option_simplified_update
++msgdata,update_noop,channel_id,channel_id,
++msgtype,yield,138,option_simplified_update
++msgdata,yield,channel_id,channel_id,
+ msgtype,update_add_htlc,128
+ msgdata,update_add_htlc,channel_id,channel_id,
+ msgdata,update_add_htlc,id,u64,
+

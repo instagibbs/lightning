@@ -1297,6 +1297,8 @@ static u8 *opening_negotiate_msg(const tal_t *ctx, struct state *state)
 		case WIRE_PONG:
 #if EXPERIMENTAL_FEATURES
 		case WIRE_STFU:
+        case WIRE_YIELD:
+        case WIRE_UPDATE_NOOP:
 #endif
 			break;
 		}
@@ -1640,6 +1642,8 @@ static bool run_tx_interactive(struct state *state,
 		case WIRE_PONG:
 #if EXPERIMENTAL_FEATURES
 		case WIRE_STFU:
+        case WIRE_YIELD:
+        case WIRE_UPDATE_NOOP:
 #endif
 			open_err_warn(state, "Unexpected wire message %s",
 				      tal_hex(tmpctx, msg));
@@ -3764,6 +3768,8 @@ static u8 *handle_peer_in(struct state *state)
 	case WIRE_PONG:
 #if EXPERIMENTAL_FEATURES
 	case WIRE_STFU:
+    case WIRE_YIELD:
+    case WIRE_UPDATE_NOOP:
 #endif
 		break;
 	}

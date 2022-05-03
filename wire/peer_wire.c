@@ -49,6 +49,8 @@ static bool unknown_type(enum peer_wire t)
 	case WIRE_ACK_RBF:
 #if EXPERIMENTAL_FEATURES
 	case WIRE_STFU:
+    case WIRE_YIELD:
+    case WIRE_UPDATE_NOOP:
 #endif
 		return false;
 	}
@@ -103,6 +105,8 @@ bool is_msg_for_gossipd(const u8 *cursor)
 	case WIRE_ONION_MESSAGE:
 #if EXPERIMENTAL_FEATURES
 	case WIRE_STFU:
+    case WIRE_YIELD:
+    case WIRE_UPDATE_NOOP:
 #endif
 		break;
 	}
@@ -157,6 +161,8 @@ bool is_msg_gossip_broadcast(const u8 *cursor)
 	case WIRE_ACK_RBF:
 #if EXPERIMENTAL_FEATURES
 	case WIRE_STFU:
+    case WIRE_YIELD:
+    case WIRE_UPDATE_NOOP:
 #endif
 		break;
 	}
@@ -396,6 +402,18 @@ bool extract_channel_id(const u8 *in_pkt, struct channel_id *channel_id)
 	case WIRE_STFU:
 		/* BOLT-quiescent #2:
 		 * 1. type: 2 (`stfu`)
+		 * 2. data:
+		 *     * [`channel_id`:`channel_id`]
+		 */
+    case WIRE_YIELD:
+		/* BOLT-simplified #2:
+		 * 1. type: 2 (`yield`)
+		 * 2. data:
+		 *     * [`channel_id`:`channel_id`]
+		 */
+    case WIRE_UPDATE_NOOP:
+		/* BOLT-simplified #2:
+		 * 1. type: 2 (`update_noop`)
 		 * 2. data:
 		 *     * [`channel_id`:`channel_id`]
 		 */

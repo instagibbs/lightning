@@ -283,6 +283,8 @@ static bool is_urgent(enum peer_wire type)
 	case WIRE_ONION_MESSAGE:
 #if EXPERIMENTAL_FEATURES
 	case WIRE_STFU:
+    case WIRE_YIELD:
+    case WIRE_UPDATE_NOOP:
 #endif
 		return false;
 
