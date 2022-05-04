@@ -3980,7 +3980,14 @@ int main(int argc, char *argv[])
 	peer->stfu = false;
 	peer->stfu_sent[LOCAL] = peer->stfu_sent[REMOTE] = false;
 	peer->update_queue = msg_queue_new(peer, false);
+    /* FIXME init value with key sorting IFF negotiated */
     peer->our_turn = true; /* async updates */
+    if (negotiated_simplified_channel(peer->our_features, peer->their_features)) {
+        /* FIXME figure out the sides... first arg should be "us" */
+        key_order = node_id_cmp(&(peer->node_ids[0]), &(peer->node_ids[0]));
+        assert(key_order != 0);
+        peer->our_turn = key_order < 0 ? true : false;
+    }
 #endif
 
 	/* We send these to HSM to get real signatures; don't have valgrind
@@ -4016,6 +4023,8 @@ int main(int argc, char *argv[])
 
 		/* Free any temporary allocations */
 		clean_tmpctx();
+
+        /* FIXME Anything to dequeue from stfu/simplified_update? */
 
 		/* For simplicity, we process one event at a time. */
 		msg = msg_dequeue(peer->from_master);
