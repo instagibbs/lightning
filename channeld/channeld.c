@@ -147,7 +147,7 @@ struct peer {
 	enum side stfu_initiator;
 	/* Has stfu been sent by each side? */
 	bool stfu_sent[NUM_SIDES];
-	/* Updates master asked, which we've deferred while quiescing */
+	/* Updates master asked, which we've deferred while quiescing or waiting for our turn */
 	struct msg_queue *update_queue;
 	/* Is it our turn to propose htlc updates? */
 	bool our_turn;
@@ -298,7 +298,9 @@ static void handle_stfu(struct peer *peer, const u8 *stfu)
 /* Returns true if we queued this for later handling (steals if true) */
 static bool handle_master_request_later(struct peer *peer, const u8 *msg)
 {
-	if (peer->stfu) {
+    /* We can propose updates out of turn provided we can back out the
+        changes if we don't receive a yield message from our peer */
+	if (peer->stfu || !peer->our_turn) {
 		msg_enqueue(peer->update_queue, take(msg));
 		return true;
 	}
@@ -3281,13 +3283,6 @@ static void handle_offer_htlc(struct peer *peer, const u8 *inmsg)
 	const char *failstr;
 	struct amount_sat htlc_fee;
 	struct pubkey *blinding;
-
-    /* We need to queue this? */
-    if (!peer->our_turn) {
-        /* status_failed(STATUS_FAIL_MASTER_IO,
-            "we are proposing out of turn"); */
-        /* FIXME */
-    }
 
 	if (!peer->funding_locked[LOCAL] || !peer->funding_locked[REMOTE])
 		status_failed(STATUS_FAIL_MASTER_IO,
