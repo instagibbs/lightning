@@ -208,10 +208,8 @@ static u8 *opening_negotiate_msg(const tal_t *ctx, struct state *state,
 			return NULL;
 		}
 
-		/*~ We do not support multiple "live" channels, though the
-		 * protocol has a "channel_id" field in all non-gossip messages
-		 * so it's possible.  Our one-process-one-channel mechanism
-		 * keeps things simple: if we wanted to change this, we would
+		/*~ We do not support multiple "live" channels per daemon, rather
+		 * Our one-process-one-channel mechanism keeps things simple:
 		 * probably be best with another daemon to de-multiplex them;
 		 * this could be connectd itself, in fact. */
 		if (is_wrong_channel(msg, &state->channel_id, &actual)

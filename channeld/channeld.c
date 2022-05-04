@@ -1553,6 +1553,9 @@ static void send_revocation(struct peer *peer,
 
 	/* Now we can finally send revoke_and_ack to peer */
 	peer_write(peer->pps, take(msg));
+
+    /* Our turn is over uncondtiionally when we send our revocation */
+    peer->our_turn = false;
 }
 
 static void handle_peer_commit_sig(struct peer *peer, const u8 *msg)
@@ -3279,9 +3282,11 @@ static void handle_offer_htlc(struct peer *peer, const u8 *inmsg)
 	struct amount_sat htlc_fee;
 	struct pubkey *blinding;
 
+    /* We need to queue this? */
     if (!peer->our_turn) {
-        status_failed(STATUS_FAIL_MASTER_IO,
-            "we are proposing out of turn");
+        /* status_failed(STATUS_FAIL_MASTER_IO,
+            "we are proposing out of turn"); */
+        /* FIXME */
     }
 
 	if (!peer->funding_locked[LOCAL] || !peer->funding_locked[REMOTE])

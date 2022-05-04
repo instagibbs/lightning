@@ -147,4 +147,6 @@ const char *fmt_featurebits(const tal_t *ctx, const u8 *featurebits);
 
 #define OPT_SHUTDOWN_WRONG_FUNDING		104
 
+#define OPT_SIMPLIFIED_UPDATE 106
+
 #endif /* LIGHTNING_COMMON_FEATURES_H */

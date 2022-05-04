@@ -1016,6 +1016,14 @@ static char *opt_set_offers(struct lightningd *ld)
 	return opt_set_onion_messages(ld);
 }
 
+static char *opt_set_simplified_update(struct lightningd *ld)
+{
+	feature_set_or(ld->our_features,
+		       take(feature_set_for_feature(NULL,
+						    OPTIONAL_FEATURE(OPT_SIMPLIFIED_UPDATE))));
+	return NULL;
+}
+
 static void register_opts(struct lightningd *ld)
 {
 	/* This happens before plugins started */
@@ -1068,6 +1076,11 @@ static void register_opts(struct lightningd *ld)
 				 opt_set_onion_messages, ld,
 				 "EXPERIMENTAL: enable send, receive and relay"
 				 " of onion messages");
+	/* This affects our features, so set early. */
+	opt_register_early_noarg("--experimental-simplified-updates",
+				 opt_set_simplified_update, ld,
+				 "EXPERIMENTAL: use simplified update scheme"
+				 " for commitment transaction updating");
 	opt_register_early_noarg("--experimental-offers",
 				 opt_set_offers, ld,
 				 "EXPERIMENTAL: enable send and receive of offers"
