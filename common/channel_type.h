@@ -35,4 +35,8 @@ struct channel_type *channel_type_accept(const tal_t *ctx,
 					 const u8 *t,
 					 const struct feature_set *our_features,
 					 const u8 *their_features);
+
+/* Return whether simplified updates was negotiated or not */
+bool negotiated_simplified_channel(const struct feature_set *our_features,
+                      const u8 *their_features);
 #endif /* LIGHTNING_COMMON_CHANNEL_TYPE_H */

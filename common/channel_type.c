@@ -76,6 +76,18 @@ struct channel_type *default_channel_type(const tal_t *ctx,
 		return channel_type_none(ctx);
 }
 
+bool negotiated_simplified_channel(const struct feature_set *our_features,
+					  const u8 *their_features)
+{
+	/* BOLT #2:
+     * If `option_simplified_update` is negotiated, a subset of the previous
+     * protocol is used, where each side takes turns to propose updates,
+     * which are synchronized before the other side has a turn
+	 */
+	return (feature_negotiated(our_features, their_features,
+			       OPT_SIMPLIFIED_UPDATE));
+}
+
 bool channel_type_has(const struct channel_type *type, int feature)
 {
 	return feature_offered(type->features, feature);
