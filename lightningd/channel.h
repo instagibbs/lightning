@@ -222,6 +222,9 @@ struct channel {
 	/* Any commands trying to forget us. */
 	struct command **forgets;
 
+    /* Was this negotiated with option_simplified_update? */
+    bool option_simplified_update;
+
 	/* Our position in the round-robin list.  */
 	u64 rr_number;
 
@@ -319,7 +322,8 @@ struct channel *new_channel(struct peer *peer, u64 dbid,
 			    u32 lease_chan_max_msat,
 			    u16 lease_chan_max_ppt,
 			    struct amount_msat htlc_minimum_msat,
-			    struct amount_msat htlc_maximum_msat);
+			    struct amount_msat htlc_maximum_msat,
+                bool option_simplified_update);
 
 /* new_inflight - Create a new channel_inflight for a channel */
 struct channel_inflight *

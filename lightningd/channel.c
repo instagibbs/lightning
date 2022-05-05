@@ -393,7 +393,8 @@ struct channel *new_channel(struct peer *peer, u64 dbid,
 			    u32 lease_chan_max_msat,
 			    u16 lease_chan_max_ppt,
 			    struct amount_msat htlc_minimum_msat,
-			    struct amount_msat htlc_maximum_msat)
+			    struct amount_msat htlc_maximum_msat,
+                bool option_simplified_update)
 {
 	struct channel *channel = tal(peer->ld, struct channel);
 	struct amount_msat htlc_min, htlc_max;
@@ -482,6 +483,7 @@ struct channel *new_channel(struct peer *peer, u64 dbid,
 		= tal_steal(channel, remote_upfront_shutdown_script);
 	channel->static_remotekey_start[LOCAL] = local_static_remotekey_start;
 	channel->static_remotekey_start[REMOTE] = remote_static_remotekey_start;
+    channel->option_simplified_update = option_simplified_update;
 	channel->type = tal_steal(channel, type);
 	channel->forgets = tal_arr(channel, struct command *, 0);
 

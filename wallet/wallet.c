@@ -1265,6 +1265,7 @@ static struct channel *wallet_stmt2channel(struct wallet *w, struct db_stmt *stm
 	struct amount_sat funding_sat, our_funding_sat;
 	struct amount_msat push_msat, our_msat, msat_to_us_min, msat_to_us_max, htlc_minimum_msat, htlc_maximum_msat;
 	struct channel_type *type;
+    int option_simplified_update;
 	secp256k1_ecdsa_signature *lease_commit_sig;
 	u32 lease_chan_max_msat;
 	u16 lease_chan_max_ppt;
@@ -1405,6 +1406,7 @@ static struct channel *wallet_stmt2channel(struct wallet *w, struct db_stmt *stm
 	db_col_amount_msat(stmt, "msatoshi_to_us_max", &msat_to_us_max);
 	db_col_amount_msat(stmt, "htlc_minimum_msat", &htlc_minimum_msat);
 	db_col_amount_msat(stmt, "htlc_maximum_msat", &htlc_maximum_msat);
+	option_simplified_update = db_col_int_or_default(stmt, "option_simplified_update", 0);
 
 	if (!db_col_is_null(stmt, "lease_commit_sig")) {
 		lease_commit_sig = tal(w, secp256k1_ecdsa_signature);
@@ -1482,7 +1484,8 @@ static struct channel *wallet_stmt2channel(struct wallet *w, struct db_stmt *stm
 			   lease_chan_max_msat,
 			   lease_chan_max_ppt,
 			   htlc_minimum_msat,
-			   htlc_maximum_msat);
+			   htlc_maximum_msat,
+               option_simplified_update > 0);
 
 	if (!wallet_channel_load_inflights(w, chan)) {
 		tal_free(chan);
@@ -1578,6 +1581,7 @@ static bool wallet_channels_load_active(struct wallet *w)
 					", lease_chan_max_ppt"
 					", htlc_minimum_msat"
 					", htlc_maximum_msat"
+                    ", option_simplified_update"
 					" FROM channels"
                                         " WHERE state != ?;")); //? 0
 	db_bind_int(stmt, 0, CLOSED);
@@ -1860,7 +1864,8 @@ void wallet_channel_save(struct wallet *w, struct channel *chan)
 					"  lease_chan_max_ppt=?," // 41
 					"  htlc_minimum_msat=?," // 42
 					"  htlc_maximum_msat=?" // 43
-					" WHERE id=?")); // 44
+                    "  option_simplified_update=?" // 44
+					" WHERE id=?")); // 45
 	db_bind_u64(stmt, 0, chan->their_shachain.id);
 	if (chan->scid)
 		db_bind_short_channel_id(stmt, 1, chan->scid);
@@ -1925,7 +1930,8 @@ void wallet_channel_save(struct wallet *w, struct channel *chan)
 	}
 	db_bind_amount_msat(stmt, 42, &chan->htlc_minimum_msat);
 	db_bind_amount_msat(stmt, 43, &chan->htlc_maximum_msat);
-	db_bind_u64(stmt, 44, chan->dbid);
+    db_bind_int(stmt, 44, chan->option_simplified_update);
+	db_bind_u64(stmt, 45, chan->dbid);
 	db_exec_prepared_v2(take(stmt));
 
 	wallet_channel_config_save(w, &chan->channel_info.their_config);

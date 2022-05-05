@@ -875,6 +875,10 @@ static struct migration dbmigrations[] = {
     {SQL("ALTER TABLE forwarded_payments ADD forward_style INTEGER DEFAULT NULL"), NULL},
     /* "description" is used for label, so we use "paydescription" here */
     {SQL("ALTER TABLE payments ADD paydescription TEXT;"), NULL},
+    /* option_simplified_update. */
+    {SQL("ALTER TABLE channels ADD COLUMN option_simplified_update INTEGER"
+     " DEFAULT 0;"),
+     NULL },
 };
 
 /**

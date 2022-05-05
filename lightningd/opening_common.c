@@ -73,6 +73,9 @@ new_uncommitted_channel(struct peer *peer)
 
 	uc->got_offer = false;
 	uc->open_daemon = NULL;
+    uc->option_simplified_update = feature_negotiated(ld->our_features,
+                                peer->their_features,
+                                OPT_SIMPLIFIED_UPDATE);
 
 	return uc;
 }
