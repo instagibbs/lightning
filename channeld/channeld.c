@@ -147,10 +147,14 @@ struct peer {
 	enum side stfu_initiator;
 	/* Has stfu been sent by each side? */
 	bool stfu_sent[NUM_SIDES];
-	/* Updates master asked, which we've deferred while quiescing or waiting for our turn */
+	/* Updates master asked, which we've deferred while quiescing */
 	struct msg_queue *update_queue;
-	/* Is it our turn to propose htlc updates? */
-	bool our_turn;
+    /* Are we using option_simplified_update for this channel? */
+    bool option_simplified_update;
+    /* Who's turn is it? */
+    enum side turn;
+    /* Can we yield? */
+    bool can_yield;
 #endif
 
 #if DEVELOPER
@@ -295,15 +299,39 @@ static void handle_stfu(struct peer *peer, const u8 *stfu)
 	maybe_send_stfu(peer);
 }
 
+static void change_turn(struct peer *peer, enum side turn)
+{
+    assert(peer->turn == !turn);
+    peer->turn = turn;
+    peer->can_yield = true;
+    status_debug("turn is now %s", side_to_str(turn));
+}
+
+static bool is_our_turn(const struct peer *peer)
+{
+    if (!peer->option_simplified_update)
+        return true;
+    return peer->turn == LOCAL;
+}
+
 /* Returns true if we queued this for later handling (steals if true) */
 static bool handle_master_request_later(struct peer *peer, const u8 *msg)
 {
-    /* We can propose updates out of turn provided we can back out the
-        changes if we don't receive a yield message from our peer */
-	if (peer->stfu || !peer->our_turn) {
+	if (peer->stfu) {
+        status_debug("queueing master update for later...");
 		msg_enqueue(peer->update_queue, take(msg));
 		return true;
-	}
+	} else if (!is_our_turn(peer)) {
+        /* We use a noop update to request they yield once,
+        then only queue up later messages while waiting. */
+        if (msg_queue_length(peer->update_queue) == 0) {
+            u8 *noop = towire_update_noop(NULL, &peer->channel_id);
+            peer_write(peer->pps, take(noop));
+        }
+        status_debug("queueing master update for later turn...");
+        msg_enqueue(peer->update_queue, take(msg));
+        return true;
+    }
 	return false;
 }
 
@@ -336,6 +364,78 @@ static void set_channel_type(struct channel *channel, const u8 *type)
 	wire_sync_write(MASTER_FD,
 			take(towire_channeld_upgraded(NULL, channel->type)));
 }
+
+static bool allow_their_turn(struct peer *peer)
+{
+    /* BOLT-option_simplified_update #2:
+     *
+     * - During this node's turn:
+     *     - if it receives an update message:
+     *       - if it has sent its own update:
+     *         - MUST ignore the message
+     *       - otherwise:
+     *         - MUST reply with `yield` and process the message.
+     */
+    if (peer->turn == REMOTE)
+        return true;
+
+    if (peer->turn == LOCAL && peer->can_yield) {
+        peer_write(peer->pps,
+                  take(towire_yield(NULL,
+                            &peer->channel_id)));
+        /* BOLT-option_simplified_update #2:
+         *  - MUST give up its turn when:
+         *...
+         *    - sending a `yield`
+         */
+        change_turn(peer, REMOTE);
+        return true;
+    }
+
+    /* Sorry, we've already sent updates. */
+    status_debug("Sorry, ignoring your message");
+    return false;
+}
+
+static void handle_yield(struct peer *peer, const u8 *yield)
+{
+    struct channel_id channel_id;
+
+    if (!fromwire_yield(yield, &channel_id))
+        peer_failed_warn(peer->pps, &peer->channel_id,
+                 "Bad yield %s", tal_hex(peer, yield));
+
+    /* is this lightningd's fault? */
+    if (!channel_id_eq(&channel_id, &peer->channel_id)) {
+        peer_failed_err(peer->pps, &channel_id,
+                "Wrong yield channel_id: expected %s, got %s",
+                type_to_string(tmpctx, struct channel_id,
+                           &peer->channel_id),
+                type_to_string(tmpctx, struct channel_id,
+                           &channel_id));
+    }
+
+    if (!peer->option_simplified_update) {
+        peer_failed_err(peer->pps, &channel_id,
+                "yield without option_simplified_update!");
+    }
+
+    /* Sanity check; change_turn assumes this has been caught */
+    if (is_our_turn(peer)) {
+        peer_failed_err(peer->pps, &channel_id,
+                "yield when it's not your turn!");
+    }
+
+    /* BOLT-option_simplified_update #2:
+     * - MUST accept its turn when:
+     *     - receiving `revoke_and_ack`
+     *     - receiving a `yield`
+     */
+    change_turn(peer, LOCAL);
+
+    /* That will unplug the dequeue from update_queue */
+}
+
 #else /* !EXPERIMENTAL_FEATURES */
 static bool handle_master_request_later(struct peer *peer, const u8 *msg)
 {
@@ -343,6 +443,20 @@ static bool handle_master_request_later(struct peer *peer, const u8 *msg)
 }
 
 static void maybe_send_stfu(struct peer *peer)
+{
+}
+
+static bool allow_their_turn(struct peer *peer UNUSED)
+{
+    return true;
+}
+
+static bool is_our_turn(struct peer *peer UNUSED)
+{
+    return true;
+}
+
+static void change_turn(struct peer *peer UNUSED, enum side turn UNUSED)
 {
 }
 #endif
@@ -1243,8 +1357,8 @@ static void send_commit(struct peer *peer)
 		return;
 	}
 
-	/* If we wanted to update fees, do it now. */
-	if (want_fee_update(peer, &feerate_target)) {
+	/* If we wanted to update fees, do it now. FIXME cannot mix fee updates and htlc related */
+	if (want_fee_update(peer, &feerate_target) && is_our_turn(peer)) {
 		/* FIXME: We occasionally desynchronize with LND here, so
 		 * don't stress things by having more than one feerate change
 		 * in-flight! */
@@ -1282,6 +1396,10 @@ static void send_commit(struct peer *peer)
 			msg = towire_update_fee(NULL, &peer->channel_id,
 						feerate_target);
 			peer_write(peer->pps, take(msg));
+#if EXPERIMENTAL_FEATURES
+            /* We can not yield after submiting an update on our turn */
+            peer->can_yield = false;
+#endif
 		}
 	}
 
@@ -1556,8 +1674,12 @@ static void send_revocation(struct peer *peer,
 	/* Now we can finally send revoke_and_ack to peer */
 	peer_write(peer->pps, take(msg));
 
-    /* Our turn is over uncondtiionally when we send our revocation */
-    peer->our_turn = false;
+    /* BOLT-option_simplified_update #2:
+     *  - MUST give up its turn when:
+     *    - sending `revoke_and_ack` and it was already its turn.
+     */
+    if (is_our_turn(peer))
+        change_turn(peer, REMOTE);
 }
 
 static void handle_peer_commit_sig(struct peer *peer, const u8 *msg)
@@ -1870,6 +1992,14 @@ static void handle_peer_revoke_and_ack(struct peer *peer, const u8 *msg)
 
 	/* We may now be quiescent on our side. */
 	maybe_send_stfu(peer);
+
+    /* BOLT-option_simplified_update #2:
+     *  - MUST accept its turn when:
+     *    - receiving `revoke_and_ack` and it was not its turn.
+     */
+    if (!is_our_turn(peer)) {
+        change_turn(peer, LOCAL);
+    }
 
 	start_commit_timer(peer);
 }
@@ -2191,6 +2321,24 @@ static void handle_unexpected_reestablish(struct peer *peer, const u8 *msg)
 				       &channel_id));
 }
 
+/* Detects whether or not this is a message peer should
+    be sending during quiescence periods or when it
+    is not our their to be sending these updates. */
+static bool modifies_commit_tx(enum peer_wire type)
+{
+    switch (type) {
+    case WIRE_UPDATE_ADD_HTLC:
+    case WIRE_UPDATE_FEE:
+    case WIRE_UPDATE_FULFILL_HTLC:
+    case WIRE_UPDATE_FAIL_HTLC:
+    case WIRE_UPDATE_FAIL_MALFORMED_HTLC:
+    case WIRE_UPDATE_NOOP:
+        return true;
+    default:
+        return false;
+    };
+}
+
 static void peer_in(struct peer *peer, const u8 *msg)
 {
 	enum peer_wire type = fromwire_peektype(msg);
@@ -2212,6 +2360,13 @@ static void peer_in(struct peer *peer, const u8 *msg)
 					 peer_wire_name(type), type);
 		}
 	}
+
+    /* Early return from messages we will not service.
+        This will send off a yield message as
+        appropriate if we will, even when it's our turn. */
+    if (modifies_commit_tx(type) && !allow_their_turn(peer)) {
+        return;
+    }
 
 	switch (type) {
 	case WIRE_FUNDING_LOCKED:
@@ -2253,10 +2408,13 @@ static void peer_in(struct peer *peer, const u8 *msg)
 		handle_stfu(peer, msg);
 		return;
     case WIRE_UPDATE_NOOP:
+        /* If we gotten this far, we have given over control already */
+        assert(!is_our_turn(peer));
 		return;
     /* Currently unhandled */
     case WIRE_YIELD:
-        break;
+        handle_yield(peer, msg);
+        return;
 #endif
 	case WIRE_INIT:
 	case WIRE_OPEN_CHANNEL:
@@ -3958,7 +4116,7 @@ int main(int argc, char *argv[])
 {
 	setup_locale();
 
-	int i, nfds, key_order;
+	int i, nfds;
 	fd_set fds_in, fds_out;
 	struct peer *peer;
 
@@ -3981,14 +4139,13 @@ int main(int argc, char *argv[])
 	peer->stfu = false;
 	peer->stfu_sent[LOCAL] = peer->stfu_sent[REMOTE] = false;
 	peer->update_queue = msg_queue_new(peer, false);
-    /* FIXME init value with key sorting IFF negotiated */
-    peer->our_turn = true; /* async updates */
+    /* FIXME init value with key sorting IFF negotiated
+    peer->our_turn = true;
     if (negotiated_simplified_channel(peer->our_features, peer->their_features)) {
-        /* FIXME figure out the sides... first arg should be "us" */
         key_order = node_id_cmp(&(peer->node_ids[0]), &(peer->node_ids[0]));
         assert(key_order != 0);
         peer->our_turn = key_order < 0 ? true : false;
-    }
+    }*/
 #endif
 
 	/* We send these to HSM to get real signatures; don't have valgrind
