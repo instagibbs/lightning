@@ -3958,7 +3958,7 @@ int main(int argc, char *argv[])
 {
 	setup_locale();
 
-	int i, nfds;
+	int i, nfds, key_order;
 	fd_set fds_in, fds_out;
 	struct peer *peer;
 
