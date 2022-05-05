@@ -2252,10 +2252,11 @@ static void peer_in(struct peer *peer, const u8 *msg)
 	case WIRE_STFU:
 		handle_stfu(peer, msg);
 		return;
+    case WIRE_UPDATE_NOOP:
+		return;
     /* Currently unhandled */
     case WIRE_YIELD:
-    case WIRE_UPDATE_NOOP:
-		abort();
+        break;
 #endif
 	case WIRE_INIT:
 	case WIRE_OPEN_CHANNEL:
