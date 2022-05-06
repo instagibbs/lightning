@@ -4142,8 +4142,8 @@ static void init_channel(struct peer *peer)
      *     lesser SEC1-encoded node_id.
      */
     peer->option_simplified_update = channel_type_has(channel_type, OPT_SIMPLIFIED_UPDATE);
-    peer->turn = peer->channel_direction == 0 ? LOCAL : REMOTE;
-    peer->can_yield = true;
+    peer->turn = peer->channel_direction == 0 ? LOCAL : REMOTE; /* may be changed in peer_reconnect logic */
+    peer->can_yield = true; /* We don't send updates out of turn so this is always true */
 #endif
 
 	/* OK, now we can process peer messages. */
