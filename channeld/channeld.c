@@ -2919,6 +2919,7 @@ static void peer_reconnect(struct peer *peer,
 	const u8 **premature_msgs = tal_arr(peer, const u8 *, 0);
 #if EXPERIMENTAL_FEATURES
 	struct tlv_channel_reestablish_tlvs *send_tlvs, *recv_tlvs;
+    bool remote_unfinished, local_unfinished;
 #endif
 
 	dataloss_protect = feature_negotiated(peer->our_features,
@@ -3391,6 +3392,33 @@ skip_tlvs:
 	/* We allow peer to send us tx-sigs, until funding locked received */
 	peer->tx_sigs_allowed = true;
 	peer_billboard(true, "Reconnected, and reestablished.");
+
+#if EXPERIMENTAL_FEATURES
+    /* BOLT #2:
+     *  - If a node sent `next_commitment_number` which exceeds its received
+     *   `next_revocation_number`, that node's turn is unfinished.
+     * - If exactly one node's turn is unfinished, it is their turn,
+     *   otherwise the turn starts with the peer with the lesser
+     *   SEC1-encoded node_id.
+     */
+    /* FIXME We don't sent out of turn transaction updates, so we simply have to figure
+     * out who's turn it is and continue like normal
+     */
+    if (peer->option_simplified_update) {
+        /*                  remote sent                   remote received */
+        remote_unfinished = next_commitment_number      > 99999999999; /* FIXME we need revocations SENT  */
+        /*                  we sent                       we receieved */
+        local_unfinished =  peer->next_index[REMOTE]    > next_revocation_number;
+        if (remote_unfinished == local_unfinished) {
+            /* Sorted lexigraphically by pubkey */
+            peer->turn = peer->channel_direction == 0 ? LOCAL : REMOTE;
+        } else if (remote_unfinished) {
+            peer->turn = REMOTE;
+        } else {
+            peer->turn = LOCAL;
+        }
+    }
+#endif
 
 	/* BOLT #2:
 	 *   - upon reconnection:
