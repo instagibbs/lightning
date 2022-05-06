@@ -153,7 +153,7 @@ struct peer {
     bool option_simplified_update;
     /* Who's turn is it? */
     enum side turn;
-    /* Can we yield? */
+    /* Can we yield? i.e. have we not yet sent updates during our turn? (or not our turn at all) */
     bool can_yield;
 #endif
 
@@ -314,6 +314,17 @@ static bool is_our_turn(const struct peer *peer)
     return peer->turn == LOCAL;
 }
 
+static bool can_send_update_fee(const struct peer *peer)
+{
+    if (peer->option_simplified_update) {
+        /* No mixing of updates, including multiple fee updates! */
+        /* FIXME are we supposed to allow any number of update_fees per turn? */
+        return peer->can_yield;
+    } else {
+        return true;
+    }
+}
+
 /* Returns true if we queued this for later handling (steals if true) */
 static bool handle_master_request_later(struct peer *peer, const u8 *msg)
 {
@@ -452,6 +463,11 @@ static bool allow_their_turn(struct peer *peer UNUSED)
 }
 
 static bool is_our_turn(struct peer *peer UNUSED)
+{
+    return true;
+}
+
+static bool can_send_update_fee(const struct peer *peer)
 {
     return true;
 }
@@ -1357,8 +1373,8 @@ static void send_commit(struct peer *peer)
 		return;
 	}
 
-	/* If we wanted to update fees, do it now. FIXME cannot mix fee updates and htlc related */
-	if (want_fee_update(peer, &feerate_target) && is_our_turn(peer)) {
+	/* If we wanted to update fees, do it now. */
+	if (want_fee_update(peer, &feerate_target) && is_our_turn(peer) && can_send_update_fee(peer)) {
 		/* FIXME: We occasionally desynchronize with LND here, so
 		 * don't stress things by having more than one feerate change
 		 * in-flight! */
@@ -1397,7 +1413,6 @@ static void send_commit(struct peer *peer)
 						feerate_target);
 			peer_write(peer->pps, take(msg));
 #if EXPERIMENTAL_FEATURES
-            /* We can not yield after submiting an update on our turn */
             peer->can_yield = false;
 #endif
 		}
@@ -2363,7 +2378,8 @@ static void peer_in(struct peer *peer, const u8 *msg)
 
     /* Early return from messages we will not service.
         This will send off a yield message as
-        appropriate if we will, even when it's our turn. */
+        appropriate when it's our turn and are willing
+        to service it. */
     if (modifies_commit_tx(type) && !allow_their_turn(peer)) {
         return;
     }
@@ -2469,6 +2485,9 @@ static void resend_revoke(struct peer *peer)
 	/* Current commit is peer->next_index[LOCAL]-1, revoke prior */
 	u8 *msg = make_revocation_msg(peer, peer->next_index[LOCAL]-2, &point);
 	peer_write(peer->pps, take(msg));
+#if EXPERIMENTAL_FEATURES
+    peer->can_yield = false;
+#endif
 }
 
 static void send_fail_or_fulfill(struct peer *peer, const struct htlc *h)
@@ -2495,6 +2514,9 @@ static void send_fail_or_fulfill(struct peer *peer, const struct htlc *h)
 				 "HTLC %"PRIu64" state %s not failed/fulfilled",
 				 h->id, htlc_state_name(h->state));
 	peer_write(peer->pps, take(msg));
+#if EXPERIMENTAL_FEATURES
+    peer->can_yield = false;
+#endif
 }
 
 static int cmp_changed_htlc_id(const struct changed_htlc *a,
@@ -2598,6 +2620,9 @@ static void resend_commitment(struct peer *peer, struct changed_htlc *last)
 #endif
 				);
 			peer_write(peer->pps, take(msg));
+#if EXPERIMENTAL_FEATURES
+            peer->can_yield = false;
+#endif
 		}
 	}
 
@@ -2606,11 +2631,16 @@ static void resend_commitment(struct peer *peer, struct changed_htlc *last)
 		msg = towire_update_fee(NULL, &peer->channel_id,
 					channel_feerate(peer->channel, REMOTE));
 		peer_write(peer->pps, take(msg));
-
+#if EXPERIMENTAL_FEATURES
+        peer->can_yield = false;
+#endif
 		if (peer->channel->lease_expiry > 0) {
 			msg = towire_update_blockheight(NULL, &peer->channel_id,
 							channel_blockheight(peer->channel, REMOTE));
 			peer_write(peer->pps, take(msg));
+#if EXPERIMENTAL_FEATURES
+            peer->can_yield = false;
+#endif
 		}
 	}
 
@@ -2625,6 +2655,9 @@ static void resend_commitment(struct peer *peer, struct changed_htlc *last)
 				       &commit_sig.s,
 				       raw_sigs(tmpctx, htlc_sigs));
 	peer_write(peer->pps, take(msg));
+#if EXPERIMENTAL_FEATURES
+    peer->can_yield = false;
+#endif
 
 	/* If we have already received the revocation for the previous, the
 	 * other side shouldn't be asking for a retransmit! */
@@ -3483,6 +3516,9 @@ static void handle_offer_htlc(struct peer *peer, const u8 *inmsg)
 #endif
 			);
 		peer_write(peer->pps, take(msg));
+#if EXPERIMENTAL_FEATURES
+        peer->can_yield = false;
+#endif
 		start_commit_timer(peer);
 		/* Tell the master. */
 		msg = towire_channeld_offer_htlc_reply(NULL, peer->htlc_id,
@@ -4004,9 +4040,12 @@ static void init_channel(struct peer *peer)
 	peer->dev_fast_gossip = dev_fast_gossip;
 #endif
 
-	status_debug("option_static_remotekey = %u, option_anchor_outputs = %u",
+	status_debug("option_static_remotekey = %u,"
+             "option_anchor_outputs = %u,"
+             "option_simplified_update = %u",
 		     channel_type_has(channel_type, OPT_STATIC_REMOTEKEY),
-		     channel_type_has(channel_type, OPT_ANCHOR_OUTPUTS));
+		     channel_type_has(channel_type, OPT_ANCHOR_OUTPUTS),
+             channel_type_has(channel_type, OPT_SIMPLIFIED_UPDATE));
 
 	/* Keeping an array of pointers is better since it allows us to avoid
 	 * extra allocations later. */
@@ -4095,6 +4134,18 @@ static void init_channel(struct peer *peer)
 	/* from now we need keep watch over WIRE_CHANNELD_FUNDING_DEPTH */
 	peer->depth_togo = minimum_depth;
 
+#if EXPERIMENTAL_FEATURES
+    /* BOLT-option_simplified_update #2:
+     * A node:
+     * ...
+     *   - MUST track whose turn it is, starting with the peer with the
+     *     lesser SEC1-encoded node_id.
+     */
+    peer->option_simplified_update = channel_type_has(channel_type, OPT_SIMPLIFIED_UPDATE);
+    peer->turn = peer->channel_direction == 0 ? LOCAL : REMOTE;
+    peer->can_yield = true;
+#endif
+
 	/* OK, now we can process peer messages. */
 	if (reconnected)
 		peer_reconnect(peer, &last_remote_per_commit_secret,
@@ -4182,8 +4233,6 @@ int main(int argc, char *argv[])
 		/* Free any temporary allocations */
 		clean_tmpctx();
 
-        /* FIXME Anything to dequeue from stfu/simplified_update? */
-
 		/* For simplicity, we process one event at a time. */
 		msg = msg_dequeue(peer->from_master);
 		if (msg) {
@@ -4194,6 +4243,21 @@ int main(int argc, char *argv[])
 			tal_free(msg);
 			continue;
 		}
+
+#if EXPERIMENTAL_FEATURES
+        /* And the same for peers */
+        if (!peer->stfu && is_our_turn(peer)
+            && (msg = msg_dequeue(peer->update_queue))) {
+            status_debug("Now dealing with deferred update %s",
+                     channeld_wire_name(
+                         fromwire_peektype(msg)));
+            req_in(peer, msg);
+            tal_free(msg);
+            continue;
+        } else if (msg_queue_length(peer->update_queue)) {
+            status_debug("Ignoring deferred updates...");
+        }
+#endif
 
 		expired = timers_expire(&peer->timers, now);
 		if (expired) {
