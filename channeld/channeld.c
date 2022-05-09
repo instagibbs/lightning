@@ -53,7 +53,7 @@
 struct peer {
 	struct per_peer_state *pps;
 	bool funding_locked[NUM_SIDES];
-	u64 next_index[NUM_SIDES];
+	u64 next_index[NUM_SIDES]; /* commitment index that we have sent/received */
 
 	/* Features peer supports. */
 	u8 *their_features;
@@ -3395,20 +3395,21 @@ skip_tlvs:
 
 #if EXPERIMENTAL_FEATURES
     /* BOLT #2:
+     * - If it has sent `commitment_signed` on the other peer's turn without receiving `yield`:
+     * - MUST NOT consider that `commitment_signed` sent.
      *  - If a node sent `next_commitment_number` which exceeds its received
      *   `next_revocation_number`, that node's turn is unfinished.
      * - If exactly one node's turn is unfinished, it is their turn,
      *   otherwise the turn starts with the peer with the lesser
      *   SEC1-encoded node_id.
      */
-    /* FIXME We don't sent out of turn transaction updates, so we simply have to figure
-     * out who's turn it is and continue like normal
+    /* We do not send out of turn updates, so we figure out turn-taking
+     * and replay of last turn's messages only
      */
     if (peer->option_simplified_update) {
-        /*                  remote sent                   remote received */
-        remote_unfinished = next_commitment_number      > 99999999999; /* FIXME we need revocations SENT  */
-        /*                  we sent                       we receieved */
-        local_unfinished =  peer->next_index[REMOTE]    > next_revocation_number;
+        /* Side             Sent                     Received */
+        remote_unfinished = next_commitment_number > peer->revocations_received;
+        local_unfinished =  peer->next_index[LOCAL] > next_revocation_number;
         if (remote_unfinished == local_unfinished) {
             /* Sorted lexigraphically by pubkey */
             peer->turn = peer->channel_direction == 0 ? LOCAL : REMOTE;
@@ -3416,6 +3417,20 @@ skip_tlvs:
             peer->turn = REMOTE;
         } else {
             peer->turn = LOCAL;
+        }
+        /* BOLT #2:
+         *  - If a node's turn was unfinished:
+         * - That node MUST retransmit the same updates as their previous turn.
+         * - The receiving node MAY close the channel if it receives different updates
+         *  to the previously unfinished turn.
+         */
+        if (peer->turn == LOCAL) {
+            if (pending_updates(peer->channel, LOCAL, false)) {
+
+            }
+        } else {
+            /* We should not have pending updates since we don't send out of turn... */
+            assert(!pending_updates(peer->channel, LOCAL, false));
         }
     }
 #endif
