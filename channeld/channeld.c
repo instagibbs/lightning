@@ -3146,6 +3146,7 @@ skip_tlvs:
 	 * on, but BOLT #2 refers to the *last* commit index, so we -1 where
 	 * required. */
 
+    /* XXX Greg This section below can be dramatically simplified */
 	/* BOLT #2:
 	 *
 	 *  - if `next_revocation_number` is equal to the commitment
@@ -3205,6 +3206,517 @@ skip_tlvs:
 					     &remote_current_per_commitment_point);
  	} else
  		retransmit_revoke_and_ack = false;
+
+    /* XXX Greg still needed until now */
+
+	/* BOLT #2:
+	 *
+	 *   - if `next_commitment_number` is equal to the commitment
+	 *     number of the last `commitment_signed` message the receiving node
+	 *     has sent:
+	 *     - MUST reuse the same commitment number for its next
+	 *       `commitment_signed`.
+	 */
+	if (next_commitment_number == peer->next_index[REMOTE] - 1) {
+		/* We completed opening, we don't re-transmit that one! */
+		if (next_commitment_number == 0)
+			peer_failed_err(peer->pps,
+					 &peer->channel_id,
+					 "bad reestablish commitment_number: %"
+					 PRIu64,
+					 next_commitment_number);
+
+		retransmit_commitment_signed = true;
+
+	/* BOLT #2:
+	 *
+	 *   - otherwise:
+	 *     - if `next_commitment_number` is not 1 greater than the
+	 *       commitment number of the last `commitment_signed` message the
+	 *       receiving node has sent:
+	 *       - SHOULD send an `error` and fail the channel.
+	 */
+	} else if (next_commitment_number != peer->next_index[REMOTE])
+		peer_failed_err(peer->pps,
+				&peer->channel_id,
+				"bad reestablish commitment_number: %"PRIu64
+				" vs %"PRIu64,
+				next_commitment_number,
+				peer->next_index[REMOTE]);
+	else
+		retransmit_commitment_signed = false;
+
+	/* After we checked basic sanity, we check dataloss fields if any */
+	if (check_extra_fields)
+		check_current_dataloss_fields(peer,
+					      next_revocation_number,
+					      next_commitment_number,
+					      &last_local_per_commitment_secret,
+					      channel_has(peer->channel,
+							  OPT_STATIC_REMOTEKEY)
+					      ? NULL
+					      : &remote_current_per_commitment_point);
+
+	/* BOLT #2:
+ 	 * - if it has previously sent a `commitment_signed` that needs to be
+	 *   retransmitted:
+	 *   - MUST retransmit `revoke_and_ack` and `commitment_signed` in the
+	 *     same relative order as initially transmitted.
+	 */
+	if (retransmit_revoke_and_ack && !peer->last_was_revoke)
+		resend_revoke(peer);
+
+	if (retransmit_commitment_signed)
+		resend_commitment(peer, peer->last_sent_commit);
+
+	/* This covers the case where we sent revoke after commit. */
+	if (retransmit_revoke_and_ack && peer->last_was_revoke)
+		resend_revoke(peer);
+
+	/* BOLT #2:
+	 *
+	 *   - upon reconnection:
+	 *     - if it has sent a previous `shutdown`:
+	 *       - MUST retransmit `shutdown`.
+	 */
+	/* (If we had sent `closing_signed`, we'd be in closingd). */
+	maybe_send_shutdown(peer);
+
+#if EXPERIMENTAL_FEATURES
+	if (recv_tlvs->desired_channel_type)
+		status_debug("They sent desired_channel_type [%s]",
+			     fmt_featurebits(tmpctx,
+					     recv_tlvs->desired_channel_type));
+	if (recv_tlvs->current_channel_type)
+		status_debug("They sent current_channel_type [%s]",
+			     fmt_featurebits(tmpctx,
+					     recv_tlvs->current_channel_type));
+
+	if (recv_tlvs->upgradable_channel_type)
+		status_debug("They offered upgrade to [%s]",
+			     fmt_featurebits(tmpctx,
+					     recv_tlvs->upgradable_channel_type));
+
+	/* BOLT-upgrade_protocol #2:
+	 *
+	 * A node receiving `channel_reestablish`:
+	 *  - if it has to retransmit `commitment_signed` or `revoke_and_ack`:
+	 *    - MUST consider the channel feature change failed.
+	 */
+	if (retransmit_commitment_signed || retransmit_revoke_and_ack) {
+		status_debug("No upgrade: we retransmitted");
+	/* BOLT-upgrade_protocol #2:
+	 *
+	 *  - if `next_to_send` is missing, or not equal to the
+	 *    `next_commitment_number` it sent:
+	 *    - MUST consider the channel feature change failed.
+	 */
+	} else if (!recv_tlvs->next_to_send) {
+		status_debug("No upgrade: no next_to_send received");
+	} else if (*recv_tlvs->next_to_send != peer->next_index[LOCAL]) {
+		status_debug("No upgrade: they're retransmitting");
+	/* BOLT-upgrade_protocol #2:
+	 *
+	 *  - if updates are pending on either sides' commitment transaction:
+	 *    - MUST consider the channel feature change failed.
+	 */
+		/* Note that we can have HTLCs we *want* to add or remove
+		 * but haven't yet: thats OK! */
+	} else if (pending_updates(peer->channel, LOCAL, true)
+		   || pending_updates(peer->channel, REMOTE, true)) {
+		status_debug("No upgrade: pending changes");
+	} else {
+		const struct tlv_channel_reestablish_tlvs *initr, *ninitr;
+		const u8 *type;
+
+		if (peer->channel->opener == LOCAL) {
+			initr = send_tlvs;
+			ninitr = recv_tlvs;
+		} else {
+			initr = recv_tlvs;
+			ninitr = send_tlvs;
+		}
+
+		/* BOLT-upgrade_protocol #2:
+		 *
+		 * - if `desired_channel_type` matches `current_channel_type` or any
+		 *   `upgradable_channel_type`:
+		 *   - MUST consider the channel type to be `desired_channel_type`.
+		 * - otherwise:
+		 *   - MUST consider the channel type change failed.
+		 *   - if there is a `current_channel_type` field:
+		 *     - MUST consider the channel type to be `current_channel_type`.
+		 */
+		if (match_type(initr->desired_channel_type,
+			       ninitr->current_channel_type)
+		    || match_type(initr->desired_channel_type,
+				  ninitr->upgradable_channel_type))
+			type = initr->desired_channel_type;
+		else if (ninitr->current_channel_type)
+			type = ninitr->current_channel_type;
+		else
+			type = NULL;
+
+		if (type)
+			set_channel_type(peer->channel, type);
+	}
+	tal_free(send_tlvs);
+
+#endif /* EXPERIMENTAL_FEATURES */
+
+	/* Now stop, we've been polite long enough. */
+	if (reestablish_only) {
+		/* If we were successfully closing, we still go to closingd. */
+		if (shutdown_complete(peer)) {
+			send_shutdown_complete(peer);
+			daemon_shutdown();
+			exit(0);
+		}
+		peer_failed_err(peer->pps,
+				&peer->channel_id,
+				"Channel is already closed");
+	}
+
+	/* Corner case: we didn't send shutdown before because update_add_htlc
+	 * pending, but now they're cleared by restart, and we're actually
+	 * complete.  In that case, their `shutdown` will trigger us. */
+
+	/* Start commit timer: if we sent revoke we might need it. */
+	start_commit_timer(peer);
+
+	/* Now, re-send any that we're supposed to be failing. */
+	for (htlc = htlc_map_first(peer->channel->htlcs, &it);
+	     htlc;
+	     htlc = htlc_map_next(peer->channel->htlcs, &it)) {
+		if (htlc->state == SENT_REMOVE_HTLC)
+			send_fail_or_fulfill(peer, htlc);
+	}
+
+	/* We allow peer to send us tx-sigs, until funding locked received */
+	peer->tx_sigs_allowed = true;
+	peer_billboard(true, "Reconnected, and reestablished.");
+
+	/* BOLT #2:
+	 *   - upon reconnection:
+	 *...
+	 *       - MUST transmit `channel_reestablish` for each channel.
+	 *       - MUST wait to receive the other node's `channel_reestablish`
+	 *         message before sending any other messages for that channel.
+	 */
+	/* LND doesn't wait. */
+	for (size_t i = 0; i < tal_count(premature_msgs); i++)
+		peer_in(peer, premature_msgs[i]);
+	tal_free(premature_msgs);
+}
+
+static void peer_simplified_reconnect(struct peer *peer,
+			   const struct secret *last_remote_per_commit_secret,
+			   bool reestablish_only)
+{
+	struct channel_id channel_id;
+	/* Note: BOLT #2 uses these names! */
+	u64 next_commitment_number, next_revocation_number;
+	bool retransmit_revoke_and_ack, retransmit_commitment_signed;
+	struct htlc_map_iter it;
+	const struct htlc *htlc;
+	u8 *msg;
+	struct pubkey my_current_per_commitment_point,
+		remote_current_per_commitment_point;
+	struct secret last_local_per_commitment_secret;
+	bool dataloss_protect, check_extra_fields;
+	const u8 **premature_msgs = tal_arr(peer, const u8 *, 0);
+#if EXPERIMENTAL_FEATURES
+	struct tlv_channel_reestablish_tlvs *send_tlvs, *recv_tlvs;
+    bool remote_unfinished, local_unfinished;
+#endif
+
+	dataloss_protect = feature_negotiated(peer->our_features,
+					      peer->their_features,
+					      OPT_DATA_LOSS_PROTECT);
+
+	/* Both these options give us extra fields to check. */
+	check_extra_fields
+		= dataloss_protect || channel_has(peer->channel, OPT_STATIC_REMOTEKEY);
+
+	/* Our current per-commitment point is the commitment point in the last
+	 * received signed commitment */
+	get_per_commitment_point(peer->next_index[LOCAL] - 1,
+				 &my_current_per_commitment_point, NULL);
+
+#if EXPERIMENTAL_FEATURES
+	/* Subtle: we free tmpctx below as we loop, so tal off peer */
+	send_tlvs = tlv_channel_reestablish_tlvs_new(peer);
+
+	/* FIXME: v0.10.1 would send a different tlv set, due to older spec.
+	 * That did *not* offer OPT_QUIESCE, so in that case don't send tlvs. */
+	if (!feature_negotiated(peer->our_features,
+				peer->their_features,
+				OPT_QUIESCE))
+		goto skip_tlvs;
+
+	/* BOLT-upgrade_protocol #2:
+	 * A node sending `channel_reestablish`, if it supports upgrading channels:
+	 *   - MUST set `next_to_send` the commitment number of the next
+	 *     `commitment_signed` it expects to send.
+	 */
+	send_tlvs->next_to_send = tal_dup(send_tlvs, u64, &peer->next_index[REMOTE]);
+
+	/* BOLT-upgrade_protocol #2:
+	 * - if it initiated the channel:
+	 *   - MUST set `desired_type` to the channel_type it wants for the
+	 *     channel.
+	 */
+	if (peer->channel->opener == LOCAL)
+		send_tlvs->desired_channel_type =
+			to_bytearr(send_tlvs,
+				   take(channel_desired_type(NULL,
+							     peer->channel)));
+	else {
+		/* BOLT-upgrade_protocol #2:
+		 * - otherwise:
+		 *  - MUST set `current_type` to the current channel_type of the
+		 *    channel.
+		 *  - MUST set `upgradable` to the channel types it could change
+		 *    to.
+		 *  - MAY not set `upgradable` if it would be empty.
+		 */
+		send_tlvs->current_channel_type
+			= to_bytearr(send_tlvs, peer->channel->type);
+		send_tlvs->upgradable_channel_type
+			= to_bytearr(send_tlvs,
+				     take(channel_upgradable_type(NULL,
+								  peer->channel)));
+	}
+
+skip_tlvs:
+#endif
+
+	/* BOLT #2:
+	 *
+	 *   - upon reconnection:
+	 *     - if a channel is in an error state:
+	 *       - SHOULD retransmit the error packet and ignore any other packets for
+	 *        that channel.
+	 *     - otherwise:
+	 *       - MUST transmit `channel_reestablish` for each channel.
+	 *       - MUST wait to receive the other node's `channel_reestablish`
+	 *         message before sending any other messages for that channel.
+	 *
+	 * The sending node:
+	 *   - MUST set `next_commitment_number` to the commitment number
+	 *     of the next `commitment_signed` it expects to receive.
+	 *   - MUST set `next_revocation_number` to the commitment number
+	 *     of the next `revoke_and_ack` message it expects to receive.
+	 *   - if `option_static_remotekey` applies to the commitment transaction:
+	 *     - MUST set `my_current_per_commitment_point` to a valid point.
+	 *   - otherwise:
+	 *     - MUST set `my_current_per_commitment_point` to its commitment
+	 *       point for the last signed commitment it received from its
+	 *       channel peer (i.e. the commitment_point corresponding to the
+	 *       commitment transaction the sender would use to unilaterally
+	 *       close).
+	 *   - if `next_revocation_number` equals 0:
+	 *     - MUST set `your_last_per_commitment_secret` to all zeroes
+	 *   - otherwise:
+	 *     - MUST set `your_last_per_commitment_secret` to the last
+	 *       `per_commitment_secret` it received
+	 */
+	if (channel_has(peer->channel, OPT_STATIC_REMOTEKEY)) {
+		msg = towire_channel_reestablish
+			(NULL, &peer->channel_id,
+			 peer->next_index[LOCAL],
+			 peer->revocations_received,
+			 last_remote_per_commit_secret,
+			 /* Can send any (valid) point here */
+			 &peer->remote_per_commit
+#if EXPERIMENTAL_FEATURES
+			 , send_tlvs
+#endif
+				);
+	} else {
+		msg = towire_channel_reestablish
+			(NULL, &peer->channel_id,
+			 peer->next_index[LOCAL],
+			 peer->revocations_received,
+			 last_remote_per_commit_secret,
+			 &my_current_per_commitment_point
+#if EXPERIMENTAL_FEATURES
+			 , send_tlvs
+#endif
+				);
+	}
+
+	peer_write(peer->pps, take(msg));
+
+	peer_billboard(false, "Sent reestablish, waiting for theirs");
+
+	/* Read until they say something interesting (don't forward
+	 * gossip *to* them yet: we might try sending channel_update
+	 * before we've reestablished channel). */
+	do {
+		clean_tmpctx();
+		msg = peer_read(tmpctx, peer->pps);
+
+		/* connectd promised us the msg was reestablish? */
+		if (reestablish_only) {
+			if (fromwire_peektype(msg) != WIRE_CHANNEL_REESTABLISH)
+				status_failed(STATUS_FAIL_INTERNAL_ERROR,
+					      "Expected reestablish, got: %s",
+					      tal_hex(tmpctx, msg));
+		}
+	} while (handle_peer_error(peer->pps, &peer->channel_id, msg) ||
+		 capture_premature_msg(&premature_msgs, msg));
+
+#if EXPERIMENTAL_FEATURES
+	/* Initialize here in case we don't read it below! */
+	recv_tlvs = tlv_channel_reestablish_tlvs_new(tmpctx);
+
+	/* FIXME: v0.10.1 would send a different tlv set, due to older spec.
+	 * That did *not* offer OPT_QUIESCE, so in that case ignore tlvs. */
+	if (!feature_negotiated(peer->our_features,
+				peer->their_features,
+				OPT_QUIESCE)) {
+		if (!fromwire_channel_reestablish_notlvs(msg,
+					&channel_id,
+					&next_commitment_number,
+					&next_revocation_number,
+					&last_local_per_commitment_secret,
+					&remote_current_per_commitment_point))
+			peer_failed_warn(peer->pps,
+					 &peer->channel_id,
+					 "bad reestablish msg: %s %s",
+					 peer_wire_name(fromwire_peektype(msg)),
+					 tal_hex(msg, msg));
+	} else if (!fromwire_channel_reestablish(tmpctx, msg,
+						 &channel_id,
+						 &next_commitment_number,
+						 &next_revocation_number,
+						 &last_local_per_commitment_secret,
+						 &remote_current_per_commitment_point,
+						 &recv_tlvs)) {
+			peer_failed_warn(peer->pps,
+					 &peer->channel_id,
+					 "bad reestablish msg: %s %s",
+					 peer_wire_name(fromwire_peektype(msg)),
+					 tal_hex(msg, msg));
+	}
+#else /* !EXPERIMENTAL_FEATURES */
+	if (!fromwire_channel_reestablish(msg,
+					&channel_id,
+					&next_commitment_number,
+					&next_revocation_number,
+					&last_local_per_commitment_secret,
+					  &remote_current_per_commitment_point)) {
+		peer_failed_warn(peer->pps,
+				 &peer->channel_id,
+				 "bad reestablish msg: %s %s",
+				 peer_wire_name(fromwire_peektype(msg)),
+				 tal_hex(msg, msg));
+	}
+#endif
+
+	if (!channel_id_eq(&channel_id, &peer->channel_id)) {
+		peer_failed_err(peer->pps,
+				&channel_id,
+				"bad reestablish msg for unknown channel %s: %s",
+				type_to_string(tmpctx, struct channel_id,
+					       &channel_id),
+				tal_hex(msg, msg));
+	}
+
+	status_debug("Got reestablish commit=%"PRIu64" revoke=%"PRIu64,
+		     next_commitment_number,
+		     next_revocation_number);
+
+	/* BOLT #2:
+	 *
+	 *   - if `next_commitment_number` is 1 in both the
+	 *    `channel_reestablish` it sent and received:
+	 *     - MUST retransmit `funding_locked`.
+	 *   - otherwise:
+	 *     - MUST NOT retransmit `funding_locked`.
+	 */
+	if (peer->funding_locked[LOCAL]
+	    && peer->next_index[LOCAL] == 1
+	    && next_commitment_number == 1) {
+		u8 *msg;
+
+		status_debug("Retransmitting funding_locked for channel %s",
+		             type_to_string(tmpctx, struct channel_id, &peer->channel_id));
+		/* Contains per commit point #1, for first post-opening commit */
+		msg = towire_funding_locked(NULL,
+					    &peer->channel_id,
+					    &peer->next_local_per_commit);
+		peer_write(peer->pps, take(msg));
+	}
+
+    /* We are trying to detect who's "turn" it is */
+
+	/* Note: next_index is the index of the current commit we're working
+	 * on, but BOLT #2 refers to the *last* commit index, so we -1 where
+	 * required. */
+
+	/* BOLT #2:
+	 *
+	 *  - if `next_revocation_number` is equal to the commitment
+	 *    number of the last `revoke_and_ack` the receiving node sent, AND
+	 *    the receiving node hasn't already received a `closing_signed`:
+	 *    - MUST re-send the `revoke_and_ack`.
+	 *    - if it has previously sent a `commitment_signed` that needs to be
+	 *      retransmitted:
+	 *      - MUST retransmit `revoke_and_ack` and `commitment_signed` in the
+	 *        same relative order as initially transmitted.
+	 *  - otherwise:
+	 *    - if `next_revocation_number` is not equal to 1 greater
+	 *      than the commitment number of the last `revoke_and_ack` the
+	 *      receiving node has sent:
+	 *      - SHOULD send an `error` and fail the channel.
+	 *    - if it has not sent `revoke_and_ack`, AND
+	 *      `next_revocation_number` is not equal to 0:
+	 *      - SHOULD send an `error` and fail the channel.
+	 */
+	if (next_revocation_number == peer->next_index[LOCAL] - 2) {
+		/* Don't try to retransmit revocation index -1! */
+		if (peer->next_index[LOCAL] < 2) {
+			peer_failed_err(peer->pps,
+					&peer->channel_id,
+					"bad reestablish revocation_number: %"
+					PRIu64,
+					next_revocation_number);
+		}
+		retransmit_revoke_and_ack = true;
+	} else if (next_revocation_number < peer->next_index[LOCAL] - 1) {
+		peer_failed_err(peer->pps,
+				&peer->channel_id,
+				"bad reestablish revocation_number: %"PRIu64
+				" vs %"PRIu64,
+				next_revocation_number,
+				peer->next_index[LOCAL]);
+	} else if (next_revocation_number > peer->next_index[LOCAL] - 1) {
+		if (!check_extra_fields)
+			/* They don't support option_data_loss_protect or
+			 * option_static_remotekey, we fail it due to
+			 * unexpected number */
+			peer_failed_err(peer->pps,
+					&peer->channel_id,
+					"bad reestablish revocation_number: %"PRIu64
+					" vs %"PRIu64,
+					next_revocation_number,
+					peer->next_index[LOCAL] - 1);
+
+		/* Remote claims it's ahead of us: can it prove it?
+		 * Does not return. */
+		check_future_dataloss_fields(peer,
+					     next_revocation_number,
+					     &last_local_per_commitment_secret,
+					     channel_has(peer->channel,
+							 OPT_STATIC_REMOTEKEY)
+					     ? NULL :
+					     &remote_current_per_commitment_point);
+ 	} else
+ 		retransmit_revoke_and_ack = false;
+
+    /* XXX Greg still needed until now */
 
 	/* BOLT #2:
 	 *
@@ -3447,6 +3959,7 @@ skip_tlvs:
 		peer_in(peer, premature_msgs[i]);
 	tal_free(premature_msgs);
 }
+
 
 /* ignores the funding_depth unless depth >= minimum_depth
  * (except to update billboard, and set peer->depth_togo). */
@@ -4191,8 +4704,18 @@ static void init_channel(struct peer *peer)
 
 	/* OK, now we can process peer messages. */
 	if (reconnected)
+#if EXPERIMENTAL_FEATURES
+        if (peer->option_simplified_update) {
+		    peer_simplified_reconnect(peer, &last_remote_per_commit_secret,
+			       reestablish_only);
+        } else {
+		    peer_reconnect(peer, &last_remote_per_commit_secret,
+			       reestablish_only);
+        }
+#elif
 		peer_reconnect(peer, &last_remote_per_commit_secret,
 			       reestablish_only);
+#endif
 	else
 		assert(!reestablish_only);
 
