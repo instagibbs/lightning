@@ -117,6 +117,27 @@ void sign_hash(const struct privkey *privkey,
 	assert(ok);
 }
 
+void bip340_sign_hash(const struct privkey *privkey,
+	       const struct sha256_double *hash,
+	       struct bip340sig *sig)
+{
+	bool ok;
+    secp256k1_keypair keypair;
+
+    ok = secp256k1_keypair_create(secp256k1_ctx,
+                  &keypair,
+                  privkey->secret.data);
+
+    assert(ok);
+
+    ok = secp256k1_schnorrsig_sign32(secp256k1_ctx,
+                  sig->u8,
+                  hash->sha.u.u8,
+                  &keypair, /* aux_rand32 */ NULL);
+
+	assert(ok);
+}
+
 void bitcoin_tx_hash_for_sig(const struct bitcoin_tx *tx, unsigned int in,
 			     const u8 *script,
 			     enum sighash_type sighash_type,

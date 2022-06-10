@@ -4,6 +4,7 @@
 #include <ccan/short_types/short_types.h>
 #include <ccan/tal/tal.h>
 #include <secp256k1.h>
+#include <secp256k1_schnorrsig.h>
 
 struct sha256;
 struct sha256_double;
@@ -19,6 +20,11 @@ enum sighash_type {
     SIGHASH_NONE = 2,
     SIGHASH_SINGLE = 3,
     SIGHASH_ANYONECANPAY = 0x80
+};
+
+/* Schnorr */
+struct bip340sig {
+	u8 u8[64];
 };
 
 #define SIGHASH_MASK 0x7F
@@ -72,6 +78,16 @@ void bitcoin_tx_hash_for_sig(const struct bitcoin_tx *tx, unsigned int in,
 void sign_hash(const struct privkey *p,
 	       const struct sha256_double *h,
 	       secp256k1_ecdsa_signature *sig);
+
+/**
+ * bip340_sigh_hash - produce a raw BIP340 signature
+ * @privkey: secret key
+ * @hash: hash to sign.
+ * @sig: signature to fill and return
+ */
+void bip340_sign_hash(const struct privkey *privkey,
+           const struct sha256_double *hash,
+           struct bip340sig *sig);
 
 /**
  * check_signed_hash - check a raw secp256k1 signature.
@@ -141,10 +157,6 @@ void towire_bitcoin_signature(u8 **pptr, const struct bitcoin_signature *sig);
 void fromwire_bitcoin_signature(const u8 **cursor, size_t *max,
 				struct bitcoin_signature *sig);
 
-/* Schnorr */
-struct bip340sig {
-	u8 u8[64];
-};
 void towire_bip340sig(u8 **pptr, const struct bip340sig *bip340sig);
 void fromwire_bip340sig(const u8 **cursor, size_t *max,
 			struct bip340sig *bip340sig);
