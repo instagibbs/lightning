@@ -171,6 +171,39 @@ void bitcoin_tx_hash_for_sig(const struct bitcoin_tx *tx, unsigned int in,
 	tal_wally_end(tx->wtx);
 }
 
+void bitcoind_tx_taproot_hash_for_sig(const struct bitcoin_tx *tx,
+                 unsigned int input_index,
+			     enum sighash_type sighash_type, /* FIXME get from PSBT? */
+                 const unsigned char *tapleaf_script, /* FIXME Get directly from PSBT? */
+			     struct sha256_double *dest)
+{
+	int ret, i;
+
+    /* Preparing args for taproot*/
+    size_t input_count = tx->wtx->num_inputs;
+    const unsigned char *input_spks[input_count];
+    size_t input_spk_lens[input_count];
+	u64 input_val_sats[input_count];
+
+    for (i=0; i < input_count; ++i) {
+        input_spks[i] = psbt_input_get_scriptpubkey(tx->psbt, i);
+        input_spk_lens[i] = tal_bytelen(input_spks[i]); /* FIXME ??? tal_bytelen? */
+        input_val_sats[i] = psbt_input_get_amount(tx->psbt, i).satoshis;
+    }
+
+	/* Wally can allocate here, iff tx doesn't fit on stack */
+	tal_wally_start();
+    ret = wally_tx_get_btc_taproot_signature_hash(
+        tx->wtx, sighash_type, input_index, input_spks, input_spk_lens,
+        input_val_sats, tapleaf_script, tal_bytelen(tapleaf_script), 0x00 /* key_version */,
+        0xFFFFFFFF /* codesep_position */, 0 /* flags */, dest->sha.u.u8,
+		    sizeof(*dest));
+
+    assert(ret == WALLY_OK);
+	tal_wally_end(tx->wtx);
+
+}
+
 void sign_tx_input(const struct bitcoin_tx *tx,
 		   unsigned int in,
 		   const u8 *subscript,

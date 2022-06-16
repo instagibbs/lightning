@@ -613,6 +613,17 @@ size_t psbt_input_get_weight(const struct wally_psbt *psbt,
 	return weight;
 }
 
+const unsigned char *psbt_input_get_scriptpubkey(const struct wally_psbt *psbt,
+                    size_t in)
+{
+    if (psbt->inputs[in].witness_utxo) {
+        return psbt->inputs[in].witness_utxo->script;
+    } else if (psbt->inputs[in].utxo) {
+        return psbt->inputs[in].utxo->outputs[psbt->tx->inputs[in].index].script;
+    } else {
+        abort();
+    }
+}
 struct amount_sat psbt_output_get_amount(const struct wally_psbt *psbt,
 					 size_t out)
 {

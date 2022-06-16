@@ -70,6 +70,21 @@ void bitcoin_tx_hash_for_sig(const struct bitcoin_tx *tx, unsigned int in,
 			     struct sha256_double *dest);
 
 /**
+ * bitcoin_tx_taproot_hash_for_sig - produce hash for a taproot spend
+ *
+ * @tx - tx to hash
+ * @input_index - index that this 'hash' is for
+ * @sighash_type - sighash_type to hash for
+ * @tapleaf_script - tapscript leaf for the index that's being 'hashed for', NULL if keyspend
+ * @dest - hash result
+ */
+void bitcoind_tx_taproot_hash_for_sig(const struct bitcoin_tx *tx,
+                 unsigned int input_index,
+                 enum sighash_type sighash_type,
+                 const unsigned char *tapleaf_script,
+			     struct sha256_double *dest);
+
+/**
  * sign_hash - produce a raw secp256k1 signature (with low R value).
  * @p: secret key
  * @h: hash to sign.
