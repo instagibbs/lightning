@@ -67,6 +67,11 @@ $(TARGET_DIR)/libwally-core-build/src/libwallycore.% $(TARGET_DIR)/libwally-core
 	&& PYTHON_VERSION=3 CFLAGS="-std=c99 $(FUZZFLAGS)" LDFLAGS="$(FUZZFLAGS)" ${TOP}/libwally-core/configure CC="$(CC)" \
 		--enable-static=yes \
 		$(CROSSCOMPILE_OPTS) \
+		--enable-module-recovery \
+		--enable-module-extrakeys \
+		--enable-module-schnorrsig \
+		--enable-module-musig \
+		--enable-elements \
 		--enable-shared=no \
 		--prefix=/ \
 		--libdir=/ \

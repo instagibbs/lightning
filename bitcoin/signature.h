@@ -5,6 +5,7 @@
 #include <ccan/tal/tal.h>
 #include <secp256k1.h>
 #include <secp256k1_schnorrsig.h>
+#include <secp256k1_musig.h>
 
 struct sha256;
 struct sha256_double;
@@ -96,7 +97,7 @@ void sign_hash(const struct privkey *p,
 	       secp256k1_ecdsa_signature *sig);
 
 /**
- * bip340_sigh_hash - produce a raw BIP340 signature
+ * bip340_sighn_hash - produce a raw BIP340 signature
  * @privkey: secret key
  * @hash: hash to sign.
  * @sig: signature to fill and return
@@ -104,6 +105,24 @@ void sign_hash(const struct privkey *p,
 void bip340_sign_hash(const struct privkey *privkey,
            const struct sha256_double *hash,
            struct bip340sig *sig);
+
+/**
+ * bip340_partial_sign_hash - produce a partial BIP340 signature.
+ * This assumed an already existing session with pubkeys aggregated
+ * and nonces collected, aggregated, and processed.
+ * This is called after _____ FIXME.
+ * @privkey: secret key
+ * @secnonce: secret nonce used *once* to partially sign
+ * @session: session information for signing attempt
+ * @hash: hash to sign.
+ * @p_sig: partial signature to fill and return
+ */
+void bip340_partial_sign_hash(const struct privkey *privkey,
+           secp256k1_musig_secnonce *secnonce,
+           secp256k1_musig_keyagg_cache *cache,
+           secp256k1_musig_session *session,
+           const struct sha256_double *hash,
+           secp256k1_musig_partial_sig *p_sig);
 
 /**
  * check_signed_hash - check a raw secp256k1 signature.

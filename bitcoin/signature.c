@@ -129,6 +129,7 @@ void bip340_sign_hash(const struct privkey *privkey,
 	       struct bip340sig *sig)
 {
 	bool ok;
+    secp256k1_xonly_pubkey pubkey;
     secp256k1_keypair keypair;
 
     ok = secp256k1_keypair_create(secp256k1_ctx,
@@ -142,7 +143,32 @@ void bip340_sign_hash(const struct privkey *privkey,
                   hash->sha.u.u8,
                   &keypair, /* aux_rand32 */ NULL);
 
+
+    ok = secp256k1_keypair_xonly_pub(secp256k1_ctx, &pubkey, NULL /* pk_parity */, &keypair);
 	assert(ok);
+
+    assert(secp256k1_schnorrsig_verify(secp256k1_ctx, sig->u8, hash->sha.u.u8, sizeof(hash->sha.u.u8), &pubkey));
+}
+
+void bip340_partial_sign_hash(const struct privkey *privkey,
+           secp256k1_musig_secnonce *secnonce,
+           secp256k1_musig_keyagg_cache *cache,
+           secp256k1_musig_session *session,
+	       const struct sha256_double *hash,
+	       secp256k1_musig_partial_sig *p_sig)
+{
+	bool ok;
+    secp256k1_keypair keypair;
+
+    ok = secp256k1_keypair_create(secp256k1_ctx,
+                  &keypair,
+                  privkey->secret.data);
+
+    assert(ok);
+
+    ok = secp256k1_musig_partial_sign(secp256k1_ctx, p_sig, secnonce, &keypair, cache, session);
+
+    assert(ok);
 }
 
 void bitcoin_tx_hash_for_sig(const struct bitcoin_tx *tx, unsigned int in,
