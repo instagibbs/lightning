@@ -78,7 +78,7 @@ void bitcoin_tx_hash_for_sig(const struct bitcoin_tx *tx, unsigned int in,
  * @tapleaf_script - tapscript leaf for the index that's being 'hashed for', NULL if keyspend
  * @dest - hash result
  */
-void bitcoind_tx_taproot_hash_for_sig(const struct bitcoin_tx *tx,
+void bitcoin_tx_taproot_hash_for_sig(const struct bitcoin_tx *tx,
                  unsigned int input_index,
                  enum sighash_type sighash_type,
                  const unsigned char *tapleaf_script,
@@ -135,6 +135,22 @@ void sign_tx_input(const struct bitcoin_tx *tx,
 		   const struct privkey *privkey, const struct pubkey *pubkey,
 		   enum sighash_type sighash_type,
 		   struct bitcoin_signature *sig);
+
+/**
+ * sign_tx_taproot_input - produce a bitcoin signature for a taproot transaction input
+ * @tx: the bitcoin transaction we're signing.
+ * @input_index: the input number to sign.
+ * @sighash_type: a valid sighash type.
+ * @tapleaf_script: tapscript leaf script to hash.
+ * @key_pair: the BIP340 keypair to use for signing and verification.
+ * @sig: (in) sighash_type indicates what type of signature make.
+ */
+void sign_tx_taproot_input(const struct bitcoin_tx *tx,
+           unsigned int input_index,
+           enum sighash_type sighash_type,
+           const u8 *tapleaf_script,
+           const secp256k1_keypair *key_pair,
+           struct bip340sig *sig);
 
 /**
  * check_tx_sig - produce a bitcoin signature for a transaction input

@@ -171,7 +171,7 @@ void bitcoin_tx_hash_for_sig(const struct bitcoin_tx *tx, unsigned int in,
 	tal_wally_end(tx->wtx);
 }
 
-void bitcoind_tx_taproot_hash_for_sig(const struct bitcoin_tx *tx,
+void bitcoin_tx_taproot_hash_for_sig(const struct bitcoin_tx *tx,
                  unsigned int input_index,
 			     enum sighash_type sighash_type, /* FIXME get from PSBT? */
                  const unsigned char *tapleaf_script, /* FIXME Get directly from PSBT? */
@@ -223,6 +223,32 @@ void sign_tx_input(const struct bitcoin_tx *tx,
 
 	dump_tx("Signing", tx, in, subscript, key, &hash);
 	sign_hash(privkey, &hash, &sig->s);
+}
+
+void sign_tx_taproot_input(const struct bitcoin_tx *tx,
+		   unsigned int input_index,
+		   enum sighash_type sighash_type,
+           const u8 *tapleaf_script,
+		   const secp256k1_keypair *key_pair,
+		   struct bip340sig *sig)
+{
+	struct sha256_double hash;
+    int ret;
+    secp256k1_pubkey pubkey;
+    struct pubkey pk;
+    struct privkey privkey;
+
+	/* FIXME assert sighashes we actually support assert(sighash_type_valid(sighash_type)); */
+	bitcoin_tx_taproot_hash_for_sig(tx, input_index, sighash_type, tapleaf_script, &hash);
+
+    /* TODO just have it take keypair? */
+    ret = secp256k1_keypair_pub(secp256k1_ctx, &pubkey, key_pair);
+    assert(ret);
+    pk.pubkey = pubkey;
+	dump_tx("Signing", tx, input_index, tapleaf_script, &pk, &hash);
+    ret= secp256k1_keypair_sec(secp256k1_ctx, privkey.secret.data, key_pair);
+    assert(ret);
+	bip340_sign_hash(&privkey, &hash, sig);
 }
 
 bool check_signed_hash(const struct sha256_double *hash,
