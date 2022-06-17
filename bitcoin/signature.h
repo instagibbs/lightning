@@ -11,6 +11,7 @@ struct sha256_double;
 struct sha256_ctx;
 struct bitcoin_tx;
 struct pubkey;
+struct point32;
 struct privkey;
 struct bitcoin_tx_output;
 struct bip340sig;
@@ -116,6 +117,19 @@ void bip340_sign_hash(const struct privkey *privkey,
 bool check_signed_hash(const struct sha256_double *hash,
 		       const secp256k1_ecdsa_signature *signature,
 		       const struct pubkey *key);
+
+/**
+ * check_signed_bip340_hash - check a raw BIP340 signature.
+ * @hash: hash which was signed.
+ * @signature: BIP340 signature.
+ * @key: x-only public key corresponding to private key used to sign.
+ *
+ * Returns true if the key, hash and signature are correct.  Changing any
+ * one of these will make it fail.
+ */
+bool check_signed_bip340_hash(const struct sha256_double *hash,
+               const struct bip340sig *signature,
+		       const struct point32 *key);
 
 /**
  * sign_tx_input - produce a bitcoin signature for a transaction input

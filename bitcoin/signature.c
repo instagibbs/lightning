@@ -271,6 +271,15 @@ bool check_signed_hash(const struct sha256_double *hash,
 	return ret == 1;
 }
 
+bool check_signed_bip340_hash(const struct sha256_double *hash,
+		       const struct bip340sig *signature,
+		       const struct point32 *key)
+{
+	int ret;
+    ret = secp256k1_schnorrsig_verify(secp256k1_ctx, signature->u8, hash->sha.u.u8, sizeof(hash->sha.u.u8), &key->pubkey);
+	return ret == 1;
+}
+
 bool check_tx_sig(const struct bitcoin_tx *tx, size_t input_num,
 		  const u8 *redeemscript,
 		  const u8 *witness_script,
