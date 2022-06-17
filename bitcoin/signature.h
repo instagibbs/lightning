@@ -191,6 +191,24 @@ bool check_schnorr_sig(const struct sha256 *hash,
 		       const secp256k1_pubkey *pubkey,
 		       const struct bip340sig *sig);
 
+/**
+ * check_tx_taproot_sig - check a bitcoin signature for a transaction input
+ * @tx: the bitcoin transaction which has been signed.
+ * @input_num: the input number to which @sig should apply.
+ * @tapleaf_script: NULL(keyspend) or the tapscript leaf script to hash.
+ * @key: the x-only public key corresonding to the signature.
+ * @sighash_type: sighash type for @sig.
+ * @sig: the signature to check.
+ *
+ * Returns true if this signature was created by @privkey and this tx
+ * and sighash_type, otherwise false.
+ */
+bool check_tx_taproot_sig(const struct bitcoin_tx *tx, size_t input_num,
+		  const u8 *tapleaf_script,
+          const struct point32 *x_key,
+          enum sighash_type sighash_type,
+          const struct bip340sig *sig);
+
 /* Give DER encoding of signature: returns length used (<= 73). */
 size_t signature_to_der(u8 der[73], const struct bitcoin_signature *sig);
 

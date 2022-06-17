@@ -30,6 +30,7 @@ static void dump_tx(const char *msg,
 		    const struct bitcoin_tx *tx, size_t inputnum,
 		    const u8 *script,
 		    const struct pubkey *key,
+            const struct point32 *x_key,
 		    const struct sha256_double *h)
 {
 	size_t i, j;
@@ -57,6 +58,11 @@ static void dump_tx(const char *msg,
 		for (i = 0; i < sizeof(key->pubkey); i++)
 			fprintf(stderr, "%02x", ((u8 *)&key->pubkey)[i]);
 		fprintf(stderr, "\n");
+	} else if (x_key) {
+		fprintf(stderr, "\nPubkey: ");
+		for (i = 0; i < sizeof(x_key->pubkey); i++)
+			fprintf(stderr, "%02x", ((u8 *)&x_key->pubkey)[i]);
+		fprintf(stderr, "\n");
 	}
 	if (h) {
 		fprintf(stderr, "\nHash: ");
@@ -70,6 +76,7 @@ static void dump_tx(const char *msg UNUSED,
 		    const struct bitcoin_tx *tx UNUSED, size_t inputnum UNUSED,
 		    const u8 *script UNUSED,
 		    const struct pubkey *key UNUSED,
+            const struct point32 *x_key,
 		    const struct sha256_double *h UNUSED)
 {
 }
@@ -221,7 +228,7 @@ void sign_tx_input(const struct bitcoin_tx *tx,
 	sig->sighash_type = sighash_type;
 	bitcoin_tx_hash_for_sig(tx, in, script, sighash_type, &hash);
 
-	dump_tx("Signing", tx, in, subscript, key, &hash);
+	dump_tx("Signing", tx, in, subscript, key, NULL /* x_key */, &hash);
 	sign_hash(privkey, &hash, &sig->s);
 }
 
@@ -234,18 +241,18 @@ void sign_tx_taproot_input(const struct bitcoin_tx *tx,
 {
 	struct sha256_double hash;
     int ret;
-    secp256k1_pubkey pubkey;
-    struct pubkey pk;
+    secp256k1_xonly_pubkey pubkey;
+    struct point32 x_key;
     struct privkey privkey;
 
 	/* FIXME assert sighashes we actually support assert(sighash_type_valid(sighash_type)); */
 	bitcoin_tx_taproot_hash_for_sig(tx, input_index, sighash_type, tapleaf_script, &hash);
 
     /* TODO just have it take keypair? */
-    ret = secp256k1_keypair_pub(secp256k1_ctx, &pubkey, key_pair);
+    ret = secp256k1_keypair_xonly_pub(secp256k1_ctx, &pubkey, NULL /* pk_parity */, key_pair);
     assert(ret);
-    pk.pubkey = pubkey;
-	dump_tx("Signing", tx, input_index, tapleaf_script, &pk, &hash);
+    x_key.pubkey = pubkey;
+	dump_tx("Signing", tx, input_index, tapleaf_script, NULL /* key */, &x_key, &hash);
     ret= secp256k1_keypair_sec(secp256k1_ctx, privkey.secret.data, key_pair);
     assert(ret);
 	bip340_sign_hash(&privkey, &hash, sig);
@@ -301,11 +308,37 @@ bool check_tx_sig(const struct bitcoin_tx *tx, size_t input_num,
 	assert(input_num < tx->wtx->num_inputs);
 
 	bitcoin_tx_hash_for_sig(tx, input_num, script, sig->sighash_type, &hash);
-	dump_tx("check_tx_sig", tx, input_num, script, key, &hash);
+	dump_tx("check_tx_sig", tx, input_num, script, key, NULL /* x_key */, &hash);
 
 	ret = check_signed_hash(&hash, &sig->s, key);
 	if (!ret)
-		dump_tx("Sig failed", tx, input_num, redeemscript, key, &hash);
+		dump_tx("Sig failed", tx, input_num, redeemscript, key, NULL /* x_key */, &hash);
+	return ret;
+}
+
+bool check_tx_taproot_sig(const struct bitcoin_tx *tx, size_t input_num,
+		  const u8 *tapleaf_script,
+		  const struct point32 *x_key,
+          enum sighash_type sighash_type,
+		  const struct bip340sig *sig)
+{
+	struct sha256_double hash;
+	bool ret;
+
+	/* FIXME We only support a limited subset of sighash types. */
+	if (sighash_type != SIGHASH_ALL) {
+		if (sighash_type != (SIGHASH_SINGLE|SIGHASH_ANYONECANPAY))
+			return false;
+	}
+	assert(input_num < tx->wtx->num_inputs);
+
+	bitcoin_tx_taproot_hash_for_sig(tx, input_num, sighash_type, tapleaf_script, &hash);
+
+	dump_tx("check_tx_sig", tx, input_num, tapleaf_script, NULL /* key */, x_key, &hash);
+
+	ret = check_signed_bip340_hash(&hash, sig, x_key);
+	if (!ret)
+		dump_tx("Sig failed", tx, input_num, tapleaf_script, NULL /* key */, x_key, &hash);
 	return ret;
 }
 
