@@ -150,11 +150,10 @@ void bip340_sign_hash(const struct privkey *privkey,
     assert(secp256k1_schnorrsig_verify(secp256k1_ctx, sig->u8, hash->sha.u.u8, sizeof(hash->sha.u.u8), &pubkey));
 }
 
-void bip340_partial_sign_hash(const struct privkey *privkey,
+void bip340_partial_sign(const struct privkey *privkey,
            secp256k1_musig_secnonce *secnonce,
            secp256k1_musig_keyagg_cache *cache,
            secp256k1_musig_session *session,
-	       const struct sha256_double *hash,
 	       secp256k1_musig_partial_sig *p_sig)
 {
 	bool ok;
@@ -169,6 +168,24 @@ void bip340_partial_sign_hash(const struct privkey *privkey,
     ok = secp256k1_musig_partial_sign(secp256k1_ctx, p_sig, secnonce, &keypair, cache, session);
 
     assert(ok);
+}
+
+bool bip340_partial_sigs_verify(const secp256k1_musig_partial_sig * const *p_sigs,
+           size_t num_signers,
+           const secp256k1_xonly_pubkey *agg_pk,
+           secp256k1_musig_session *session,
+           const struct sha256_double *hash,
+           struct bip340sig *sig)
+{
+    int ret;
+
+    ret = secp256k1_musig_partial_sig_agg(secp256k1_ctx, sig->u8, session, p_sigs, num_signers);
+
+    if (!ret) {
+        return false;
+    }
+
+   return secp256k1_schnorrsig_verify(secp256k1_ctx, sig->u8, hash->sha.u.u8, sizeof(hash->sha.u.u8), agg_pk);
 }
 
 void bitcoin_tx_hash_for_sig(const struct bitcoin_tx *tx, unsigned int in,
@@ -279,7 +296,7 @@ void sign_tx_taproot_input(const struct bitcoin_tx *tx,
     assert(ret);
     x_key.pubkey = pubkey;
 	dump_tx("Signing", tx, input_index, tapleaf_script, NULL /* key */, &x_key, &hash);
-    ret= secp256k1_keypair_sec(secp256k1_ctx, privkey.secret.data, key_pair);
+    ret = secp256k1_keypair_sec(secp256k1_ctx, privkey.secret.data, key_pair);
     assert(ret);
 	bip340_sign_hash(&privkey, &hash, sig);
 }
