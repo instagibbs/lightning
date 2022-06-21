@@ -170,7 +170,7 @@ void bip340_partial_sign(const struct privkey *privkey,
     assert(ok);
 }
 
-bool bip340_partial_sigs_verify(const secp256k1_musig_partial_sig * const *p_sigs,
+bool bip340_partial_sigs_combine_verify(const secp256k1_musig_partial_sig * const *p_sigs,
            size_t num_signers,
            const secp256k1_xonly_pubkey *agg_pk,
            secp256k1_musig_session *session,

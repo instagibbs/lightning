@@ -123,14 +123,14 @@ void bip340_partial_sign(const struct privkey *privkey,
            secp256k1_musig_partial_sig *p_sig);
 
 /**
- * bip340_partial_sigs_verify - combine and verify partial MuSig signatures
+ * bip340_partial_sigs_combine_verify - combine and verify partial MuSig signatures
  * @p_sigs: partial signatures to combine and validate
  * @num_signers: number of partial signatures to combine
  * @agg_pk: aggregated public key signature is validated against
  * @hash: hash to validate signature against
  * @sig: final BIP340 signature to output
  */
-bool bip340_partial_sigs_verify(const secp256k1_musig_partial_sig * const *p_sigs,
+bool bip340_partial_sigs_combine_verify(const secp256k1_musig_partial_sig * const *p_sigs,
            size_t num_signers,
            const secp256k1_xonly_pubkey *agg_pk,
            secp256k1_musig_session *session,
