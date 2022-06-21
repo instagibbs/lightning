@@ -9,6 +9,7 @@
 #include <common/utils.h>
 #include <secp256k1_schnorrsig.h>
 #include <wire/wire.h>
+#include <sodium/randombytes.h>
 
 #undef DEBUG
 #ifdef DEBUG
@@ -203,6 +204,22 @@ void bipmusig_finalize_keys(secp256k1_xonly_pubkey *agg_pk,
     }
 }
 
+void bipmusig_gen_nonce(secp256k1_musig_secnonce *secnonce,
+           secp256k1_musig_pubnonce *pubnonce,
+           const struct privkey *privkey,
+           secp256k1_musig_keyagg_cache *keyagg_cache,
+           const unsigned char *msg32)
+{
+    /* MUST be unique for each signing attempt or SFYL */
+    unsigned char session_id[32];
+    int ok;
+
+    randombytes_buf(session_id, sizeof(session_id));
+
+    ok = secp256k1_musig_nonce_gen(secp256k1_ctx, secnonce, pubnonce, session_id, privkey->secret.data, msg32, keyagg_cache, NULL /* extra_input32 */);
+
+    assert(ok);
+}
 
 void bipmusig_partial_sign(const struct privkey *privkey,
            secp256k1_musig_secnonce *secnonce,

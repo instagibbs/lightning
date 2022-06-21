@@ -128,6 +128,22 @@ void bipmusig_finalize_keys(secp256k1_xonly_pubkey *agg_pk,
            unsigned char *tap_tweak_out);
 
 /**
+ * bipmusig_gen_nonce - Generates session id, private
+ * and public nonce pair, assuming we already have
+ * a private and aggregated key.
+ * @secnonce: secret nonce to be generated. MUST NEVER BE MANUALLY COPIED OR PERSISTED!!!
+ * @pubnonce: public nonce to be generated
+ * @privkey: privkey for this signing session
+ * @keyagg_cache: aggregated key cache
+ * @msg32: Optional 32 byte message for misuse resistance
+ */
+void bipmusig_gen_nonce(secp256k1_musig_secnonce *secnonce,
+           secp256k1_musig_pubnonce *pubnonce,
+           const struct privkey *privkey,
+           secp256k1_musig_keyagg_cache *keyagg_cache,
+           const unsigned char *msg32);
+
+/**
  * bipmusig_partial_sign - produce a partial BIP340 signature.
  * This assumed an already existing session with pubkeys aggregated
  * and nonces collected, aggregated, and processed.
