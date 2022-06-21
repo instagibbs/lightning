@@ -223,12 +223,25 @@ void bipmusig_gen_nonce(secp256k1_musig_secnonce *secnonce,
 
 void bipmusig_partial_sign(const struct privkey *privkey,
            secp256k1_musig_secnonce *secnonce,
+           const secp256k1_musig_pubnonce * const *pubnonces,
+           size_t num_signers,
+           unsigned char *msg32,
            secp256k1_musig_keyagg_cache *cache,
            secp256k1_musig_session *session,
 	       secp256k1_musig_partial_sig *p_sig)
 {
 	bool ok;
     secp256k1_keypair keypair;
+    secp256k1_musig_aggnonce agg_pubnonce;
+
+    /* Create aggregate nonce and initialize the session */
+    ok = secp256k1_musig_nonce_agg(secp256k1_ctx, &agg_pubnonce, pubnonces, num_signers);
+
+    assert(ok);
+
+    ok = secp256k1_musig_nonce_process(secp256k1_ctx, session, &agg_pubnonce, msg32, cache, NULL);
+
+    assert(ok);
 
     ok = secp256k1_keypair_create(secp256k1_ctx,
                   &keypair,

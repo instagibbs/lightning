@@ -146,15 +146,21 @@ void bipmusig_gen_nonce(secp256k1_musig_secnonce *secnonce,
 /**
  * bipmusig_partial_sign - produce a partial BIP340 signature.
  * This assumed an already existing session with pubkeys aggregated
- * and nonces collected, aggregated, and processed.
- * This is called after _____ FIXME.
+ * and nonces collected but not aggregated and processed.
+ * This is called after bipmusig_gen_nonce.
  * @privkey: secret key
  * @secnonce: secret nonce used *once* to partially sign
+ * @pubnonces: public nonces collected from all signers, including self
+ * @num_signers: number of signers
+ * @msg32: Message hash we are signing
  * @session: session information for signing attempt
  * @p_sig: partial signature to fill and return
  */
 void bipmusig_partial_sign(const struct privkey *privkey,
            secp256k1_musig_secnonce *secnonce,
+           const secp256k1_musig_pubnonce * const *pubnonces,
+           size_t num_signers,
+           unsigned char *msg32,
            secp256k1_musig_keyagg_cache *cache,
            secp256k1_musig_session *session,
            secp256k1_musig_partial_sig *p_sig);
