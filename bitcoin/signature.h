@@ -107,6 +107,20 @@ void bip340_sign_hash(const struct privkey *privkey,
            struct bip340sig *sig);
 
 /**
+ * bipmusig_aggregate_keys - Aggregate keys in lexigraphically
+ * sorted order, and initializes the cache required for signing
+ * sessions
+ * @agg_pk: Aggregated public key to be constructed
+ * @keyagg_cache: Cache to be used for signing session and validation
+ * @pubkeys: Array of pubkeys to be aggregated
+ * @n_pubkeys: Number of public keys in @pubkeys
+ */
+void bipmusig_aggregate_keys(secp256k1_xonly_pubkey *agg_pk,
+           secp256k1_musig_keyagg_cache *keyagg_cache,
+           const secp256k1_xonly_pubkey * const* pubkeys,
+           size_t n_pubkeys);
+
+/**
  * bipmusig_partial_sign - produce a partial BIP340 signature.
  * This assumed an already existing session with pubkeys aggregated
  * and nonces collected, aggregated, and processed.
