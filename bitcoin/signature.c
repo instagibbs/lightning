@@ -150,7 +150,7 @@ void bip340_sign_hash(const struct privkey *privkey,
     assert(secp256k1_schnorrsig_verify(secp256k1_ctx, sig->u8, hash->sha.u.u8, sizeof(hash->sha.u.u8), &pubkey));
 }
 
-void bip340_partial_sign(const struct privkey *privkey,
+void bipmusig_partial_sign(const struct privkey *privkey,
            secp256k1_musig_secnonce *secnonce,
            secp256k1_musig_keyagg_cache *cache,
            secp256k1_musig_session *session,
@@ -170,7 +170,7 @@ void bip340_partial_sign(const struct privkey *privkey,
     assert(ok);
 }
 
-bool bip340_partial_sigs_combine_verify(const secp256k1_musig_partial_sig * const *p_sigs,
+bool bipmusig_partial_sigs_combine_verify(const secp256k1_musig_partial_sig * const *p_sigs,
            size_t num_signers,
            const secp256k1_xonly_pubkey *agg_pk,
            secp256k1_musig_session *session,

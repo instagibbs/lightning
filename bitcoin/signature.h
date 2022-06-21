@@ -97,7 +97,7 @@ void sign_hash(const struct privkey *p,
 	       secp256k1_ecdsa_signature *sig);
 
 /**
- * bip340_sighn_hash - produce a raw BIP340 signature
+ * bip340_sign_hash - produce a raw BIP340 signature
  * @privkey: secret key
  * @hash: hash to sign.
  * @sig: signature to fill and return
@@ -107,7 +107,7 @@ void bip340_sign_hash(const struct privkey *privkey,
            struct bip340sig *sig);
 
 /**
- * bip340_partial_sign - produce a partial BIP340 signature.
+ * bipmusig_partial_sign - produce a partial BIP340 signature.
  * This assumed an already existing session with pubkeys aggregated
  * and nonces collected, aggregated, and processed.
  * This is called after _____ FIXME.
@@ -116,21 +116,21 @@ void bip340_sign_hash(const struct privkey *privkey,
  * @session: session information for signing attempt
  * @p_sig: partial signature to fill and return
  */
-void bip340_partial_sign(const struct privkey *privkey,
+void bipmusig_partial_sign(const struct privkey *privkey,
            secp256k1_musig_secnonce *secnonce,
            secp256k1_musig_keyagg_cache *cache,
            secp256k1_musig_session *session,
            secp256k1_musig_partial_sig *p_sig);
 
 /**
- * bip340_partial_sigs_combine_verify - combine and verify partial MuSig signatures
+ * bipmusig_partial_sigs_combine_verify - combine and verify partial MuSig signatures
  * @p_sigs: partial signatures to combine and validate
  * @num_signers: number of partial signatures to combine
  * @agg_pk: aggregated public key signature is validated against
  * @hash: hash to validate signature against
  * @sig: final BIP340 signature to output
  */
-bool bip340_partial_sigs_combine_verify(const secp256k1_musig_partial_sig * const *p_sigs,
+bool bipmusig_partial_sigs_combine_verify(const secp256k1_musig_partial_sig * const *p_sigs,
            size_t num_signers,
            const secp256k1_xonly_pubkey *agg_pk,
            secp256k1_musig_session *session,
