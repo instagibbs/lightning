@@ -150,12 +150,16 @@ void bip340_sign_hash(const struct privkey *privkey,
     assert(secp256k1_schnorrsig_verify(secp256k1_ctx, sig->u8, hash->sha.u.u8, sizeof(hash->sha.u.u8), &pubkey));
 }
 
-void bipmusig_aggregate_keys(secp256k1_xonly_pubkey *agg_pk,
+void bipmusig_finalize_keys(secp256k1_xonly_pubkey *agg_pk,
            secp256k1_musig_keyagg_cache *keyagg_cache,
            const secp256k1_xonly_pubkey * const* pubkeys,
-           size_t n_pubkeys)
+           size_t n_pubkeys,
+           const struct sha256 *tap_merkle_root,
+           unsigned char *tap_tweak_out)
 {
     int i, ok;
+    unsigned char taptweak_preimage[64];
+    secp256k1_pubkey tmp_pk;
     assert(n_pubkeys <= 100);
 
     /* Sorting moves pubkeys themselves, we copy and discard after */
@@ -180,6 +184,23 @@ void bipmusig_aggregate_keys(secp256k1_xonly_pubkey *agg_pk,
         n_pubkeys); 
 
     assert(ok);
+
+    ok = secp256k1_xonly_pubkey_serialize(secp256k1_ctx, taptweak_preimage, agg_pk);
+
+    assert(ok);
+
+    if (tap_merkle_root) {
+        memcpy(taptweak_preimage + 32, tap_merkle_root->u.u8, sizeof(tap_merkle_root->u.u8));
+
+        ok = wally_tagged_hash(taptweak_preimage, sizeof(taptweak_preimage), "TapTweak", tap_tweak_out);
+
+        assert(ok == WALLY_OK);
+
+        /* Tweak, if script path spend */
+        ok = secp256k1_musig_pubkey_xonly_tweak_add(secp256k1_ctx, &tmp_pk, keyagg_cache, tap_tweak_out);
+
+        assert(ok);
+    }
 }
 
 
