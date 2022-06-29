@@ -108,21 +108,21 @@ void bip340_sign_hash(const struct privkey *privkey,
 
 /**
  * bipmusig_finalize_keys - Aggregate keys in lexigraphically
- * sorted order, tweaks if required for keyspend,
+ * sorted order, tweaks required for keyspend,
  * and initializes the cache required for signing
  * sessions
- * @agg_pk: Aggregated public key to be constructed
+ * @agg_pk: Aggregated, tweaked public key to be constructed
  * @keyagg_cache: Cache to be used for signing session and validation
  * @pubkeys: Array of pubkeys to be aggregated
  * @n_pubkeys: Number of public keys in @pubkeys
  * @tap_merkle_root: Merkle root for taptree, to be used in tweaking.
  *   NULL if script path spending is used.
  * @tap_tweak_out: Set to `t` in `t = hashTapTweak(p || k_m)` of BIP341.
-     Must be NULL iff @tap_merkle_root is NULL, 32 bytes otherwise.
+     N.B. if @tap_merkle_root if NULL, k_m is implicitly the empty string.
  */
-void bipmusig_finalize_keys(secp256k1_xonly_pubkey *agg_pk,
+void bipmusig_finalize_keys(struct pubkey *agg_pk,
            secp256k1_musig_keyagg_cache *keyagg_cache,
-           const secp256k1_xonly_pubkey * const* pubkeys,
+           const struct pubkey * const* pubkeys,
            size_t n_pubkeys,
            const struct sha256 *tap_merkle_root,
            unsigned char *tap_tweak_out);

@@ -46,6 +46,9 @@ u8 *p2wpkh_scriptcode(const tal_t *ctx, const struct pubkey *key);
 /* Create an output script for a 32-byte witness program. */
 u8 *scriptpubkey_p2wsh(const tal_t *ctx, const u8 *witnessscript);
 
+/* Create an output script for a taproot output */
+u8 *scriptpubkey_p2tr(const tal_t *ctx, const struct pubkey *pubkey);
+
 /* Create an output script for a 20-byte witness program. */
 u8 *scriptpubkey_p2wpkh(const tal_t *ctx, const struct pubkey *key);
 

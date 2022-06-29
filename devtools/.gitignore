@@ -12,6 +12,7 @@ mkclose
 mkcommit
 mkencoded
 mkfunding
+eltoo_mkfunding
 mkgossip
 mkquery
 onion
