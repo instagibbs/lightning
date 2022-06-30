@@ -56,7 +56,7 @@ static struct bitcoin_tx *funding_tx_eltoo(const tal_t *ctx,
 				     const struct pubkey *local_fundingkey,
 				     const struct pubkey *remote_fundingkey)
 {
-	u8 *wscript;
+	//u8 *wscript;
 	struct bitcoin_tx *tx;
     struct pubkey agg_pk;
     secp256k1_musig_keyagg_cache keyagg_cache;
@@ -78,9 +78,9 @@ static struct bitcoin_tx *funding_tx_eltoo(const tal_t *ctx,
 			      1, 0, BITCOIN_TX_DEFAULT_SEQUENCE);
 
     /* Generate P2TR scriptpubkey */
-    /* FIXME taproot PSBT support? */
-	bitcoin_tx_add_output(tx, scriptpubkey_p2wsh(tx, wscript), wscript, funding);
-	tal_free(wscript);
+    /* FIXME taproot PSBT support with taproot fields PSBT_OUT_TAP_INTERNAL_KEY PSBT_OUT_TAP_TREE */
+	bitcoin_tx_add_output(tx, scriptpubkey_p2tr(tx, &agg_pk), /* wscript */ NULL, funding);
+	// tal_free(wscript);
 
 	bitcoin_tx_finalize(tx);
 	assert(bitcoin_tx_check(tx));
