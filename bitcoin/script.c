@@ -980,3 +980,14 @@ bool scripteq(const u8 *s1, const u8 *s2)
 	memcheck(s2, s2_len);
 	return memeq(s1, s1_len, s2, s2_len);
 }
+
+u8 *bitcoin_spk_ephemeral_anchor(const tal_t *ctx)
+{
+	u8 *script = tal_arr(ctx, u8, 0);
+
+	/* BOLT #3:
+     * FIXME cite the extension bolts
+	 */
+	add_op(&script, OP_TRUE);
+	return script;
+}

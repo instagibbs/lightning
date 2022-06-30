@@ -187,6 +187,9 @@ bool scripteq(const u8 *s1, const u8 *s2);
 /* Raw "push these bytes" accessor. */
 void script_push_bytes(u8 **scriptp, const void *mem, size_t len);
 
+/* "anyonecanspend" Ephemeral anchor outputs */
+u8 *bitcoin_spk_ephemeral_anchor(const tal_t *ctx);
+
 /* OP_DUP + OP_HASH160 + PUSH(20-byte-hash) + OP_EQUALVERIFY + OP_CHECKSIG */
 #define BITCOIN_SCRIPTPUBKEY_P2PKH_LEN (1 + 1 + 1 + 20 + 1 + 1)
 
