@@ -190,6 +190,9 @@ void script_push_bytes(u8 **scriptp, const void *mem, size_t len);
 /* "anyonecanspend" Ephemeral anchor outputs */
 u8 *bitcoin_spk_ephemeral_anchor(const tal_t *ctx);
 
+/* to_node balance output script with anti-pinning 1 block CSV */
+u8 *bitcoin_tapscript_to_node(const struct pubkey *settlement_pubkey);
+
 /* OP_DUP + OP_HASH160 + PUSH(20-byte-hash) + OP_EQUALVERIFY + OP_CHECKSIG */
 #define BITCOIN_SCRIPTPUBKEY_P2PKH_LEN (1 + 1 + 1 + 20 + 1 + 1)
 

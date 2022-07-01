@@ -13,6 +13,12 @@ struct keyset {
 	struct pubkey self_payment_key, other_payment_key;
 };
 
+/* Keys needed to derive a particular settlement tx. */
+struct eltoo_keyset {
+	struct pubkey self_htlc_key, other_htlc_key;
+	struct pubkey self_payment_key, other_payment_key;
+};
+
 /* Self == owner of commitment tx, other == non-owner. */
 bool derive_keyset(const struct pubkey *per_commitment_point,
 		   const struct basepoints *self,

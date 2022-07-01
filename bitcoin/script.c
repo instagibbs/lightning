@@ -991,3 +991,35 @@ u8 *bitcoin_spk_ephemeral_anchor(const tal_t *ctx)
 	add_op(&script, OP_TRUE);
 	return script;
 }
+
+u8 *bitcoin_tapscript_to_node(const struct pubkey *settlement_pubkey)
+{
+	u8 *script = tal_arr(ctx, u8, 0);
+
+    /* BOLT #??
+     * `tr(aggregated_key, EXPR_BALANCE)`
+     *
+     * where EXPR_BALANCE =
+     *
+     * 1 OP_CHECKSEQUENCEVERIFY settlement_pubkey OP_CHECKSIGVERIFY
+    */
+	add_number(&script, 1);
+	add_op(&script, OP_CHECKSEQUENCEVERIFY);
+	add_push_key(&script, settlement_pubkey);
+	add_op(&script, OP_CHECKSIGVERIFY);
+    return script;
+}
+
+void compute_taptree_merkle_root(struct *sha256, u8 **scripts, size_t num_scripts)
+{
+    int ok;
+    unsigned char tap_version = 0xc0;
+    
+    /* Only what's required for eltoo et al for now, sue me */
+    assert(num_scripts <= 2);
+    if (num_scripts == 1) {
+        /* Let k0 = hashTapLeaf(v || compact_size(size of s) || s); also call it the tapleaf hash. */
+        ok = wally_tagged_hash((unsigned char*)scripts[0], tal_count(scripts[0]), "TapBranch", tap_tweak_out);
+        assert(ok);
+    }
+}

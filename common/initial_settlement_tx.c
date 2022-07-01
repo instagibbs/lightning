@@ -14,43 +14,52 @@ void tx_add_ephemeral_anchor_output(struct bitcoin_tx *tx)
 	bitcoin_tx_add_output(tx, spk, /* wscript */ NULL, AMOUNT_SAT(0));
 }
 
+u8 *to_self_eltoo_wscript(const tal_t *ctx,
+		    const struct keyset *keyset)
+{
+	return bitcoin_wscript_to_local(ctx, to_self_delay, csv,
+					&keyset->self_revocation_key,
+					&keyset->self_delayed_payment_key);
+}
+
 struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
 				     const struct bitcoin_outpoint *update_output,
 				     struct amount_sat update_output_sats,
 				     const struct pubkey funding_key[NUM_SIDES],
-				     enum side opener,
-				     u16 to_self_delay,
+				     u32 shared_delay,
 				     const struct keyset *keyset,
 				     u32 feerate_per_kw,
 				     struct amount_sat dust_limit,
 				     struct amount_msat self_pay,
 				     struct amount_msat other_pay,
 				     struct amount_sat self_reserve,
-				     u64 obscured_commitment_number,
+				     u32 obscured_update_number,
 				     struct wally_tx_output *direct_outputs[NUM_SIDES],
-				     enum side side,
-				     u32 csv_lock,
-				     bool option_anchor_outputs,
 				     char** err_reason)
 {
-	struct amount_sat base_fee;
+    struct amount_sat base_fee;
 	struct bitcoin_tx *tx;
 	size_t n, untrimmed;
 	bool to_local, to_remote;
 	struct amount_msat total_pay;
 	struct amount_sat amount;
 	enum side lessor = !opener;
-	u32 sequence;
 	void *dummy_local = (void *)LOCAL, *dummy_remote = (void *)REMOTE;
 	/* There is a direct, and possibly an anchor output for each side. */
 	const void *output_order[2 * NUM_SIDES];
+    struct pubkey *pubkey_ptrs[2];
+
 	const u8 *funding_wscript = bitcoin_redeem_2of2(tmpctx,
 							&funding_key[LOCAL],
 							&funding_key[REMOTE]);
 
+    /* For MuSig aggregation for outputs */
+    pubkey_ptrs[0] = &funding_key[0];
+    pubkey_ptrs[1] = &funding_key[1];
+
 	if (!amount_msat_add(&total_pay, self_pay, other_pay))
 		abort();
-	assert(!amount_msat_greater_sat(total_pay, funding_sats));
+	assert(!amount_msat_greater_sat(total_pay, update_output_sats));
 
 	/* BOLT #3:
 	 *
@@ -58,48 +67,6 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
 	 * [Trimmed Outputs](#trimmed-outputs)).
 	 */
 	untrimmed = 0;
-
-	/* BOLT #3:
-	 *
-	 * 2. Calculate the base [commitment transaction
-	 * fee](#fee-calculation).
-	 */
-	base_fee = commit_tx_base_fee(feerate_per_kw, untrimmed,
-				      option_anchor_outputs);
-
-	/* BOLT:
-	 * If `option_anchor_outputs` applies to the commitment
-	 * transaction, also subtract two times the fixed anchor size
-	 * of 330 sats from the funder (either `to_local` or
-	 * `to_remote`).
-	 */
-	if (option_anchor_outputs
-	    && !amount_sat_add(&base_fee, base_fee, AMOUNT_SAT(660))) {
-		*err_reason = "Funder cannot afford anchor outputs";
-		return NULL;
-	}
-
-	/* BOLT #3:
-	 *
-	 * 3. Subtract this base fee from the funder (either `to_local` or
-	 * `to_remote`).
-	 * If `option_anchors` applies to the commitment transaction,
-	 * also subtract two times the fixed anchor size of 330 sats from the
-	 * funder (either `to_local` or `to_remote`).
-	 */
-	if (!try_subtract_fee(opener, side, base_fee, &self_pay, &other_pay)) {
-		/* BOLT #2:
-		 *
-		 * The receiving node MUST fail the channel if:
-		 *...
-		 *   - it considers `feerate_per_kw` too small for timely
-		 *     processing or unreasonably large.
-		 */
-		*err_reason = "Funder cannot afford fee on initial commitment transaction";
-		status_unusual("Funder cannot afford fee"
-			       " on initial commitment transaction");
-		return NULL;
-	}
 
 	/* FIXME, should be in #2:
 	 *
@@ -127,8 +94,8 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
 	}
 
 
-	/* Worst-case sizing: both to-local and to-remote outputs + anchors. */
-	tx = bitcoin_tx(ctx, chainparams, 1, untrimmed + 4, 0);
+	/* Worst-case sizing: both to-local and to-remote outputs + single anchor. */
+	tx = bitcoin_tx(ctx, chainparams, 1, untrimmed + NUM_SIDES + 1, 0);
 
 	/* This could be done in a single loop, but we follow the BOLT
 	 * literally to make comments in test vectors clearer. */
@@ -148,16 +115,21 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
 
 	/* BOLT #3:
 	 *
-	 * 6. If the `to_local` amount is greater or equal to
-	 *    `dust_limit_satoshis`, add a [`to_local`
-	 *    output](#to_local-output).
+	 * 6. If the `to_node` amount is greater or equal to
+	 *    `dust_limit_satoshis`, add a [`to_node`
+	 *    output](#to_node-output).
 	 */
 	if (amount_msat_greater_eq_sat(self_pay, dust_limit)) {
-        /* FIXME to_self_wscript doesn't exist */
-		u8 *wscript = to_self_wscript(tmpctx,
-					      to_self_delay,
-					      side == lessor ? csv_lock : 0,
-					      keyset);
+        struct pubkey agg_pk;
+        secp256k1_musig_keyagg_cache keyagg_cache;
+        struct sha256 tap_merkle_root;
+        unsigned char tap_tweak_out[32];
+
+        u8 *tapleaf_script = bitcoin_tapscript_to_node(eltoo_keyset.self_payment_key);
+        /* FIXME compute taptree merkle root */
+        bipmusig_finalize_keys(&agg_pk, &keyagg_cache, pubkey_ptrs, /* n_pubkeys */ sizeof(pubkey_ptrs),
+           &tap_merkle_root, tap_tweak_out)
+
 		amount = amount_msat_to_sat_round_down(self_pay);
 		int pos = bitcoin_tx_add_output(
 		    tx, scriptpubkey_p2wsh(tx, wscript), wscript, amount);
@@ -175,32 +147,27 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
 	 *    output](#to_remote-output).
 	 */
 	if (amount_msat_greater_eq_sat(other_pay, dust_limit)) {
-		/* BOLT #3:
+		/* BOLT #???:
 		 *
 		 * If `option_anchors` applies to the commitment
 		 * transaction, the `to_remote` output is encumbered by a one
 		 * block csv lock.
 		 *    <remote_pubkey> OP_CHECKSIGVERIFY 1 OP_CHECKSEQUENCEVERIFY
 		 *
-		 *...
-		 * Otherwise, this output is a simple P2WPKH to `remotepubkey`.
 		 */
-		u8 *scriptpubkey;
-		int pos;
-		u8 *redeem;
+        struct pubkey agg_pk;
+        secp256k1_musig_keyagg_cache keyagg_cache;
+        struct sha256 tap_merkle_root;
+        unsigned char tap_tweak_out[32];
 
-		amount = amount_msat_to_sat_round_down(other_pay);
-		if (option_anchor_outputs) {
-			redeem = anchor_to_remote_redeem(tmpctx,
-						&keyset->other_payment_key,
-						(!side) == lessor ? csv_lock : 1);
-			scriptpubkey = scriptpubkey_p2wsh(tmpctx, redeem);
-		} else {
-			redeem = NULL;
-			scriptpubkey = scriptpubkey_p2wpkh(tmpctx,
-							   &keyset->other_payment_key);
-		}
-		pos = bitcoin_tx_add_output(tx, scriptpubkey, redeem, amount);
+        u8 *tapleaf_script = bitcoin_tapscript_to_node(eltoo_keyset.other_payment_key);
+        /* FIXME compute taptree merkle root */
+        bipmusig_finalize_keys(&agg_pk, &keyagg_cache, pubkey_ptrs, /* n_pubkeys */ sizeof(pubkey_ptrs),
+           &tap_merkle_root, tap_tweak_out)
+
+		amount = amount_msat_to_sat_round_down(self_pay);
+		int pos = bitcoin_tx_add_output(
+		    tx, scriptpubkey_p2wsh(tx, wscript), wscript, amount);
 		assert(pos == n);
 		output_order[n] = dummy_remote;
 		n++;
@@ -208,38 +175,26 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
 	} else
 		to_remote = false;
 
-	/* BOLT #3:
-	 * 8. If `option_anchors` applies to the commitment transaction:
-	 *    * if `to_local` exists or there are untrimmed HTLCs, add a
-	 *      [`to_local_anchor` output]...
-	 *    * if `to_remote` exists or there are untrimmed HTLCs, add a
-	 *      [`to_remote_anchor` output]
+	/* BOLT #???:
 	 */
-	if (option_anchor_outputs) {
-		if (to_local || untrimmed != 0) {
-			tx_add_anchor_output(tx, &funding_key[side]);
-			output_order[n] = NULL;
-			n++;
-		}
-
-		if (to_remote || untrimmed != 0) {
-			tx_add_anchor_output(tx, &funding_key[!side]);
-			output_order[n] = NULL;
-			n++;
-		}
-	}
+    if (untrimmed != 0) {
+        tx_add_ephemeral_anchor_output(tx, &funding_key[side]);
+        output_order[n] = NULL;
+        n++;
+    }
 
 	assert(n <= tx->wtx->num_outputs);
 	assert(n <= ARRAY_SIZE(output_order));
 
-	/* BOLT #3:
+	/* BOLT #???:
 	 *
 	 * 9. Sort the outputs into [BIP 69+CLTV
 	 *    order](#transaction-input-and-output-ordering)
 	 */
+    /* FIXME? */
 	permute_outputs(tx, NULL, output_order);
 
-	/* BOLT #3:
+	/* BOLT #???:
 	 *
 	 * ## Commitment Transaction
 	 *
@@ -247,15 +202,15 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
 	 */
 	assert(tx->wtx->version == 2);
 
-	/* BOLT #3:
+	/* BOLT #???:
 	 *
 	 * * locktime: upper 8 bits are 0x20, lower 24 bits are the
 	 * lower 24 bits of the obscured commitment number
 	 */
 	bitcoin_tx_set_locktime(tx,
-	    (0x20000000 | (obscured_commitment_number & 0xFFFFFF)));
+	    obscured_update_number);
 
-	/* BOLT #3:
+	/* BOLT #???:
 	 *
 	 * * txin count: 1
 	 *    * `txin[0]` outpoint: `txid` and `output_index` from
@@ -263,9 +218,8 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
 	 *    * `txin[0]` sequence: upper 8 bits are 0x80, lower 24 bits are upper 24 bits of the obscured commitment number
 	 *    * `txin[0]` script bytes: 0
 	 */
-	sequence = (0x80000000 | ((obscured_commitment_number>>24) & 0xFFFFFF));
-	bitcoin_tx_add_input(tx, funding, sequence,
-			     NULL, funding_sats, NULL, funding_wscript);
+	bitcoin_tx_add_input(tx, update_output, shared_delay,
+			     /* scriptSig */ NULL, update_output_sats, /* scriptPubKey */ NULL, /* input_wscript */ /* FIXME */);
 
 	if (direct_outputs != NULL) {
 		direct_outputs[LOCAL] = direct_outputs[REMOTE] = NULL;
@@ -279,8 +233,6 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
 
 	/* This doesn't reorder outputs, so we can do this after mapping outputs. */
 	bitcoin_tx_finalize(tx);
-
-	assert(bitcoin_tx_check(tx));
 
 	return tx;
 }
