@@ -109,9 +109,10 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
         secp256k1_musig_keyagg_cache keyagg_cache;
         struct sha256 tap_merkle_root;
         struct sha256 tap_tweak_out;
+        u8 **tapleaf_scripts[1];
 
-        u8 *tapleaf_script = bitcoin_tapscript_to_node(ctx, eltoo_keyset.self_payment_key);
-        /* FIXME compute taptree merkle root */
+        tapleaf_scripts[0] = bitcoin_tapscript_to_node(ctx, eltoo_keyset.self_payment_key);
+        compute_taptree_merkle_root(&tap_merkle_root, scripts, /* num_scripts */ 1)
         bipmusig_finalize_keys(&agg_pk, &keyagg_cache, pubkey_ptrs, /* n_pubkeys */ 2,
            &tap_merkle_root, tap_tweak_out.u.u8)
 
@@ -144,9 +145,11 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
         secp256k1_musig_keyagg_cache keyagg_cache;
         struct sha256 tap_merkle_root;
         struct sha256 tap_tweak_out;
+        u8 **tapleaf_scripts[1];
 
-        u8 *tapleaf_script = bitcoin_tapscript_to_node(ctx, eltoo_keyset.other_payment_key);
-        /* FIXME compute taptree merkle root */
+        tapleaf_scripts[0] = bitcoin_tapscript_to_node(ctx, eltoo_keyset.other_payment_key);
+        compute_taptree_merkle_root(&tap_merkle_root, scripts, /* num_scripts */ 1)
+
         bipmusig_finalize_keys(&agg_pk, &keyagg_cache, pubkey_ptrs, /* n_pubkeys */ 2,
            &tap_merkle_root, tap_tweak_out.u.u8)
 
