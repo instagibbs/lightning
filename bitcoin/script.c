@@ -1010,20 +1010,50 @@ u8 *bitcoin_tapscript_to_node(const tal_t *ctx, const struct pubkey *settlement_
     return script;
 }
 
-void compute_taptree_merkle_root(struct sha256 *hash_out, u8 *tap_tree, size_t num_scripts)
+void compute_taptree_merkle_root(struct sha256 *hash_out, u8 **scripts, size_t num_scripts)
 {
     int ok;
-    //unsigned char tap_version = 0xc0;
-    unsigned char scripts[1]; /* FIXME we need to extract info directly from psbt tap_tree structure */
-    unsigned char tap_tweak_out[1]; /* FIXME this is junk */
-    
-    scripts[0] = 0;
+    unsigned char leaf_version = 0xc0;
+    unsigned char tag_hash_buf[1000]; /* Needs to be large enough for HTLC scripts */
+    unsigned char tap_hashes[64]; /* To store the leaves for comparison */
 
     /* Only what's required for eltoo et al for now, sue me */
     assert(num_scripts <= 2);
     if (num_scripts == 1) {
+        size_t script_len = tal_count(scripts[0]);
+        unsigned char *p = tag_hash_buf;
         /* Let k0 = hashTapLeaf(v || compact_size(size of s) || s); also call it the tapleaf hash. */
-        ok = wally_tagged_hash(scripts, 1, "TapBranch", tap_tweak_out);
+        p[0] = leaf_version;
+        p++;
+        p += varint_put(p, script_len);
+        memcpy(p, scripts[0], script_len);
+        p += script_len;
+
+        /* k0 == km, this is the merkle root so we directly write it out */
+        ok = wally_tagged_hash(tag_hash_buf, p - tag_hash_buf, "TapLeaf", hash_out->u.u8);
+        assert(ok);
+    } else if (num_scripts == 2) {
+        int i;
+        for (i=0; i<num_scripts; ++i) {
+            size_t script_len = tal_count(scripts[i]);
+            unsigned char *p = tag_hash_buf;
+            /* Let k0 = hashTapLeaf(v || compact_size(size of s) || s); also call it the tapleaf hash. */
+            p[0] = leaf_version;
+            p++;
+            p += varint_put(p, script_len);
+            memcpy(p, scripts[i], script_len);
+            p += script_len;
+
+            ok = wally_tagged_hash(tag_hash_buf, p - tag_hash_buf, "TapLeaf", tap_hashes + (i*32));
+            assert(ok);
+        }
+        /* If kj ≥ ej: kj+1 = hashTapBranch(ej || kj), swap them*/
+        if (memcmp(tap_hashes, tap_hashes + 32, 32) >= 0) {
+            memcpy(tag_hash_buf, tap_hashes, 32);
+            memcpy(tap_hashes, tap_hashes + 32, 32);
+            memcpy(tap_hashes + 32, tag_hash_buf, 32);
+        }
+        ok = wally_tagged_hash(tap_hashes, sizeof(tap_hashes), "TapBranch", hash_out->u.u8);
         assert(ok);
     }
 }
