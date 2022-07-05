@@ -156,9 +156,9 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
 		amount = amount_msat_to_sat_round_down(self_pay);
 		int pos = bitcoin_tx_add_output(
 		    tx, scriptpubkey_p2wsh(tx, wscript), wscript, amount);
-		assert(pos == n);
-		output_order[n] = dummy_remote;
-		n++;
+		assert(pos == output_index);
+		output_order[output_index] = dummy_remote;
+		output_index++;
 		to_remote = true;
 	} else
 		to_remote = false;
