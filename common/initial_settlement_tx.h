@@ -13,7 +13,7 @@ struct keyset;
 struct wally_tx_output;
 
 /**
- * initial_settlement_tx: create (unsigned) commitment tx to spend the first update tx
+ * initial_settlement_tx: create (unsigned) update tx to spend the first update tx
  * @ctx: context to allocate transaction and @htlc_map from.
  * @funding, @funding_sats: funding outpoint and amount
  * @funding_keys: funding bitcoin keys to rederive funding output script
@@ -27,9 +27,6 @@ struct wally_tx_output;
  * @direct_outputs: If non-NULL, fill with pointers to the direct (non-HTLC) outputs (or NULL if none).
  * @err_reason: When NULL is returned, this will point to a human readable reason.
  *
- * We need to be able to generate the remote side's tx to create signatures,
- * but the BOLT is expressed in terms of generating our local commitment
- * transaction, so we carefully use the terms "self" and "other" here.
  */
 struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
 				     const struct bitcoin_outpoint *funding,
@@ -45,8 +42,6 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
 				     struct wally_tx_output *direct_outputs[NUM_SIDES],
 				     char** err_reason);
 
-
-/* To-other is simply: scriptpubkey_p2wpkh(tx, keyset->other_payment_key) */
 
 /* We always add a single ephemeral anchor output to settlement transactions */
 void tx_add_ephemeral_anchor_output(struct bitcoin_tx *tx);

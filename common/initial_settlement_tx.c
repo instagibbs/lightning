@@ -14,14 +14,6 @@ void tx_add_ephemeral_anchor_output(struct bitcoin_tx *tx)
 	bitcoin_tx_add_output(tx, spk, /* wscript */ NULL, AMOUNT_SAT(0));
 }
 
-u8 *to_self_eltoo_wscript(const tal_t *ctx,
-		    const struct keyset *keyset)
-{
-	return bitcoin_wscript_to_local(ctx, to_self_delay, csv,
-					&keyset->self_revocation_key,
-					&keyset->self_delayed_payment_key);
-}
-
 struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
 				     const struct bitcoin_outpoint *update_output,
 				     struct amount_sat update_output_sats,
