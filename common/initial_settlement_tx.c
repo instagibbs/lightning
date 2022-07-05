@@ -110,7 +110,7 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
         struct sha256 tap_merkle_root;
         struct sha256 tap_tweak_out[32];
 
-        u8 *tapleaf_script = bitcoin_tapscript_to_node(eltoo_keyset.self_payment_key);
+        u8 *tapleaf_script = bitcoin_tapscript_to_node(ctx, eltoo_keyset.self_payment_key);
         /* FIXME compute taptree merkle root */
         bipmusig_finalize_keys(&agg_pk, &keyagg_cache, pubkey_ptrs, /* n_pubkeys */ 2,
            &tap_merkle_root, tap_tweak_out.u.u8)
@@ -145,7 +145,7 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
         struct sha256 tap_merkle_root;
         struct sha256 tap_tweak_out[32];
 
-        u8 *tapleaf_script = bitcoin_tapscript_to_node(eltoo_keyset.other_payment_key);
+        u8 *tapleaf_script = bitcoin_tapscript_to_node(ctx, eltoo_keyset.other_payment_key);
         /* FIXME compute taptree merkle root */
         bipmusig_finalize_keys(&agg_pk, &keyagg_cache, pubkey_ptrs, /* n_pubkeys */ 2,
            &tap_merkle_root, tap_tweak_out.u.u8)

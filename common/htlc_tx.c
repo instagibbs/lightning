@@ -45,7 +45,7 @@ struct bitcoin_tx *htlc_tx(const tal_t *ctx,
 	 */
 	bitcoin_tx_add_input(tx, commit,
 			     (option_anchor_outputs || option_anchors_zero_fee_htlc_tx) ? 1 : 0,
-			     NULL, amount, NULL, commit_wscript);
+			     NULL, amount, NULL, commit_wscript, NULL, NULL);
 
 	/* BOLT #3:
 	 * * txout count: 1

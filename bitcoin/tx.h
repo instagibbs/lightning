@@ -2,6 +2,7 @@
 #define LIGHTNING_BITCOIN_TX_H
 #include "config.h"
 #include <bitcoin/chainparams.h>
+#include <bitcoin/pubkey.h>
 #include <bitcoin/varint.h>
 #include <wally_transaction.h>
 
@@ -13,6 +14,7 @@
 
 struct wally_psbt;
 struct ripemd160;
+struct pubkey;
 
 struct bitcoin_txid {
 	struct sha256_double shad;
@@ -140,6 +142,7 @@ void bitcoin_tx_set_locktime(struct bitcoin_tx *tx, u32 locktime);
 /* Add a new input to a bitcoin tx.
  *
  * For P2WSH inputs, we'll also store the wscript and/or scriptPubkey
+ * For P2TR inputs, we'll store the control block and/or scriptPubkey
  * Passing in just the {input_wscript}, we'll generate the scriptPubkey for you.
  * In some cases we may not have the wscript, in which case the scriptPubkey
  * should be provided. We'll check that it's P2WSH before saving it */
@@ -147,7 +150,7 @@ int bitcoin_tx_add_input(struct bitcoin_tx *tx,
 			 const struct bitcoin_outpoint *outpoint,
 			 u32 sequence, const u8 *scriptSig,
 			 struct amount_sat amount, const u8 *scriptPubkey,
-			 const u8 *input_wscript);
+			 const u8 *input_wscript, const struct pubkey *inner_pubkey, const u8 * tap_tree);
 
 /* This is useful because wally uses a raw byte array for txids */
 bool wally_tx_input_spends(const struct wally_tx_input *input,

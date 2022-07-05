@@ -226,7 +226,8 @@ int bitcoin_tx_add_input(struct bitcoin_tx *tx,
 			 const struct bitcoin_outpoint *outpoint,
 			 u32 sequence, const u8 *scriptSig,
 			 struct amount_sat amount, const u8 *scriptPubkey,
-			 const u8 *input_wscript)
+			 const u8 *input_wscript, const struct pubkey *inner_pubkey,
+             const u8 *tap_tree)
 {
 	int wally_err;
 	int input_num = tx->wtx->num_inputs;
@@ -238,7 +239,10 @@ int bitcoin_tx_add_input(struct bitcoin_tx *tx,
 
 	if (input_wscript) {
 		scriptPubkey = scriptpubkey_p2wsh(tmpctx, input_wscript);
-	}
+	} else if (tap_tree) {
+        /* FIXME Compute tap merkle root */
+        scriptPubkey = NULL;
+    }
 
 	assert(scriptPubkey);
 	psbt_input_set_wit_utxo(tx->psbt, input_num,

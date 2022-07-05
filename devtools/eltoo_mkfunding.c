@@ -45,7 +45,7 @@ static struct bitcoin_tx *tx_spending_utxo(const tal_t *ctx,
 	assert(!utxo->is_p2sh);
 	bitcoin_tx_add_input(tx, &utxo->outpoint,
 			     nsequence, NULL, utxo->amount,
-			     utxo->scriptPubkey, NULL);
+			     utxo->scriptPubkey, NULL, NULL, NULL);
 
 	return tx;
 }

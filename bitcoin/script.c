@@ -992,7 +992,7 @@ u8 *bitcoin_spk_ephemeral_anchor(const tal_t *ctx)
 	return script;
 }
 
-u8 *bitcoin_tapscript_to_node(const struct pubkey *settlement_pubkey)
+u8 *bitcoin_tapscript_to_node(const tal_t *ctx, const struct pubkey *settlement_pubkey)
 {
 	u8 *script = tal_arr(ctx, u8, 0);
 
@@ -1010,16 +1010,20 @@ u8 *bitcoin_tapscript_to_node(const struct pubkey *settlement_pubkey)
     return script;
 }
 
-void compute_taptree_merkle_root(struct *sha256, u8 **scripts, size_t num_scripts)
+void compute_taptree_merkle_root(struct sha256 *hash_out, u8 *tap_tree, size_t num_scripts)
 {
     int ok;
-    unsigned char tap_version = 0xc0;
+    //unsigned char tap_version = 0xc0;
+    unsigned char scripts[1]; /* FIXME we need to extract info directly from psbt tap_tree structure */
+    unsigned char tap_tweak_out[1]; /* FIXME this is junk */
     
+    scripts[0] = 0;
+
     /* Only what's required for eltoo et al for now, sue me */
     assert(num_scripts <= 2);
     if (num_scripts == 1) {
         /* Let k0 = hashTapLeaf(v || compact_size(size of s) || s); also call it the tapleaf hash. */
-        ok = wally_tagged_hash((unsigned char*)scripts[0], tal_count(scripts[0]), "TapBranch", tap_tweak_out);
+        ok = wally_tagged_hash(scripts, 1, "TapBranch", tap_tweak_out);
         assert(ok);
     }
 }

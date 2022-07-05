@@ -167,7 +167,7 @@ int main(int argc, char *argv[])
 	/* Our input spends the anchor tx output. */
 	bitcoin_tx_add_input(tx, &funding,
 			     BITCOIN_TX_DEFAULT_SEQUENCE, NULL,
-			     funding_amount, NULL, funding_wscript);
+			     funding_amount, NULL, funding_wscript, NULL, NULL);
 
 	sign_tx_input(tx, 0, NULL, funding_wscript,
 		      &funding_privkey[LOCAL],
