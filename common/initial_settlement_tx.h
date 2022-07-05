@@ -29,8 +29,8 @@ struct wally_tx_output;
  *
  */
 struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
-				     const struct bitcoin_outpoint *funding,
-				     struct amount_sat funding_sats,
+				     const struct bitcoin_outpoint *update_output,
+				     struct amount_sat udpate_output_sats,
 				     const struct pubkey funding_key[NUM_SIDES],
 				     u16 shared_delay,
 				     const struct eltoo_keyset *eltoo_keyset,
