@@ -28,23 +28,17 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
 				     struct wally_tx_output *direct_outputs[NUM_SIDES],
 				     char** err_reason)
 {
-    struct amount_sat base_fee;
 	struct bitcoin_tx *tx;
-	size_t n, untrimmed;
+	size_t output_index, num_untrimmed;
 	bool to_local, to_remote;
 	struct amount_msat total_pay;
 	struct amount_sat amount;
-	enum side lessor = !opener;
 	void *dummy_local = (void *)LOCAL, *dummy_remote = (void *)REMOTE;
-	/* There is a direct, and possibly an anchor output for each side. */
-	const void *output_order[2 * NUM_SIDES];
+	/* There is a direct output and possibly a shared anchor output */
+	const void *output_order[NUM_SIDES + 1];
     struct pubkey *pubkey_ptrs[2];
 
-	const u8 *funding_wscript = bitcoin_redeem_2of2(tmpctx,
-							&funding_key[LOCAL],
-							&funding_key[REMOTE]);
-
-    /* For MuSig aggregation for outputs */
+   /* For MuSig aggregation for outputs */
     pubkey_ptrs[0] = &funding_key[0];
     pubkey_ptrs[1] = &funding_key[1];
 
@@ -57,7 +51,7 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
 	 * 1. Calculate which committed HTLCs need to be trimmed (see
 	 * [Trimmed Outputs](#trimmed-outputs)).
 	 */
-	untrimmed = 0;
+	num_untrimmed = 0;
 
 	/* FIXME, should be in #2:
 	 *
@@ -86,12 +80,12 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
 
 
 	/* Worst-case sizing: both to-local and to-remote outputs + single anchor. */
-	tx = bitcoin_tx(ctx, chainparams, 1, untrimmed + NUM_SIDES + 1, 0);
+	tx = bitcoin_tx(ctx, chainparams, 1, num_untrimmed + NUM_SIDES + 1, 0);
 
 	/* This could be done in a single loop, but we follow the BOLT
 	 * literally to make comments in test vectors clearer. */
 
-	n = 0;
+	output_index = 0;
 	/* BOLT #3:
 	 *
 	 * 4. For every offered HTLC, if it is not trimmed, add an
@@ -118,15 +112,15 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
 
         u8 *tapleaf_script = bitcoin_tapscript_to_node(eltoo_keyset.self_payment_key);
         /* FIXME compute taptree merkle root */
-        bipmusig_finalize_keys(&agg_pk, &keyagg_cache, pubkey_ptrs, /* n_pubkeys */ sizeof(pubkey_ptrs),
+        bipmusig_finalize_keys(&agg_pk, &keyagg_cache, pubkey_ptrs, /* n_pubkeys */ 2,
            &tap_merkle_root, tap_tweak_out)
 
 		amount = amount_msat_to_sat_round_down(self_pay);
 		int pos = bitcoin_tx_add_output(
 		    tx, scriptpubkey_p2wsh(tx, wscript), wscript, amount);
-		assert(pos == n);
-		output_order[n] = dummy_local;
-		n++;
+		assert(pos == output_index);
+		output_order[output_index] = dummy_local;
+		output_index++;
 		to_local = true;
 	} else
 		to_local = false;
@@ -153,7 +147,7 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
 
         u8 *tapleaf_script = bitcoin_tapscript_to_node(eltoo_keyset.other_payment_key);
         /* FIXME compute taptree merkle root */
-        bipmusig_finalize_keys(&agg_pk, &keyagg_cache, pubkey_ptrs, /* n_pubkeys */ sizeof(pubkey_ptrs),
+        bipmusig_finalize_keys(&agg_pk, &keyagg_cache, pubkey_ptrs, /* n_pubkeys */ 2,
            &tap_merkle_root, tap_tweak_out)
 
 		amount = amount_msat_to_sat_round_down(self_pay);
@@ -168,14 +162,14 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
 
 	/* BOLT #???:
 	 */
-    if (untrimmed != 0) {
-        tx_add_ephemeral_anchor_output(tx, &funding_key[side]);
-        output_order[n] = NULL;
-        n++;
+    if (to_local || to_remote || num_untrimmed != 0) {
+        tx_add_ephemeral_anchor_output(tx);
+        output_order[output_index] = NULL;
+        output_index++;
     }
 
-	assert(n <= tx->wtx->num_outputs);
-	assert(n <= ARRAY_SIZE(output_order));
+	assert(output_index <= tx->wtx->num_outputs);
+	assert(output_index <= ARRAY_SIZE(output_order));
 
 	/* BOLT #???:
 	 *
