@@ -1003,10 +1003,10 @@ u8 *bitcoin_tapscript_to_node(const tal_t *ctx, const struct pubkey *settlement_
      *
      * 1 OP_CHECKSEQUENCEVERIFY settlement_pubkey OP_CHECKSIGVERIFY
     */
-	add_number(&script, 1);
-	add_op(&script, OP_CHECKSEQUENCEVERIFY);
 	add_push_key(&script, settlement_pubkey);
 	add_op(&script, OP_CHECKSIGVERIFY);
+	add_number(&script, 1);
+	add_op(&script, OP_CHECKSEQUENCEVERIFY);
     return script;
 }
 
