@@ -9,7 +9,7 @@
 #include <common/utils.h>
 
 struct bitcoin_outpoint;
-struct keyset;
+struct eltoo_keyset;
 struct wally_tx_output;
 
 /**
@@ -32,13 +32,13 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
 				     const struct bitcoin_outpoint *update_output,
 				     struct amount_sat udpate_output_sats,
 				     const struct pubkey funding_key[NUM_SIDES],
-				     u16 shared_delay,
+				     u32 shared_delay,
 				     const struct eltoo_keyset *eltoo_keyset,
 				     struct amount_sat dust_limit,
 				     struct amount_msat self_pay,
 				     struct amount_msat other_pay,
 				     struct amount_sat self_reserve,
-				     u64 obscured_update_number,
+				     u32 obscured_update_number,
 				     struct wally_tx_output *direct_outputs[NUM_SIDES],
 				     char** err_reason);
 

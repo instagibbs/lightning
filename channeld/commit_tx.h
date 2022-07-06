@@ -4,6 +4,8 @@
 #include <channeld/channeld_htlc.h>
 #include <common/initial_commit_tx.h>
 
+#include <common/initial_settlement_tx.h>
+
 struct keyset;
 
 /**

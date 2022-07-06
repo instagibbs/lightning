@@ -54,6 +54,7 @@ COMMON_SRC_NOGEN :=				\
 	common/interactivetx.c			\
 	common/initial_channel.c		\
 	common/initial_commit_tx.c		\
+	common/initial_settlement_tx.c		\
 	common/iso4217.c			\
 	common/json_blinded_path.c		\
 	common/json_channel_type.c		\

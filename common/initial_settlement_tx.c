@@ -36,7 +36,7 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
 	void *dummy_local = (void *)LOCAL, *dummy_remote = (void *)REMOTE;
 	/* There is a direct output and possibly a shared anchor output */
 	const void *output_order[NUM_SIDES + 1];
-    struct pubkey *pubkey_ptrs[2];
+    const struct pubkey *pubkey_ptrs[2];
 
    /* For MuSig aggregation for outputs */
     pubkey_ptrs[0] = &funding_key[0];
@@ -109,16 +109,16 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
         secp256k1_musig_keyagg_cache keyagg_cache;
         struct sha256 tap_merkle_root;
         struct sha256 tap_tweak_out;
-        u8 **tapleaf_scripts[1];
+        u8 *tapleaf_scripts[1];
 
-        tapleaf_scripts[0] = bitcoin_tapscript_to_node(ctx, eltoo_keyset.self_payment_key);
-        compute_taptree_merkle_root(&tap_merkle_root, scripts, /* num_scripts */ 1)
+        tapleaf_scripts[0] = bitcoin_tapscript_to_node(ctx, &eltoo_keyset->self_payment_key);
+        compute_taptree_merkle_root(&tap_merkle_root, tapleaf_scripts, /* num_scripts */ 1);
         bipmusig_finalize_keys(&agg_pk, &keyagg_cache, pubkey_ptrs, /* n_pubkeys */ 2,
-           &tap_merkle_root, tap_tweak_out.u.u8)
+           &tap_merkle_root, tap_tweak_out.u.u8);
 
 		amount = amount_msat_to_sat_round_down(self_pay);
 		int pos = bitcoin_tx_add_output(
-		    tx, scriptpubkey_p2wsh(tx, wscript), wscript, amount);
+		    tx, scriptpubkey_p2tr(ctx, &agg_pk), /* wscript */ NULL, amount /* FIXME pass in psbt fields for tap outputs */);
 		assert(pos == output_index);
 		output_order[output_index] = dummy_local;
 		output_index++;
@@ -145,17 +145,17 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
         secp256k1_musig_keyagg_cache keyagg_cache;
         struct sha256 tap_merkle_root;
         struct sha256 tap_tweak_out;
-        u8 **tapleaf_scripts[1];
+        u8 *tapleaf_scripts[1];
 
-        tapleaf_scripts[0] = bitcoin_tapscript_to_node(ctx, eltoo_keyset.other_payment_key);
-        compute_taptree_merkle_root(&tap_merkle_root, scripts, /* num_scripts */ 1)
+        tapleaf_scripts[0] = bitcoin_tapscript_to_node(ctx, &eltoo_keyset->other_payment_key);
+        compute_taptree_merkle_root(&tap_merkle_root, tapleaf_scripts, /* num_scripts */ 1);
 
         bipmusig_finalize_keys(&agg_pk, &keyagg_cache, pubkey_ptrs, /* n_pubkeys */ 2,
-           &tap_merkle_root, tap_tweak_out.u.u8)
+           &tap_merkle_root, tap_tweak_out.u.u8);
 
 		amount = amount_msat_to_sat_round_down(self_pay);
 		int pos = bitcoin_tx_add_output(
-		    tx, scriptpubkey_p2wsh(tx, wscript), wscript, amount);
+		    tx, scriptpubkey_p2tr(ctx, &agg_pk), /* wscript */ NULL, amount /* FIXME PSBT tap output fields*/);
 		assert(pos == output_index);
 		output_order[output_index] = dummy_remote;
 		output_index++;
@@ -207,7 +207,7 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
 	 *    * `txin[0]` script bytes: 0
 	 */
 	bitcoin_tx_add_input(tx, update_output, shared_delay,
-			     /* scriptSig */ NULL, update_output_sats, /* scriptPubKey */ NULL, /* input_wscript */ /* FIXME */);
+			     /* scriptSig */ NULL, update_output_sats, /* scriptPubKey */ NULL, /* input_wscript */ NULL, /* inner_pubkey */ NULL, /* tap_tree */ NULL);
 
     /* Now the the transaction itself is determined, we must compute the APO sighash to inject it
       into the inputs' tapscript, then attach the information to the PSBT */
