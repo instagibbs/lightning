@@ -193,8 +193,22 @@ u8 *bitcoin_spk_ephemeral_anchor(const tal_t *ctx);
 /* to_node balance output script with anti-pinning 1 block CSV */
 u8 *bitcoin_tapscript_to_node(const tal_t *ctx, const struct pubkey *settlement_pubkey);
 
-/* Computes taproot merkle root from PSBT-formatted taptree */
+/* Computes taproot merkle root from list of up to two scripts in depth 1 tree, in order */
 void compute_taptree_merkle_root(struct sha256 *hash_out, u8 **scripts, size_t num_scripts);
+
+/* Computes control block for a spend from a taptree of size two, depth of 1, tops. other_script is NULL if only one script is committed.
+ * @control_block: BIP341 serialized control block
+ * @control_block_size: (in/out) Size of required buffer, and written for size of control block
+ * @inner_pubkey: Inner pubkey for taproot control block
+ * @parity_bit: Parity of outer taproot pubkey
+ */
+void compute_control_block(u8 *control_block, size_t *control_block_size, u8 *other_script, secp256k1_xonly_pubkey *inner_pubkey, int parity_bit);
+
+/* Creates tapscript that makes a sig-in-script ANYPREVOUTANYSCRIPT covenant
+ * which commits to the tx argument:
+ * CovSig(n) 1_G OP_CHECKSIG
+ */
+u8 *make_apoas_cov_script(const tal_t *ctx, const struct bitcoin_tx *tx, size_t input_index);
 
 /* OP_DUP + OP_HASH160 + PUSH(20-byte-hash) + OP_EQUALVERIFY + OP_CHECKSIG */
 #define BITCOIN_SCRIPTPUBKEY_P2PKH_LEN (1 + 1 + 1 + 20 + 1 + 1)

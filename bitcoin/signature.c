@@ -716,3 +716,19 @@ bool check_schnorr_sig(const struct sha256 *hash,
  					   sizeof(hash->u.u8),
 					   &xonly_pubkey) == 1;
 }
+
+void create_keypair_of_one(secp256k1_keypair *G_pair)
+{
+    int ok;
+    unsigned char g[32];
+
+    /* Privkey of exactly 1, so the pubkey is the generator G */
+    memset(g, 0x00, sizeof(g));
+    g[sizeof(g)-1] = 0x01;
+
+    ok = secp256k1_keypair_create(
+        secp256k1_ctx,
+        G_pair,
+        g);
+    assert(ok);
+}

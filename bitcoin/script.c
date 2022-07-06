@@ -3,6 +3,7 @@
 #include <bitcoin/address.h>
 #include <bitcoin/locktime.h>
 #include <bitcoin/preimage.h>
+#include <bitcoin/privkey.h>
 #include <bitcoin/pubkey.h>
 #include <bitcoin/script.h>
 #include <ccan/mem/mem.h>
@@ -1057,3 +1058,97 @@ void compute_taptree_merkle_root(struct sha256 *hash_out, u8 **scripts, size_t n
         assert(ok);
     }
 }
+
+void compute_control_block(u8 *control_block, size_t *control_block_size, u8 *other_script, secp256k1_xonly_pubkey *inner_pubkey, int parity_bit)
+{
+    int ok;
+    u8 *control_block_cursor = control_block;
+    unsigned char leaf_version = 0xc0;
+    unsigned char tag_hash_buf[1000]; /* Needs to be large enough for HTLC scripts */
+
+    /* Only what's required for eltoo et al for now, 2 leaves max, sue me */
+    assert(control_block_size && *control_block_size >= 33 + 32);
+
+    assert(parity_bit == 0 || parity_bit == 1);
+    control_block_cursor[0] = leaf_version | parity_bit;
+    control_block_cursor++;
+
+    ok = secp256k1_xonly_pubkey_serialize(
+        secp256k1_ctx,
+        control_block_cursor,
+        inner_pubkey);
+    assert(ok);
+    control_block_cursor += 32;
+
+    /* Need tapleaf hash of the other script of the 2 */
+    if (other_script) {
+        size_t script_len = tal_count(other_script);
+        unsigned char *p = tag_hash_buf;
+        /* Let k0 = hashTapLeaf(v || compact_size(size of s) || s); also call it the tapleaf hash. */
+        p[0] = leaf_version;
+        p++;
+        p += varint_put(p, script_len);
+        memcpy(p, other_script, script_len);
+        p += script_len;
+
+        ok = wally_tagged_hash(tag_hash_buf, p - tag_hash_buf, "TapLeaf", control_block_cursor);
+        assert(ok);
+        control_block_cursor += 32;
+    }
+    *control_block_size = control_block_cursor - control_block;
+}
+
+u8 *make_apoas_cov_script(const tal_t *ctx, const struct bitcoin_tx *tx, size_t input_index)
+{
+    int ok;
+    enum sighash_type sh_type = SIGHASH_ANYPREVOUTANYSCRIPT|SIGHASH_ALL;
+	u8 *script = tal_arr(ctx, u8, 0);
+    struct sha256_double sighash;
+    struct bip340sig sig;
+    secp256k1_keypair G_pair;
+    secp256k1_xonly_pubkey G;
+    struct privkey g;
+    unsigned char one_G_bytes[33];
+
+    /* We use tapleaf_script as a switch for doing BIP342 hash
+     * We really shouldn't, but for now we pass in dummy
+     * since APOAS sighash doesn't cover it.
+     */
+    bitcoin_tx_taproot_hash_for_sig(tx,
+                 input_index,
+                 sh_type,
+                 script,
+                 &sighash);
+
+    /* Should directly take keypair instead of extracting but... */
+    create_keypair_of_one(&G_pair);
+    ok = secp256k1_keypair_sec(
+        secp256k1_ctx,
+        g.secret.data,
+        &G_pair);
+    assert(ok);
+
+    bip340_sign_hash(&g,
+           &sighash,
+           &sig);
+
+    /* 0x01-prefixed G for APOAS pubkey */
+    ok = secp256k1_keypair_xonly_pub(
+        secp256k1_ctx,
+        &G,
+        /* pk_parity */ NULL,
+        &G_pair);
+    assert(ok);
+    one_G_bytes[0] = 0x01;
+    ok = secp256k1_xonly_pubkey_serialize(
+        secp256k1_ctx,
+        one_G_bytes+1,
+        &G);
+
+    /* Build the script */
+    script_push_bytes(&script, sig.u8, sizeof(sig.u8));
+    script_push_bytes(&script, one_G_bytes, sizeof(one_G_bytes));
+	add_op(&script, OP_CHECKSIG);
+    return script;
+}
+

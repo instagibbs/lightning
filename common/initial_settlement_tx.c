@@ -39,6 +39,8 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
     const struct pubkey *pubkey_ptrs[2];
     int input_num;
     secp256k1_xonly_pubkey inner_pubkey;
+    u8 *script_pubkey;
+    u8 dummy_script;
 
    /* For MuSig aggregation for outputs */
     pubkey_ptrs[0] = &funding_key[0];
@@ -219,11 +221,14 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
      * where necessary for now.
      */
 	input_num = bitcoin_tx_add_input(tx, update_output, shared_delay,
-			     /* scriptSig */ NULL, update_output_sats, /* scriptPubKey */ NULL, /* input_wscript */ NULL, &inner_pubkey, /* tap_tree */ NULL);
+			     /* scriptSig */ NULL, update_output_sats, &dummy_script, /* input_wscript */ NULL, &inner_pubkey, /* tap_tree */ NULL);
     assert(input_num >= 0);
     /* Now the the transaction itself is determined, we must compute the APO sighash to inject it
       into the inputs' tapscript, then attach the information to the PSBT */
-    /* bitcoin_tx_rebind_input(tx, input_num);*/
+    script_pubkey = make_apoas_cov_script(tmpctx, tx, input_num);
+    assert(script_pubkey);
+    // We need to calc control block compute_taptree_merkle_root(tap_merkle_root, u8 **scripts, /* num_scripts */ 2);
+    //bitcoin_tx_rebind_input(tx, input_num, update_output, script_pubkey, /* tap_tree FIXME */ NULL);
 
 	if (direct_outputs != NULL) {
 		direct_outputs[LOCAL] = direct_outputs[REMOTE] = NULL;
