@@ -37,10 +37,17 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
 	/* There is a direct output and possibly a shared anchor output */
 	const void *output_order[NUM_SIDES + 1];
     const struct pubkey *pubkey_ptrs[2];
+    int input_num;
+    secp256k1_xonly_pubkey inner_pubkey;
 
    /* For MuSig aggregation for outputs */
     pubkey_ptrs[0] = &funding_key[0];
     pubkey_ptrs[1] = &funding_key[1];
+
+    /* Channel-wide inner public key computed here */
+    bipmusig_inner_pubkey(&inner_pubkey,
+           pubkey_ptrs,
+           /* n_pubkeys */ 2);
 
 	if (!amount_msat_add(&total_pay, self_pay, other_pay))
 		abort();
@@ -206,11 +213,17 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
 	 *    * `txin[0]` sequence: upper 8 bits are 0x80, lower 24 bits are upper 24 bits of the obscured commitment number
 	 *    * `txin[0]` script bytes: 0
 	 */
-	bitcoin_tx_add_input(tx, update_output, shared_delay,
-			     /* scriptSig */ NULL, update_output_sats, /* scriptPubKey */ NULL, /* input_wscript */ NULL, /* inner_pubkey */ NULL, /* tap_tree */ NULL);
-
+    /* 
+     * We do not know what scriptPubKey, tap_tree look like yet because we're computing
+     * a sighash to then put into the input sciript. We pass in dummies
+     * where necessary for now.
+     */
+	input_num = bitcoin_tx_add_input(tx, update_output, shared_delay,
+			     /* scriptSig */ NULL, update_output_sats, /* scriptPubKey */ NULL, /* input_wscript */ NULL, &inner_pubkey, /* tap_tree */ NULL);
+    assert(input_num >= 0);
     /* Now the the transaction itself is determined, we must compute the APO sighash to inject it
       into the inputs' tapscript, then attach the information to the PSBT */
+    /* bitcoin_tx_rebind_input(tx, input_num);*/
 
 	if (direct_outputs != NULL) {
 		direct_outputs[LOCAL] = direct_outputs[REMOTE] = NULL;

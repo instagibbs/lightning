@@ -107,6 +107,17 @@ void bip340_sign_hash(const struct privkey *privkey,
            struct bip340sig *sig);
 
 /**
+ * bipmusig_inner_pubkey - produce the sorted taproot inner pubkey.
+ * Does not create a signing session.
+ * @inner_pubkey: resulting aggregated(untweaked) x-only pubkey
+ * @pubkeys: array of public keys to aggregate
+ * @n_pubkeys: number of pubkeys in @pubkeys array
+ */
+void bipmusig_inner_pubkey(secp256k1_xonly_pubkey *inner_pubkey,
+           const struct pubkey * const* pubkeys,
+           size_t n_pubkeys);
+
+/**
  * bipmusig_finalize_keys - Aggregate keys in lexigraphically
  * sorted order, tweaks required for keyspend,
  * and initializes the cache required for signing

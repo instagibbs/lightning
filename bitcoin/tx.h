@@ -150,7 +150,7 @@ int bitcoin_tx_add_input(struct bitcoin_tx *tx,
 			 const struct bitcoin_outpoint *outpoint,
 			 u32 sequence, const u8 *scriptSig,
 			 struct amount_sat amount, const u8 *scriptPubkey,
-			 const u8 *input_wscript, const struct pubkey *inner_pubkey, const u8 * tap_tree);
+			 const u8 *input_wscript, const  secp256k1_xonly_pubkey *inner_pubkey, const u8 * tap_tree);
 
 /* This is useful because wally uses a raw byte array for txids */
 bool wally_tx_input_spends(const struct wally_tx_input *input,

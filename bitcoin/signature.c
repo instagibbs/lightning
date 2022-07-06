@@ -151,6 +151,40 @@ void bip340_sign_hash(const struct privkey *privkey,
     assert(secp256k1_schnorrsig_verify(secp256k1_ctx, sig->u8, hash->sha.u.u8, sizeof(hash->sha.u.u8), &pubkey));
 }
 
+void bipmusig_inner_pubkey(secp256k1_xonly_pubkey *inner_pubkey,
+           const struct pubkey * const* pubkeys,
+           size_t n_pubkeys)
+{
+    int i, ok;
+    assert(n_pubkeys <= 100);
+
+    /* Sorting moves pubkeys themselves, we copy and discard after */
+    secp256k1_xonly_pubkey x_keys[100];
+    const secp256k1_xonly_pubkey *x_keys_ptr[100];
+
+    for (i=0; i < n_pubkeys; ++i) {
+        ok = secp256k1_xonly_pubkey_from_pubkey(secp256k1_ctx, &x_keys[i], /* pk_parity */ NULL,
+            &(pubkeys[i]->pubkey));
+        assert(ok);
+        x_keys_ptr[i] = &x_keys[i];
+    }
+
+    ok = secp256k1_xonly_sort(secp256k1_ctx,
+        x_keys_ptr,
+        n_pubkeys);
+
+    assert(ok);
+
+    ok = secp256k1_musig_pubkey_agg(secp256k1_ctx,
+        NULL /* scratch */,
+        inner_pubkey,
+        /* keyagg_cache */ NULL,
+        x_keys_ptr,
+        n_pubkeys); 
+
+    assert(ok);
+}
+
 void bipmusig_finalize_keys(struct pubkey *agg_pk,
            secp256k1_musig_keyagg_cache *keyagg_cache,
            const struct pubkey * const* pubkeys,
