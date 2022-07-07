@@ -23,6 +23,7 @@ channeld/test/run-full_channel:			\
 	common/htlc_trim.o			\
 	common/htlc_tx.o			\
 	common/initial_commit_tx.o		\
+	common/initial_settlement_tx.o		\
 	common/key_derive.o			\
 	common/msg_queue.o			\
 	common/permute_tx.o			\
