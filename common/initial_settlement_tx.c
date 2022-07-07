@@ -41,7 +41,7 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
     secp256k1_xonly_pubkey inner_pubkey, output_pubkey;
     u8 *settle_and_update_tapscripts[2];
     u8 *script_pubkey;
-    u8 dummy_script;
+    u8 *dummy_script;
     u8 control_block[33+32];
     u8 *witness[2]; /* settle_and_update_tapscripts[0] script and control_block */
     size_t control_block_size = sizeof(control_block);
@@ -129,7 +129,7 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
         struct sha256 tap_tweak_out;
         u8 *tapleaf_scripts[1];
 
-        tapleaf_scripts[0] = bitcoin_tapscript_to_node(ctx, &eltoo_keyset->self_payment_key);
+        tapleaf_scripts[0] = bitcoin_tapscript_to_node(ctx, &eltoo_keyset->self_settle_key);
         compute_taptree_merkle_root(&tap_merkle_root, tapleaf_scripts, /* num_scripts */ 1);
         bipmusig_finalize_keys(&agg_pk, &keyagg_cache, pubkey_ptrs, /* n_pubkeys */ 2,
            &tap_merkle_root, tap_tweak_out.u.u8);
@@ -165,7 +165,7 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
         struct sha256 tap_tweak_out;
         u8 *tapleaf_scripts[1];
 
-        tapleaf_scripts[0] = bitcoin_tapscript_to_node(ctx, &eltoo_keyset->other_payment_key);
+        tapleaf_scripts[0] = bitcoin_tapscript_to_node(ctx, &eltoo_keyset->other_settle_key);
         compute_taptree_merkle_root(&tap_merkle_root, tapleaf_scripts, /* num_scripts */ 1);
 
         bipmusig_finalize_keys(&agg_pk, &keyagg_cache, pubkey_ptrs, /* n_pubkeys */ 2,
@@ -229,8 +229,9 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
      * a sighash to then put into the input sciript. We pass in dummies
      * where necessary for now.
      */
+    dummy_script = bitcoin_spk_ephemeral_anchor(tmpctx);
 	input_num = bitcoin_tx_add_input(tx, update_output, shared_delay,
-			     /* scriptSig */ NULL, update_output_sats, &dummy_script, /* input_wscript */ NULL, &inner_pubkey, /* tap_tree */ NULL);
+			     /* scriptSig */ NULL, update_output_sats, dummy_script, /* input_wscript */ NULL, &inner_pubkey, /* tap_tree */ NULL);
     assert(input_num == 0);
 
     /* Now the the transaction itself is determined, we must compute the APO sighash to inject it

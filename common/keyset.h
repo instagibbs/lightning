@@ -16,7 +16,7 @@ struct keyset {
 /* Keys needed to derive a particular settlement tx. */
 struct eltoo_keyset {
 	struct pubkey self_htlc_key, other_htlc_key;
-	struct pubkey self_payment_key, other_payment_key;
+	struct pubkey self_settle_key, other_settle_key;
 };
 
 /* Self == owner of commitment tx, other == non-owner. */

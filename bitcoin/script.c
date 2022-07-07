@@ -1032,7 +1032,7 @@ void compute_taptree_merkle_root(struct sha256 *hash_out, u8 **scripts, size_t n
 
         /* k0 == km, this is the merkle root so we directly write it out */
         ok = wally_tagged_hash(tag_hash_buf, p - tag_hash_buf, "TapLeaf", hash_out->u.u8);
-        assert(ok);
+        assert(ok == WALLY_OK);
     } else if (num_scripts == 2) {
         int i;
         for (i=0; i<num_scripts; ++i) {
@@ -1046,7 +1046,7 @@ void compute_taptree_merkle_root(struct sha256 *hash_out, u8 **scripts, size_t n
             p += script_len;
 
             ok = wally_tagged_hash(tag_hash_buf, p - tag_hash_buf, "TapLeaf", tap_hashes + (i*32));
-            assert(ok);
+            assert(ok == WALLY_OK);
         }
         /* If kj ≥ ej: kj+1 = hashTapBranch(ej || kj), swap them*/
         if (memcmp(tap_hashes, tap_hashes + 32, 32) >= 0) {
@@ -1055,7 +1055,7 @@ void compute_taptree_merkle_root(struct sha256 *hash_out, u8 **scripts, size_t n
             memcpy(tap_hashes + 32, tag_hash_buf, 32);
         }
         ok = wally_tagged_hash(tap_hashes, sizeof(tap_hashes), "TapBranch", hash_out->u.u8);
-        assert(ok);
+        assert(ok == WALLY_OK);
     }
 }
 
@@ -1092,7 +1092,7 @@ void compute_control_block(u8 *control_block, size_t *control_block_size, u8 *ot
         p += script_len;
 
         ok = wally_tagged_hash(tag_hash_buf, p - tag_hash_buf, "TapLeaf", control_block_cursor);
-        assert(ok);
+        assert(ok == WALLY_OK);
         control_block_cursor += 32;
     }
     *control_block_size = control_block_cursor - control_block;
