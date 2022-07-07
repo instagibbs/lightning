@@ -170,7 +170,7 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
         bipmusig_finalize_keys(&agg_pk, &keyagg_cache, pubkey_ptrs, /* n_pubkeys */ 2,
            &tap_merkle_root, tap_tweak_out.u.u8);
 
-		amount = amount_msat_to_sat_round_down(self_pay);
+		amount = amount_msat_to_sat_round_down(other_pay);
 		int pos = bitcoin_tx_add_output(
 		    tx, scriptpubkey_p2tr(ctx, &agg_pk), /* wscript */ NULL, amount /* FIXME PSBT tap output fields*/);
 		assert(pos == output_index);
