@@ -42,9 +42,8 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
     u8 *settle_and_update_tapscripts[2];
     u8 *script_pubkey;
     u8 *dummy_script;
-    u8 control_block[33+32];
-    u8 *witness[2]; /* settle_and_update_tapscripts[0] script and control_block */
-    size_t control_block_size = sizeof(control_block);
+    u8 *control_block;
+    u8 **witness; /* settle_and_update_tapscripts[0] script and control_block */
     struct sha256 update_merkle_root;
     struct pubkey update_agg_pk;
     secp256k1_musig_keyagg_cache update_keyagg_cache;
@@ -253,7 +252,7 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
     /* Convert to x-only, grab parity bit of the output pubkey */
     ok = secp256k1_xonly_pubkey_from_pubkey(ctx, &output_pubkey, &parity_bit, &(update_agg_pk.pubkey));
     assert(ok);
-    compute_control_block(control_block, &control_block_size, settle_and_update_tapscripts[1], &inner_pubkey, parity_bit);
+    control_block = compute_control_block(tmpctx, settle_and_update_tapscripts[1], &inner_pubkey, parity_bit);
     script_pubkey = scriptpubkey_p2tr(tmpctx, &update_agg_pk);
 
     /* Remove and re-add with updated information */
@@ -266,6 +265,7 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
      * the second-to-last stack element s, the script.
      * last stack element is called the control block
      */ 
+    witness = tal_arr(tmpctx, u8 *, 2);
     witness[0] = settle_and_update_tapscripts[0];
     witness[1] = control_block;
     bitcoin_tx_input_set_witness(tx, input_num, witness);

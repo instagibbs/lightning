@@ -197,12 +197,12 @@ u8 *bitcoin_tapscript_to_node(const tal_t *ctx, const struct pubkey *settlement_
 void compute_taptree_merkle_root(struct sha256 *hash_out, u8 **scripts, size_t num_scripts);
 
 /* Computes control block for a spend from a taptree of size two, depth of 1, tops. other_script is NULL if only one script is committed.
- * @control_block: BIP341 serialized control block
- * @control_block_size: (in/out) Size of required buffer, and written for size of control block
+ * Returns the control block array.
+ * @other_script: The script that needs to be hashed and put in control block
  * @inner_pubkey: Inner pubkey for taproot control block
  * @parity_bit: Parity of outer taproot pubkey
  */
-void compute_control_block(u8 *control_block, size_t *control_block_size, u8 *other_script, secp256k1_xonly_pubkey *inner_pubkey, int parity_bit);
+u8 *compute_control_block(const tal_t *ctx, u8 *other_script, secp256k1_xonly_pubkey *inner_pubkey, int parity_bit);
 
 /* Creates tapscript that makes a sig-in-script ANYPREVOUTANYSCRIPT covenant
  * which commits to the tx argument:

@@ -1059,15 +1059,18 @@ void compute_taptree_merkle_root(struct sha256 *hash_out, u8 **scripts, size_t n
     }
 }
 
-void compute_control_block(u8 *control_block, size_t *control_block_size, u8 *other_script, secp256k1_xonly_pubkey *inner_pubkey, int parity_bit)
+u8 *compute_control_block(const tal_t *ctx, u8 *other_script, secp256k1_xonly_pubkey *inner_pubkey, int parity_bit)
 {
     int ok;
-    u8 *control_block_cursor = control_block;
+    u8 *control_block_cursor;
+    u8 *control_block = tal_arr(ctx, u8, other_script ? 33 + 32 : 33);
+
+    control_block_cursor = control_block;
+
     unsigned char leaf_version = 0xc0;
     unsigned char tag_hash_buf[1000]; /* Needs to be large enough for HTLC scripts */
 
     /* Only what's required for eltoo et al for now, 2 leaves max, sue me */
-    assert(control_block_size && *control_block_size >= 33 + 32);
 
     assert(parity_bit == 0 || parity_bit == 1);
     control_block_cursor[0] = leaf_version | parity_bit;
@@ -1095,7 +1098,7 @@ void compute_control_block(u8 *control_block, size_t *control_block_size, u8 *ot
         assert(ok == WALLY_OK);
         control_block_cursor += 32;
     }
-    *control_block_size = control_block_cursor - control_block;
+    return control_block;
 }
 
 u8 *make_eltoo_settle_script(const tal_t *ctx, const struct bitcoin_tx *tx, size_t input_index)
