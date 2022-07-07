@@ -1098,7 +1098,7 @@ void compute_control_block(u8 *control_block, size_t *control_block_size, u8 *ot
     *control_block_size = control_block_cursor - control_block;
 }
 
-u8 *make_apoas_cov_script(const tal_t *ctx, const struct bitcoin_tx *tx, size_t input_index)
+u8 *make_eltoo_settle_script(const tal_t *ctx, const struct bitcoin_tx *tx, size_t input_index)
 {
     int ok;
     enum sighash_type sh_type = SIGHASH_ANYPREVOUTANYSCRIPT|SIGHASH_ALL;
@@ -1112,7 +1112,7 @@ u8 *make_apoas_cov_script(const tal_t *ctx, const struct bitcoin_tx *tx, size_t 
 
     /* We use tapleaf_script as a switch for doing BIP342 hash
      * We really shouldn't, but for now we pass in dummy
-     * since APOAS sighash doesn't cover it.
+     * since APOAS sighash doesn't cover it anyways.
      */
     bitcoin_tx_taproot_hash_for_sig(tx,
                  input_index,
@@ -1152,3 +1152,16 @@ u8 *make_apoas_cov_script(const tal_t *ctx, const struct bitcoin_tx *tx, size_t 
     return script;
 }
 
+u8 *make_eltoo_update_script(const tal_t *ctx, u32 update_num)
+{
+    /* where EXPR_UPDATE(n) =
+     *
+     *`OP_1 OP_CHECKSIGVERIFY <n> OP_CLTV`
+     */
+	u8 *script = tal_arr(ctx, u8, 0);
+	add_op(&script, OP_1);
+	add_op(&script, OP_CHECKSIGVERIFY);
+    add_number(&script, update_num);
+	add_op(&script, OP_CHECKSEQUENCEVERIFY);
+    return script;
+}

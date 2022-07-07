@@ -208,7 +208,10 @@ void compute_control_block(u8 *control_block, size_t *control_block_size, u8 *ot
  * which commits to the tx argument:
  * CovSig(n) 1_G OP_CHECKSIG
  */
-u8 *make_apoas_cov_script(const tal_t *ctx, const struct bitcoin_tx *tx, size_t input_index);
+u8 *make_eltoo_settle_script(const tal_t *ctx, const struct bitcoin_tx *tx, size_t input_index);
+
+/* Creates the update path tapscript for eltoo, which commits to the masked update number */
+u8 *make_eltoo_update_script(const tal_t *ctx, u32 update_num);
 
 /* OP_DUP + OP_HASH160 + PUSH(20-byte-hash) + OP_EQUALVERIFY + OP_CHECKSIG */
 #define BITCOIN_SCRIPTPUBKEY_P2PKH_LEN (1 + 1 + 1 + 20 + 1 + 1)

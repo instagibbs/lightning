@@ -38,9 +38,18 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
 	const void *output_order[NUM_SIDES + 1];
     const struct pubkey *pubkey_ptrs[2];
     int input_num;
-    secp256k1_xonly_pubkey inner_pubkey;
+    secp256k1_xonly_pubkey inner_pubkey, output_pubkey;
+    u8 *settle_and_update_tapscripts[2];
     u8 *script_pubkey;
     u8 dummy_script;
+    u8 control_block[33+32];
+    u8 *witness[2]; /* settle_and_update_tapscripts[0] script and control_block */
+    size_t control_block_size = sizeof(control_block);
+    struct sha256 update_merkle_root;
+    struct pubkey update_agg_pk;
+    secp256k1_musig_keyagg_cache update_keyagg_cache;
+    unsigned char update_tap_tweak[32];
+    int parity_bit, ok;
 
    /* For MuSig aggregation for outputs */
     pubkey_ptrs[0] = &funding_key[0];
@@ -222,13 +231,45 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
      */
 	input_num = bitcoin_tx_add_input(tx, update_output, shared_delay,
 			     /* scriptSig */ NULL, update_output_sats, &dummy_script, /* input_wscript */ NULL, &inner_pubkey, /* tap_tree */ NULL);
-    assert(input_num >= 0);
+    assert(input_num == 0);
+
     /* Now the the transaction itself is determined, we must compute the APO sighash to inject it
       into the inputs' tapscript, then attach the information to the PSBT */
-    script_pubkey = make_apoas_cov_script(tmpctx, tx, input_num);
-    assert(script_pubkey);
-    // We need to calc control block compute_taptree_merkle_root(tap_merkle_root, u8 **scripts, /* num_scripts */ 2);
-    //bitcoin_tx_rebind_input(tx, input_num, update_output, script_pubkey, /* tap_tree FIXME */ NULL);
+    settle_and_update_tapscripts[0] = make_eltoo_settle_script(tmpctx, tx, input_num);
+    settle_and_update_tapscripts[1] = make_eltoo_update_script(tmpctx, obscured_update_number);
+    assert(settle_and_update_tapscripts[0]);
+    assert(settle_and_update_tapscripts[1]);
+
+    /* We need to calculate the merkle root to figure the parity bit */
+    compute_taptree_merkle_root(&update_merkle_root, settle_and_update_tapscripts, /* num_scripts */ 2);
+    bipmusig_finalize_keys(&update_agg_pk,
+           &update_keyagg_cache,
+           pubkey_ptrs,
+           /* n_pubkeys */ 2,
+           &update_merkle_root,
+           update_tap_tweak);
+
+    /* Convert to x-only, grab parity bit of the output pubkey */
+    ok = secp256k1_xonly_pubkey_from_pubkey(ctx, &output_pubkey, &parity_bit, &(update_agg_pk.pubkey));
+    assert(ok);
+    compute_control_block(control_block, &control_block_size, settle_and_update_tapscripts[1], &inner_pubkey, parity_bit);
+    script_pubkey = scriptpubkey_p2tr(tmpctx, &update_agg_pk);
+
+    /* Remove and re-add with updated information */
+    bitcoin_tx_remove_input(tx, input_num);
+	input_num = bitcoin_tx_add_input(tx, update_output, shared_delay,
+			     /* scriptSig */ NULL, update_output_sats, script_pubkey, /* input_wscript */ NULL, &inner_pubkey, /* tap_tree */ NULL);
+    assert(input_num == 0);
+
+    /* We have the complete witness for this transaction already, just add it
+     * the second-to-last stack element s, the script.
+     * last stack element is called the control block
+     */ 
+    witness[0] = settle_and_update_tapscripts[0];
+    witness[1] = control_block;
+    bitcoin_tx_input_set_witness(tx, input_num, witness);
+
+    /* Transaction is now ready for broadcast! */
 
 	if (direct_outputs != NULL) {
 		direct_outputs[LOCAL] = direct_outputs[REMOTE] = NULL;

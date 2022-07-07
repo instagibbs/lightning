@@ -267,6 +267,18 @@ int bitcoin_tx_add_input(struct bitcoin_tx *tx,
 	return input_num;
 }
 
+void bitcoin_tx_remove_input(struct bitcoin_tx *tx,
+            size_t index_num)
+{
+    int ok;
+    ok = wally_tx_remove_input(
+        tx->wtx,
+        index_num);
+    assert(ok == WALLY_OK);
+
+    psbt_rm_input(tx->psbt, index_num);
+}
+
 bool bitcoin_tx_check(const struct bitcoin_tx *tx)
 {
 	u8 *newtx;
