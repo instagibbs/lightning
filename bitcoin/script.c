@@ -11,6 +11,8 @@
 #include <common/utils.h>
 #include <wally_script.h>
 
+#include <stdio.h>
+
 /* To push 0-75 bytes onto stack. */
 #define OP_PUSHBYTES(val) (val)
 
@@ -1108,10 +1110,12 @@ u8 *make_eltoo_settle_script(const tal_t *ctx, const struct bitcoin_tx *tx, size
 	u8 *script = tal_arr(ctx, u8, 0);
     struct sha256_double sighash;
     struct bip340sig sig;
+    unsigned char sig_with_flag[65];
     secp256k1_keypair G_pair;
     secp256k1_xonly_pubkey G;
     struct privkey g;
     unsigned char one_G_bytes[33];
+//    u8 *sighash_data;
 
     /* We use tapleaf_script as a switch for doing BIP342 hash
      * We really shouldn't, but for now we pass in dummy
@@ -1122,6 +1126,12 @@ u8 *make_eltoo_settle_script(const tal_t *ctx, const struct bitcoin_tx *tx, size
                  sh_type,
                  script,
                  &sighash);
+
+    printf("SIGHASH: %s\n", tal_hexstr(tmpctx, sighash.sha.u.u32, 32));//\n", sighash.sha.u.u32);
+    // Core is reporting this 3824125aa2a552b201262e7a01dabad67f95e2a7f62831c0a43957509af121c0
+//    sighash_data = tal_hexdata(tmpctx, "3824125aa2a552b201262e7a01dabad67f95e2a7f62831c0a43957509af121c0", strlen("3824125aa2a552b201262e7a01dabad67f95e2a7f62831c0a43957509af121c0"));
+//    memcpy(sighash.sha.u.u32, sighash_data, 32);
+//    printf("SIGHASH MOD: %s\n", tal_hexstr(tmpctx, sighash.sha.u.u32, 32));
 
     /* Should directly take keypair instead of extracting but... */
     create_keypair_of_one(&G_pair);
@@ -1148,8 +1158,11 @@ u8 *make_eltoo_settle_script(const tal_t *ctx, const struct bitcoin_tx *tx, size
         one_G_bytes+1,
         &G);
 
+    memcpy(sig_with_flag, sig.u8, sizeof(sig.u8));
+    sig_with_flag[64] = sh_type;
+
     /* Build the script */
-    script_push_bytes(&script, sig.u8, sizeof(sig.u8));
+    script_push_bytes(&script, sig_with_flag, sizeof(sig_with_flag));
     script_push_bytes(&script, one_G_bytes, sizeof(one_G_bytes));
 	add_op(&script, OP_CHECKSIG);
     return script;
@@ -1168,3 +1181,8 @@ u8 *make_eltoo_update_script(const tal_t *ctx, u32 update_num)
 	add_op(&script, OP_CHECKSEQUENCEVERIFY);
     return script;
 }
+
+//u8 *make_eltoo_htlc_success_script()
+//{
+
+//}

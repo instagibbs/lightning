@@ -8,6 +8,7 @@ static bool print_superverbose;
 #define PRINT_ACTUAL_FEE
 #include "../commit_tx.c"
 #include <bitcoin/tx.h>
+#include <bitcoin/psbt.h>
 #include <ccan/array_size/array_size.h>
 #include <ccan/err/err.h>
 #include <ccan/str/hex/hex.h>
@@ -155,6 +156,7 @@ int main(int argc, const char *argv[])
     struct privkey alice_funding_privkey, bob_funding_privkey, alice_settle_privkey, bob_settle_privkey;
     int ok;
     char *tx_hex;
+    char *psbt_b64;
 
 	common_setup(argv[0]);
 
@@ -208,6 +210,8 @@ int main(int argc, const char *argv[])
 
     tx_hex = fmt_bitcoin_tx(tmpctx, tx);
     printf("Settlement tx: %s\n", tx_hex);
+    psbt_b64 = psbt_to_b64(tmpctx, tx->psbt);
+    printf("Settlement psbt: %s\n", psbt_b64);
 
     /* Regression test vector for now */
     tx_cmp = bitcoin_tx_from_hex(tmpctx, regression_tx_hex, sizeof(regression_tx_hex)-1);
