@@ -6,6 +6,7 @@
 #include <common/permute_tx.h>
 #include <common/status.h>
 #include <common/type_to_string.h>
+#include <stdio.h>
 
 
 void tx_add_ephemeral_anchor_output(struct bitcoin_tx *tx)
@@ -39,6 +40,7 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
     const struct pubkey *pubkey_ptrs[2];
     int input_num;
     secp256k1_xonly_pubkey inner_pubkey, output_pubkey;
+    unsigned char output_pubkey_bytes[32];
     u8 *settle_and_update_tapscripts[2];
     u8 *script_pubkey;
     u8 *dummy_script;
@@ -242,6 +244,7 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
 
     /* We need to calculate the merkle root to figure the parity bit */
     compute_taptree_merkle_root(&update_merkle_root, settle_and_update_tapscripts, /* num_scripts */ 2);
+    printf("TAP MERK ROOT: %s\n", tal_hexstr(tmpctx, update_merkle_root.u.u32, 32));
     bipmusig_finalize_keys(&update_agg_pk,
            &update_keyagg_cache,
            pubkey_ptrs,
@@ -249,11 +252,20 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
            &update_merkle_root,
            update_tap_tweak);
 
+    printf("TAPTWEAK: %s\n", tal_hexstr(tmpctx, update_tap_tweak, 32));
     /* Convert to x-only, grab parity bit of the output pubkey */
     ok = secp256k1_xonly_pubkey_from_pubkey(ctx, &output_pubkey, &parity_bit, &(update_agg_pk.pubkey));
+    printf("PARITY BIT: %d\n", parity_bit);
     assert(ok);
     control_block = compute_control_block(tmpctx, settle_and_update_tapscripts[1], &inner_pubkey, parity_bit);
+    printf("CBLOCK: %s\n", tal_hexstr(tmpctx, control_block, tal_count(control_block)));
     script_pubkey = scriptpubkey_p2tr(tmpctx, &update_agg_pk);
+
+    ok = secp256k1_xonly_pubkey_serialize(secp256k1_ctx, output_pubkey_bytes, &output_pubkey);
+    assert(ok);
+    printf("OUTER PUBKEY: %s\n", tal_hexstr(tmpctx, output_pubkey_bytes, 32));
+
+    assert(secp256k1_xonly_pubkey_tweak_add_check(secp256k1_ctx, output_pubkey_bytes, parity_bit, &inner_pubkey, update_tap_tweak));
 
     /* Remove and re-add with updated information */
     bitcoin_tx_remove_input(tx, input_num);

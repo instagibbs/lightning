@@ -1049,6 +1049,7 @@ void compute_taptree_merkle_root(struct sha256 *hash_out, u8 **scripts, size_t n
 
             ok = wally_tagged_hash(tag_hash_buf, p - tag_hash_buf, "TapLeaf", tap_hashes + (i*32));
             assert(ok == WALLY_OK);
+            printf("TAPLEAF HASHES: %s\n", tal_hexstr(tmpctx, tap_hashes + (i*32), 32));
         }
         /* If kj ≥ ej: kj+1 = hashTapBranch(ej || kj), swap them*/
         if (memcmp(tap_hashes, tap_hashes + 32, 32) >= 0) {
