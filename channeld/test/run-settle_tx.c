@@ -235,6 +235,7 @@ static int test_htlc_output_creation(void)
     unsigned char tap_tweak_out[32];
     int ok;
     char *tap_hex;
+    /* Ground truth generated elsewhere */
     char hex_script[] = "51201886a9f50222b126b010a811bb156cbd6572ba92282808f384e9af4a0849028d";
 
     settlement_privkey.secret = secret_from_hex("1552dfba4f6cf29a62a0af13c8d6981d36d0ef8d61ba10fb0fe90da7634d7e1301");
