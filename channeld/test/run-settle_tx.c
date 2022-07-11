@@ -217,6 +217,62 @@ static int test_initial_settlement_tx(void)
 	return 0;
 }
 
+static int test_htlc_output_creation(void)
+{
+    struct privkey settlement_privkey;
+    struct pubkey settlement_pubkey, agg_pubkey;
+    const struct pubkey * pubkey_ptrs[1];
+    u8 *htlc_success_script;
+    u8 *htlc_timeout_script;
+    u8 *tapleaf_scripts[2];
+    u8 *taproot_script;
+    /* 0-value hash image */
+    unsigned char *invoice_hash = tal_arr(tmpctx, u8, 20);
+    struct sha256 tap_merkle_root;
+    secp256k1_xonly_pubkey inner_pubkey;
+    unsigned char inner_pubkey_bytes[32];
+    secp256k1_musig_keyagg_cache keyagg_cache;
+    unsigned char tap_tweak_out[32];
+    int ok;
+    char *tap_hex;
+    char hex_script[] = "51201886a9f50222b126b010a811bb156cbd6572ba92282808f384e9af4a0849028d";
+
+    settlement_privkey.secret = secret_from_hex("1552dfba4f6cf29a62a0af13c8d6981d36d0ef8d61ba10fb0fe90da7634d7e1301");
+
+    ok = pubkey_from_privkey(&settlement_privkey,
+             &settlement_pubkey);
+    assert(ok);
+
+    pubkey_ptrs[0] = &settlement_pubkey;
+
+    /* Calculate inner pubkey */
+    bipmusig_inner_pubkey(&inner_pubkey,
+           pubkey_ptrs,
+           /* n_pubkeys */ 1);
+
+    ok = secp256k1_xonly_pubkey_serialize(secp256k1_ctx, inner_pubkey_bytes, &inner_pubkey);
+    assert(ok);
+    printf("INNER PUBKEY: %s\n", tal_hexstr(tmpctx, inner_pubkey_bytes, 32));
+
+    htlc_success_script = make_eltoo_htlc_success_script(tmpctx, &settlement_pubkey, invoice_hash);
+    printf("HTLC Success script: %s\n", tal_hexstr(tmpctx, htlc_success_script, tal_count(htlc_success_script)));
+    htlc_timeout_script = make_eltoo_htlc_timeout_script(tmpctx, &settlement_pubkey, 420);
+    printf("HTLC Timeout script: %s\n", tal_hexstr(tmpctx, htlc_timeout_script, tal_count(htlc_timeout_script)));
+    tapleaf_scripts[0] = htlc_success_script;
+    tapleaf_scripts[1] = htlc_timeout_script;
+    compute_taptree_merkle_root(&tap_merkle_root, tapleaf_scripts, /* num_scripts */ 2);
+    bipmusig_finalize_keys(&agg_pubkey, &keyagg_cache, pubkey_ptrs, /* n_pubkeys */ 1,
+           &tap_merkle_root, tap_tweak_out);
+    taproot_script = scriptpubkey_p2tr(tmpctx, &agg_pubkey);
+    /* Size of OP_1 <tap key> script in hex output*/
+    assert(tal_count(taproot_script) == 1+1+32);
+    tap_hex = tal_hexstr(tmpctx, taproot_script, tal_count(taproot_script));
+    printf("Taproot script: %s\n", tap_hex);
+    assert(tal_count(tap_hex) == (1+1+32)*2 + 1);
+    assert(!memcmp(tap_hex, hex_script, tal_count(tap_hex)));
+    return 0;
+}
+
 int main(int argc, const char *argv[])
 {
     int err = 0;
@@ -227,6 +283,8 @@ int main(int argc, const char *argv[])
 
     err |= test_initial_settlement_tx();
     assert(!err);
+
+    err |= test_htlc_output_creation();
 
 	common_shutdown();
 

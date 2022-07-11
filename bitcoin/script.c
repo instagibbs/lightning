@@ -1207,7 +1207,7 @@ u8 *make_eltoo_htlc_success_script(const tal_t *ctx, const struct pubkey *settle
 	add_number(&script, 32);
 	add_op(&script, OP_EQUALVERIFY);
 	add_op(&script, OP_HASH160);
-    add(&script, invoice_hash, 32);
+    script_push_bytes(&script, invoice_hash, 20);
 	add_op(&script, OP_EQUALVERIFY);
 	add_number(&script, 1);
 	add_op(&script, OP_CHECKSEQUENCEVERIFY);
@@ -1223,6 +1223,7 @@ u8 *make_eltoo_htlc_timeout_script(const tal_t *ctx, const struct pubkey *settle
      */
 	u8 *script = tal_arr(ctx, u8, 0);
 	add_number(&script, htlc_timeout);
+	add_op(&script, OP_CHECKLOCKTIMEVERIFY);
 	add_op(&script, OP_VERIFY);
 	add_push_xonly_key(&script, settlement_pubkey);
 	add_op(&script, OP_CHECKSIGVERIFY);
