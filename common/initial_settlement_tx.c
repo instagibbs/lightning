@@ -40,6 +40,7 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
     const struct pubkey *pubkey_ptrs[2];
     int input_num;
     secp256k1_xonly_pubkey inner_pubkey, output_pubkey;
+    unsigned char inner_pubkey_bytes[32];
     unsigned char output_pubkey_bytes[32];
     u8 *settle_and_update_tapscripts[2];
     u8 *script_pubkey;
@@ -131,6 +132,7 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
         u8 *tapleaf_scripts[1];
 
         tapleaf_scripts[0] = bitcoin_tapscript_to_node(ctx, &eltoo_keyset->self_settle_key);
+        printf("SELF TO NODE: %s\n", tal_hexstr(tmpctx, tapleaf_scripts[0], tal_count(tapleaf_scripts[0])));
         compute_taptree_merkle_root(&tap_merkle_root, tapleaf_scripts, /* num_scripts */ 1);
         bipmusig_finalize_keys(&agg_pk, &keyagg_cache, pubkey_ptrs, /* n_pubkeys */ 2,
            &tap_merkle_root, tap_tweak_out.u.u8);
@@ -167,6 +169,7 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
         u8 *tapleaf_scripts[1];
 
         tapleaf_scripts[0] = bitcoin_tapscript_to_node(ctx, &eltoo_keyset->other_settle_key);
+        printf("OTHER TO NODE: %s\n", tal_hexstr(tmpctx, tapleaf_scripts[0], tal_count(tapleaf_scripts[0])));
         compute_taptree_merkle_root(&tap_merkle_root, tapleaf_scripts, /* num_scripts */ 1);
 
         bipmusig_finalize_keys(&agg_pk, &keyagg_cache, pubkey_ptrs, /* n_pubkeys */ 2,
@@ -261,6 +264,9 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
     printf("CBLOCK: %s\n", tal_hexstr(tmpctx, control_block, tal_count(control_block)));
     script_pubkey = scriptpubkey_p2tr(tmpctx, &update_agg_pk);
 
+    ok = secp256k1_xonly_pubkey_serialize(secp256k1_ctx, inner_pubkey_bytes, &inner_pubkey);
+    assert(ok);
+    printf("INNER PUBKEY: %s\n", tal_hexstr(tmpctx, inner_pubkey_bytes, 32));
     ok = secp256k1_xonly_pubkey_serialize(secp256k1_ctx, output_pubkey_bytes, &output_pubkey);
     assert(ok);
     printf("OUTER PUBKEY: %s\n", tal_hexstr(tmpctx, output_pubkey_bytes, 32));

@@ -89,6 +89,20 @@ static void add_push_key(u8 **scriptp, const struct pubkey *key)
 	script_push_bytes(scriptp, der, sizeof(der));
 }
 
+static void add_push_xonly_key(u8 **scriptp, const struct pubkey *key)
+{
+    int ok;
+    unsigned char xonly_bytes[32];
+    secp256k1_xonly_pubkey xonly;
+
+    ok = secp256k1_xonly_pubkey_from_pubkey(secp256k1_ctx, &xonly, /* parity_bit */ NULL, &(key->pubkey));
+    assert(ok);
+    ok = secp256k1_xonly_pubkey_serialize(secp256k1_ctx, xonly_bytes, &xonly);
+    assert(ok);
+
+    script_push_bytes(scriptp, xonly_bytes, sizeof(xonly_bytes));
+}
+
 static void add_push_sig(u8 **scriptp, const struct bitcoin_signature *sig)
 {
 	u8 der[73];
@@ -1006,7 +1020,7 @@ u8 *bitcoin_tapscript_to_node(const tal_t *ctx, const struct pubkey *settlement_
      *
      * 1 OP_CHECKSEQUENCEVERIFY settlement_pubkey OP_CHECKSIGVERIFY
     */
-	add_push_key(&script, settlement_pubkey);
+	add_push_xonly_key(&script, settlement_pubkey);
 	add_op(&script, OP_CHECKSIGVERIFY);
 	add_number(&script, 1);
 	add_op(&script, OP_CHECKSEQUENCEVERIFY);
@@ -1035,6 +1049,7 @@ void compute_taptree_merkle_root(struct sha256 *hash_out, u8 **scripts, size_t n
         /* k0 == km, this is the merkle root so we directly write it out */
         ok = wally_tagged_hash(tag_hash_buf, p - tag_hash_buf, "TapLeaf", hash_out->u.u8);
         assert(ok == WALLY_OK);
+        printf("TAPLEAF HASH(1 branch): %s\n", tal_hexstr(tmpctx, hash_out->u.u8, 32));
     } else if (num_scripts == 2) {
         int i;
         for (i=0; i<num_scripts; ++i) {
