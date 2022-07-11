@@ -1213,3 +1213,20 @@ u8 *make_eltoo_htlc_success_script(const tal_t *ctx, const struct pubkey *settle
 	add_op(&script, OP_CHECKSEQUENCEVERIFY);
     return script;
 }
+
+u8 *make_eltoo_htlc_timeout_script(const tal_t *ctx, const struct pubkey *settlement_pubkey, u32 htlc_timeout)
+{
+    /* and EXPR_TIMEOUT =
+     *
+     *`<N> OP_CHECKLOCKTIMEVERIFY OP_VERIFY <settlement_pubkey> OP_CHECKSIGVERIFY 1
+     * OP_CHECKSEQUENCEVERIFY`
+     */
+	u8 *script = tal_arr(ctx, u8, 0);
+	add_number(&script, htlc_timeout);
+	add_op(&script, OP_VERIFY);
+	add_push_xonly_key(&script, settlement_pubkey);
+	add_op(&script, OP_CHECKSIGVERIFY);
+	add_number(&script, 1);
+	add_op(&script, OP_CHECKSEQUENCEVERIFY);
+    return script;
+}

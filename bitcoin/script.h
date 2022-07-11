@@ -216,6 +216,9 @@ u8 *make_eltoo_update_script(const tal_t *ctx, u32 update_num);
 /* Creates eltoo HTLC success script, with invoice hash lock */
 u8 *make_eltoo_htlc_success_script(const tal_t *ctx, const struct pubkey *settlement_pubkey, u8 *invoice_hash);
 
+/* Creates eltoo HTLC timeout script, with timeout value */
+u8 *make_eltoo_htlc_timeout_script(const tal_t *ctx, const struct pubkey *settlement_pubkey, u32 htlc_timeout);
+
 /* OP_DUP + OP_HASH160 + PUSH(20-byte-hash) + OP_EQUALVERIFY + OP_CHECKSIG */
 #define BITCOIN_SCRIPTPUBKEY_P2PKH_LEN (1 + 1 + 1 + 20 + 1 + 1)
 
