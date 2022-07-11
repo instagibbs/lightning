@@ -1131,7 +1131,6 @@ u8 *make_eltoo_settle_script(const tal_t *ctx, const struct bitcoin_tx *tx, size
     secp256k1_xonly_pubkey G;
     struct privkey g;
     unsigned char one_G_bytes[33];
-//    u8 *sighash_data;
 
     /* We use tapleaf_script as a switch for doing BIP342 hash
      * We really shouldn't, but for now we pass in dummy
@@ -1144,10 +1143,6 @@ u8 *make_eltoo_settle_script(const tal_t *ctx, const struct bitcoin_tx *tx, size
                  &sighash);
 
     printf("SIGHASH: %s\n", tal_hexstr(tmpctx, sighash.sha.u.u32, 32));//\n", sighash.sha.u.u32);
-    // Core is reporting this 3824125aa2a552b201262e7a01dabad67f95e2a7f62831c0a43957509af121c0
-//    sighash_data = tal_hexdata(tmpctx, "3824125aa2a552b201262e7a01dabad67f95e2a7f62831c0a43957509af121c0", strlen("3824125aa2a552b201262e7a01dabad67f95e2a7f62831c0a43957509af121c0"));
-//    memcpy(sighash.sha.u.u32, sighash_data, 32);
-//    printf("SIGHASH MOD: %s\n", tal_hexstr(tmpctx, sighash.sha.u.u32, 32));
 
     /* Should directly take keypair instead of extracting but... */
     create_keypair_of_one(&G_pair);
@@ -1198,7 +1193,23 @@ u8 *make_eltoo_update_script(const tal_t *ctx, u32 update_num)
     return script;
 }
 
-//u8 *make_eltoo_htlc_success_script()
-//{
-
-//}
+u8 *make_eltoo_htlc_success_script(const tal_t *ctx, const struct pubkey *settlement_pubkey, u8 *invoice_hash)
+{
+    /* where EXPR_SUCCESS =
+     *
+     * `<settlement_pubkey> OP_CHECKSIGVERIFY OP_SIZE <32> OP_EQUALVERIFY OP_HASH160 <H>
+     * OP_EQUALVERIFY 1 OP_CHECKSEQUENCEVERIFY`
+     */
+	u8 *script = tal_arr(ctx, u8, 0);
+	add_push_xonly_key(&script, settlement_pubkey);
+	add_op(&script, OP_CHECKSIGVERIFY);
+	add_op(&script, OP_SIZE);
+	add_number(&script, 32);
+	add_op(&script, OP_EQUALVERIFY);
+	add_op(&script, OP_HASH160);
+    add(&script, invoice_hash, 32);
+	add_op(&script, OP_EQUALVERIFY);
+	add_number(&script, 1);
+	add_op(&script, OP_CHECKSEQUENCEVERIFY);
+    return script;
+}
