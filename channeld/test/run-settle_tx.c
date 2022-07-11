@@ -138,7 +138,7 @@ static struct pubkey pubkey_from_hex(const char *hex)
     return pubkey;
 }
 
-int main(int argc, const char *argv[])
+static int test_initial_settlement_tx(void)
 {
     struct bitcoin_outpoint update_output;
     struct amount_sat update_output_sats;
@@ -157,10 +157,6 @@ int main(int argc, const char *argv[])
     int ok;
     char *tx_hex;
     char *psbt_b64;
-
-	common_setup(argv[0]);
-
-    chainparams = chainparams_for_network("bitcoin");
 
     /* Test initial settlement tx */
 
@@ -217,8 +213,23 @@ int main(int argc, const char *argv[])
     tx_cmp = bitcoin_tx_from_hex(tmpctx, regression_tx_hex, sizeof(regression_tx_hex)-1);
     tx_must_be_eq(tx, tx_cmp);
 
-	common_shutdown();
 
-	/* FIXME: Do BOLT comparison! */
 	return 0;
 }
+
+int main(int argc, const char *argv[])
+{
+    int err = 0;
+
+	common_setup(argv[0]);
+
+    chainparams = chainparams_for_network("bitcoin");
+
+    err |= test_initial_settlement_tx();
+    assert(!err);
+
+	common_shutdown();
+
+    return err;
+}
+
