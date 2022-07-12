@@ -127,22 +127,10 @@ static void tx_must_be_eq(const struct bitcoin_tx *a,
 		     tal_hex(tmpctx, linb));
 }
 
-static struct pubkey pubkey_from_hex(const char *hex)
-{
-    struct pubkey pubkey;
-
-    if (strstarts(hex, "0x"))
-        hex += 2;
-    if (!pubkey_from_hexstr(hex, strlen(hex), &pubkey))
-        abort();
-    return pubkey;
-}
-
 static int test_initial_settlement_tx(void)
 {
     struct bitcoin_outpoint update_output;
     struct amount_sat update_output_sats;
-    struct pubkey funding_key[NUM_SIDES];
     u32 shared_delay;
     struct eltoo_keyset eltoo_keyset;
     struct amount_sat dust_limit;
@@ -163,15 +151,14 @@ static int test_initial_settlement_tx(void)
     update_output.txid = txid_from_hex("8984484a580b825b9972d7adb15050b3ab624ccd731946b3eeddb92f4e7ef6be");
     update_output.n = 0;
     update_output_sats.satoshis = 69420;
-    funding_key[0] = pubkey_from_hex("02fcba7ecf41bc7e1be4ee122d9d22e3333671eb0a3a87b5cdf099d59874e1940f");
 
     alice_funding_privkey.secret = secret_from_hex("30ff4956bbdd3222d44cc5e8a1261dab1e07957bdac5ae88fe3261ef321f374901");
     bob_funding_privkey.secret = secret_from_hex("1552dfba4f6cf29a62a0af13c8d6981d36d0ef8d61ba10fb0fe90da7634d7e1301");
 
     ok = pubkey_from_privkey(&alice_funding_privkey,
-             &funding_key[0]);
+             &eltoo_keyset.self_funding_key);
     ok = pubkey_from_privkey(&bob_funding_privkey,
-             &funding_key[1]);
+             &eltoo_keyset.other_funding_key);
 
     shared_delay = 42;
 
@@ -193,7 +180,6 @@ static int test_initial_settlement_tx(void)
     tx = initial_settlement_tx(tmpctx,
                      &update_output,
                      update_output_sats,
-                     funding_key,
                      shared_delay,
                      &eltoo_keyset,
                      dust_limit,

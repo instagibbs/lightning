@@ -16,9 +16,8 @@ void tx_add_ephemeral_anchor_output(struct bitcoin_tx *tx)
 }
 
 struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
-				     const struct bitcoin_outpoint *update_output,
-				     struct amount_sat update_output_sats,
-				     const struct pubkey funding_key[NUM_SIDES],
+				     const struct bitcoin_outpoint *update_outpoint,
+				     struct amount_sat update_outpoint_sats,
 				     u32 shared_delay,
 				     const struct eltoo_keyset *eltoo_keyset,
 				     struct amount_sat dust_limit,
@@ -54,8 +53,8 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
     int parity_bit, ok;
 
    /* For MuSig aggregation for outputs */
-    pubkey_ptrs[0] = &funding_key[0];
-    pubkey_ptrs[1] = &funding_key[1];
+    pubkey_ptrs[0] = &(eltoo_keyset->self_funding_key);
+    pubkey_ptrs[1] = &(eltoo_keyset->other_funding_key);
 
     /* Channel-wide inner public key computed here */
     bipmusig_inner_pubkey(&inner_pubkey,
@@ -64,7 +63,7 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
 
 	if (!amount_msat_add(&total_pay, self_pay, other_pay))
 		abort();
-	assert(!amount_msat_greater_sat(total_pay, update_output_sats));
+	assert(!amount_msat_greater_sat(total_pay, update_outpoint_sats));
 
 	/* BOLT #3:
 	 *
@@ -234,8 +233,8 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
      * where necessary for now.
      */
     dummy_script = bitcoin_spk_ephemeral_anchor(tmpctx);
-	input_num = bitcoin_tx_add_input(tx, update_output, shared_delay,
-			     /* scriptSig */ NULL, update_output_sats, dummy_script, /* input_wscript */ NULL, &inner_pubkey, /* tap_tree */ NULL);
+	input_num = bitcoin_tx_add_input(tx, update_outpoint, shared_delay,
+			     /* scriptSig */ NULL, update_outpoint_sats, dummy_script, /* input_wscript */ NULL, &inner_pubkey, /* tap_tree */ NULL);
     assert(input_num == 0);
 
     /* Now the the transaction itself is determined, we must compute the APO sighash to inject it
@@ -275,8 +274,8 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
 
     /* Remove and re-add with updated information */
     bitcoin_tx_remove_input(tx, input_num);
-	input_num = bitcoin_tx_add_input(tx, update_output, shared_delay,
-			     /* scriptSig */ NULL, update_output_sats, script_pubkey, /* input_wscript */ NULL, &inner_pubkey, /* tap_tree */ NULL);
+	input_num = bitcoin_tx_add_input(tx, update_outpoint, shared_delay,
+			     /* scriptSig */ NULL, update_outpoint_sats, script_pubkey, /* input_wscript */ NULL, &inner_pubkey, /* tap_tree */ NULL);
     assert(input_num == 0);
 
     /* We have the complete witness for this transaction already, just add it

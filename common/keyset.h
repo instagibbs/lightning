@@ -17,6 +17,7 @@ struct keyset {
 struct eltoo_keyset {
 	struct pubkey self_htlc_key, other_htlc_key;
 	struct pubkey self_settle_key, other_settle_key;
+    struct pubkey self_funding_key, other_funding_key;
 };
 
 /* Self == owner of commitment tx, other == non-owner. */
