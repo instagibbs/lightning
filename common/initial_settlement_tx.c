@@ -8,6 +8,36 @@
 #include <common/type_to_string.h>
 #include <stdio.h>
 
+int tx_add_to_node_output(struct bitcoin_tx *tx, const struct eltoo_keyset *eltoo_keyset, struct amount_msat pay, enum side receiver)
+{
+    struct pubkey taproot_pk;
+    secp256k1_musig_keyagg_cache keyagg_cache;
+    struct sha256 tap_merkle_root;
+    struct sha256 tap_tweak_out;
+    u8 *tapleaf_scripts[1];
+    struct pubkey const *receiver_pubkey;
+    struct pubkey const *pubkey_ptrs[2];
+	struct amount_sat amount;
+
+    if (receiver == LOCAL) {
+        receiver_pubkey = &eltoo_keyset->self_settle_key;
+    } else {
+        receiver_pubkey = &eltoo_keyset->other_settle_key;
+    }
+
+    pubkey_ptrs[0] = &eltoo_keyset->self_funding_key;
+    pubkey_ptrs[1] = &eltoo_keyset->other_funding_key;
+
+    tapleaf_scripts[0] = bitcoin_tapscript_to_node(tmpctx, receiver_pubkey);
+    printf("SELF TO NODE: %s\n", tal_hexstr(tmpctx, tapleaf_scripts[0], tal_count(tapleaf_scripts[0])));
+    compute_taptree_merkle_root(&tap_merkle_root, tapleaf_scripts, /* num_scripts */ 1);
+    bipmusig_finalize_keys(&taproot_pk, &keyagg_cache, pubkey_ptrs, /* n_pubkeys */ 2,
+       &tap_merkle_root, tap_tweak_out.u.u8);
+
+    amount = amount_msat_to_sat_round_down(pay);
+    return bitcoin_tx_add_output(
+        tx, scriptpubkey_p2tr(tmpctx, &taproot_pk), /* wscript */ NULL, amount /* FIXME pass in psbt fields for tap outputs */);
+}
 
 void tx_add_ephemeral_anchor_output(struct bitcoin_tx *tx)
 {
@@ -32,7 +62,6 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
 	size_t output_index, num_untrimmed;
 	bool to_local, to_remote;
 	struct amount_msat total_pay;
-	struct amount_sat amount;
 	void *dummy_local = (void *)LOCAL, *dummy_remote = (void *)REMOTE;
 	/* There is a direct output and possibly a shared anchor output */
 	const void *output_order[NUM_SIDES + 1];
@@ -124,21 +153,7 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
 	 *    output](#to_node-output).
 	 */
 	if (amount_msat_greater_eq_sat(self_pay, dust_limit)) {
-        struct pubkey agg_pk;
-        secp256k1_musig_keyagg_cache keyagg_cache;
-        struct sha256 tap_merkle_root;
-        struct sha256 tap_tweak_out;
-        u8 *tapleaf_scripts[1];
-
-        tapleaf_scripts[0] = bitcoin_tapscript_to_node(ctx, &eltoo_keyset->self_settle_key);
-        printf("SELF TO NODE: %s\n", tal_hexstr(tmpctx, tapleaf_scripts[0], tal_count(tapleaf_scripts[0])));
-        compute_taptree_merkle_root(&tap_merkle_root, tapleaf_scripts, /* num_scripts */ 1);
-        bipmusig_finalize_keys(&agg_pk, &keyagg_cache, pubkey_ptrs, /* n_pubkeys */ 2,
-           &tap_merkle_root, tap_tweak_out.u.u8);
-
-		amount = amount_msat_to_sat_round_down(self_pay);
-		int pos = bitcoin_tx_add_output(
-		    tx, scriptpubkey_p2tr(ctx, &agg_pk), /* wscript */ NULL, amount /* FIXME pass in psbt fields for tap outputs */);
+        int pos = tx_add_to_node_output(tx, eltoo_keyset, self_pay, LOCAL);
 		assert(pos == output_index);
 		output_order[output_index] = dummy_local;
 		output_index++;
@@ -153,30 +168,7 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
 	 *    output](#to_remote-output).
 	 */
 	if (amount_msat_greater_eq_sat(other_pay, dust_limit)) {
-		/* BOLT #???:
-		 *
-		 * If `option_anchors` applies to the commitment
-		 * transaction, the `to_remote` output is encumbered by a one
-		 * block csv lock.
-		 *    <remote_pubkey> OP_CHECKSIGVERIFY 1 OP_CHECKSEQUENCEVERIFY
-		 *
-		 */
-        struct pubkey agg_pk;
-        secp256k1_musig_keyagg_cache keyagg_cache;
-        struct sha256 tap_merkle_root;
-        struct sha256 tap_tweak_out;
-        u8 *tapleaf_scripts[1];
-
-        tapleaf_scripts[0] = bitcoin_tapscript_to_node(ctx, &eltoo_keyset->other_settle_key);
-        printf("OTHER TO NODE: %s\n", tal_hexstr(tmpctx, tapleaf_scripts[0], tal_count(tapleaf_scripts[0])));
-        compute_taptree_merkle_root(&tap_merkle_root, tapleaf_scripts, /* num_scripts */ 1);
-
-        bipmusig_finalize_keys(&agg_pk, &keyagg_cache, pubkey_ptrs, /* n_pubkeys */ 2,
-           &tap_merkle_root, tap_tweak_out.u.u8);
-
-		amount = amount_msat_to_sat_round_down(other_pay);
-		int pos = bitcoin_tx_add_output(
-		    tx, scriptpubkey_p2tr(ctx, &agg_pk), /* wscript */ NULL, amount /* FIXME PSBT tap output fields*/);
+        int pos = tx_add_to_node_output(tx, eltoo_keyset, other_pay, REMOTE);
 		assert(pos == output_index);
 		output_order[output_index] = dummy_remote;
 		output_index++;

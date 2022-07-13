@@ -12,6 +12,7 @@ struct bitcoin_outpoint;
 struct eltoo_keyset;
 struct wally_tx_output;
 
+
 /**
  * initial_settlement_tx: create (unsigned) update tx to spend the first update tx
  * @ctx: context to allocate transaction and @htlc_map from.
@@ -43,5 +44,7 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
 
 /* We always add a single ephemeral anchor output to settlement transactions */
 void tx_add_ephemeral_anchor_output(struct bitcoin_tx *tx);
+
+int tx_add_to_node_output(struct bitcoin_tx *tx, const struct eltoo_keyset *eltoo_keyset, struct amount_msat pay, enum side receiver);
 
 #endif /* LIGHTNING_COMMON_INITIAL_SETTLEMENT_TX_H */
