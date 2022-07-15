@@ -288,6 +288,7 @@ static int test_settlement_tx(void)
     dust_limit.satoshis = 294;
     self_pay.millisatoshis = (update_output_sats.satoshis - 10000)*1000;
     other_pay.millisatoshis = (update_output_sats.satoshis*1000) - self_pay.millisatoshis;
+    assert(other_pay.millisatoshis < self_pay.millisatoshis);
     obscured_update_number = 0;
 
     tx = settle_tx(tmpctx,
@@ -312,11 +313,6 @@ static int test_settlement_tx(void)
     tx_cmp = bitcoin_tx_from_hex(tmpctx, regression_tx_hex, sizeof(regression_tx_hex)-1);
     tx_must_be_eq(tx, tx_cmp);
 
-    /* Next we test with htlcs */
-    htlcs = setup_htlcs_0_to_4(tmpctx);
-    htlcs = setup_htlcs_1_5_and_6(tmpctx);
-    assert(htlcs);
-
     assert(tx->wtx->locktime == obscured_update_number);
 
     obscured_update_number = 1234;
@@ -336,6 +332,102 @@ static int test_settlement_tx(void)
                      obscured_update_number);
 
     assert(tx->wtx->locktime == obscured_update_number);
+    assert(tx->wtx->num_outputs == 3);
+
+    /* Just above trimming level */
+    dust_limit.satoshis = (other_pay.millisatoshis/1000);
+    tal_free(tx);
+    tx = settle_tx(tmpctx,
+                     &update_output,
+                     update_output_sats,
+                     shared_delay,
+                     &eltoo_keyset,
+                     dust_limit,
+                     self_pay,
+                     other_pay,
+                     /* htlcs */ NULL,
+                     &htlc_map,
+                     /* direct_outputs FIXME Cannot figure out how this is used. */ NULL,
+                     obscured_update_number);
+
+    assert(tx->wtx->num_outputs == 3);
+
+    /* Smallest should be trimmed */
+    dust_limit.satoshis = (other_pay.millisatoshis/1000) + 1;
+    tal_free(tx);
+    tx = settle_tx(tmpctx,
+                     &update_output,
+                     update_output_sats,
+                     shared_delay,
+                     &eltoo_keyset,
+                     dust_limit,
+                     self_pay,
+                     other_pay,
+                     /* htlcs */ NULL,
+                     &htlc_map,
+                     /* direct_outputs FIXME Cannot figure out how this is used. */ NULL,
+                     obscured_update_number);
+    assert(tx->wtx->num_outputs == 2);
+
+    /* Next we test with htlcs */
+    dust_limit.satoshis = 0;
+    htlcs = setup_htlcs_0_to_4(tmpctx);
+
+    tal_free(tx);
+    tx = settle_tx(tmpctx,
+                     &update_output,
+                     update_output_sats,
+                     shared_delay,
+                     &eltoo_keyset,
+                     dust_limit,
+                     self_pay,
+                     other_pay,
+                     htlcs,
+                     &htlc_map,
+                     /* direct_outputs FIXME Cannot figure out how this is used. */ NULL,
+                     obscured_update_number);
+
+    assert(tx->wtx->num_outputs == 3 + tal_count(htlcs));
+
+    /* All outputs survive */
+    dust_limit.satoshis = htlcs[0]->amount.millisatoshis/1000;
+    tal_free(tx);
+    tx = settle_tx(tmpctx,
+                     &update_output,
+                     update_output_sats,
+                     shared_delay,
+                     &eltoo_keyset,
+                     dust_limit,
+                     self_pay,
+                     other_pay,
+                     htlcs,
+                     &htlc_map,
+                     /* direct_outputs FIXME Cannot figure out how this is used. */ NULL,
+                     obscured_update_number);
+
+    assert(tx->wtx->num_outputs == 3 + tal_count(htlcs));
+
+    /* Smallest HTLC trimmed */
+    dust_limit.satoshis = (htlcs[0]->amount.millisatoshis/1000)+1;
+    tal_free(tx);
+    tx = settle_tx(tmpctx,
+                     &update_output,
+                     update_output_sats,
+                     shared_delay,
+                     &eltoo_keyset,
+                     dust_limit,
+                     self_pay,
+                     other_pay,
+                     htlcs,
+                     &htlc_map,
+                     /* direct_outputs FIXME Cannot figure out how this is used. */ NULL,
+                     obscured_update_number);
+
+    assert(tx->wtx->num_outputs == 3 + tal_count(htlcs) - 1);
+
+    /* Do some more interesting testing */
+    htlcs = setup_htlcs_1_5_and_6(tmpctx);
+    assert(htlcs);
 
     return 0;
 }
