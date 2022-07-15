@@ -6,8 +6,9 @@ static bool print_superverbose;
 #define SUPERVERBOSE(...)					\
 	do { if (print_superverbose) printf(__VA_ARGS__); } while(0)
 #define PRINT_ACTUAL_FEE
-#include "../commit_tx.c"
+#include "../settle_tx.c"
 #include <bitcoin/tx.h>
+#include <bitcoin/preimage.h>
 #include <bitcoin/psbt.h>
 #include <ccan/array_size/array_size.h>
 #include <ccan/err/err.h>
@@ -125,6 +126,198 @@ static void tx_must_be_eq(const struct bitcoin_tx *a,
 		     "%s",
 		     tal_hex(tmpctx, lina),
 		     tal_hex(tmpctx, linb));
+}
+
+/* BOLT #3:
+ *
+ *    htlc 0 direction: remote->local
+ *    htlc 0 amount_msat: 1000000
+ *    htlc 0 expiry: 500
+ *    htlc 0 payment_preimage: 0000000000000000000000000000000000000000000000000000000000000000
+ *    htlc 1 direction: remote->local
+ *    htlc 1 amount_msat: 2000000
+ *    htlc 1 expiry: 501
+ *    htlc 1 payment_preimage: 0101010101010101010101010101010101010101010101010101010101010101
+ *    htlc 2 direction: local->remote
+ *    htlc 2 amount_msat: 2000000
+ *    htlc 2 expiry: 502
+ *    htlc 2 payment_preimage: 0202020202020202020202020202020202020202020202020202020202020202
+ *    htlc 3 direction: local->remote
+ *    htlc 3 amount_msat: 3000000
+ *    htlc 3 expiry: 503
+ *    htlc 3 payment_preimage: 0303030303030303030303030303030303030303030303030303030303030303
+ *    htlc 4 direction: remote->local
+ *    htlc 4 amount_msat: 4000000
+ *    htlc 4 expiry: 504
+ *    htlc 4 payment_preimage: 0404040404040404040404040404040404040404040404040404040404040404
+ */
+static const struct htlc **setup_htlcs_0_to_4(const tal_t *ctx)
+{
+	const struct htlc **htlcs = tal_arr(ctx, const struct htlc *, 5);
+	int i;
+
+	for (i = 0; i < 5; i++) {
+		struct htlc *htlc = tal(htlcs, struct htlc);
+
+		htlc->id = i;
+		switch (i) {
+		case 0:
+			htlc->state = RCVD_ADD_ACK_REVOCATION;
+			htlc->amount = AMOUNT_MSAT(1000000);
+			break;
+		case 1:
+			htlc->state = RCVD_ADD_ACK_REVOCATION;
+			htlc->amount = AMOUNT_MSAT(2000000);
+			break;
+		case 2:
+			htlc->state = SENT_ADD_ACK_REVOCATION;
+			htlc->amount = AMOUNT_MSAT(2000000);
+			break;
+		case 3:
+			htlc->state = SENT_ADD_ACK_REVOCATION;
+			htlc->amount = AMOUNT_MSAT(3000000);
+			break;
+		case 4:
+			htlc->state = RCVD_ADD_ACK_REVOCATION;
+			htlc->amount = AMOUNT_MSAT(4000000);
+			break;
+		}
+
+		htlc->expiry.locktime = 500 + i;
+		htlc->r = tal(htlc, struct preimage);
+		memset(htlc->r, i, sizeof(*htlc->r));
+		sha256(&htlc->rhash, htlc->r, sizeof(*htlc->r));
+		htlcs[i] = htlc;
+	}
+	return htlcs;
+}
+
+/* BOLT #3:
+ *    htlc 5 direction: local->remote
+ *    htlc 5 amount_msat: 5000000
+ *    htlc 5 expiry: 506
+ *    htlc 5 payment_preimage: 0505050505050505050505050505050505050505050505050505050505050505
+ *    htlc 6 direction: local->remote
+ *    htlc 6 amount_msat: 5000001
+ *    htlc 6 expiry: 505
+ *    htlc 6 payment_preimage: 0505050505050505050505050505050505050505050505050505050505050505
+*/
+static const struct htlc **setup_htlcs_1_5_and_6(const tal_t *ctx)
+{
+	const struct htlc **htlcs = tal_arr(ctx, const struct htlc *, 3);
+	int i;
+	const u64 htlc_ids[] = {1, 5, 6};
+
+	for (i = 0; i < 3; i++) {
+		struct htlc *htlc = tal(htlcs, struct htlc);
+
+		htlc->r = tal(htlc, struct preimage);
+		htlc->id = htlc_ids[i];
+		switch (htlc->id) {
+		case 1:
+			htlc->state = RCVD_ADD_ACK_REVOCATION;
+			htlc->amount = AMOUNT_MSAT(2000000);
+			htlc->expiry.locktime = 501;
+			memset(htlc->r, 1, sizeof(*htlc->r));
+			break;
+		case 5:
+			htlc->state = SENT_ADD_ACK_REVOCATION;
+			htlc->amount = AMOUNT_MSAT(5000000);
+			htlc->expiry.locktime = 505;
+			memset(htlc->r, 5, sizeof(*htlc->r));
+			break;
+		case 6:
+			htlc->state = SENT_ADD_ACK_REVOCATION;
+			htlc->amount = AMOUNT_MSAT(5000001);
+			htlc->expiry.locktime = 506;
+			memset(htlc->r, 5, sizeof(*htlc->r));
+			break;
+		}
+		sha256(&htlc->rhash, htlc->r, sizeof(*htlc->r));
+		htlcs[i] = htlc;
+	}
+	return htlcs;
+}
+
+
+static int test_settlement_tx(void)
+{
+    struct bitcoin_outpoint update_output;
+    struct amount_sat update_output_sats;
+    u32 shared_delay;
+    struct eltoo_keyset eltoo_keyset;
+    struct amount_sat dust_limit;
+    struct amount_msat self_pay;
+    struct amount_msat other_pay;
+    u32 obscured_update_number;
+    /* struct wally_tx_output direct_outputs[NUM_SIDES]; Can't figure out how it's used */
+    struct bitcoin_tx *tx, *tx_cmp;
+    struct privkey alice_funding_privkey, bob_funding_privkey, alice_settle_privkey, bob_settle_privkey;
+    int ok;
+    char *tx_hex;
+    char *psbt_b64;
+    const struct htlc **htlc_map;
+
+    /* Test settlement tx with no HTLCs */
+    const struct htlc **htlcs = tal_arr(tmpctx, const struct htlc *, 3);
+
+
+    update_output.txid = txid_from_hex("8984484a580b825b9972d7adb15050b3ab624ccd731946b3eeddb92f4e7ef6be");
+    update_output.n = 0;
+    update_output_sats.satoshis = 69420;
+
+    alice_funding_privkey.secret = secret_from_hex("30ff4956bbdd3222d44cc5e8a1261dab1e07957bdac5ae88fe3261ef321f374901");
+    bob_funding_privkey.secret = secret_from_hex("1552dfba4f6cf29a62a0af13c8d6981d36d0ef8d61ba10fb0fe90da7634d7e1301");
+
+    ok = pubkey_from_privkey(&alice_funding_privkey,
+             &eltoo_keyset.self_funding_key);
+    ok = pubkey_from_privkey(&bob_funding_privkey,
+             &eltoo_keyset.other_funding_key);
+
+    shared_delay = 42;
+
+    alice_settle_privkey.secret = secret_from_hex("1111111111111111111111111111111111111111111111111111111111111111");
+    bob_settle_privkey.secret = secret_from_hex("2222222222222222222222222222222222222222222222222222222222222222");
+
+    ok = pubkey_from_privkey(&alice_settle_privkey,
+             &eltoo_keyset.self_settle_key);
+    ok = pubkey_from_privkey(&bob_settle_privkey,
+             &eltoo_keyset.other_settle_key);
+    assert(ok);
+
+    dust_limit.satoshis = 294;
+    self_pay.millisatoshis = (update_output_sats.satoshis - 10000)*1000;
+    other_pay.millisatoshis = (update_output_sats.satoshis*1000) - self_pay.millisatoshis;
+    obscured_update_number = 0;
+
+    tx = settle_tx(tmpctx,
+                     &update_output,
+                     update_output_sats,
+                     shared_delay,
+                     &eltoo_keyset,
+                     dust_limit,
+                     self_pay,
+                     other_pay,
+                     /* htlcs */ NULL,
+                     &htlc_map,
+                     /* direct_outputs FIXME Cannot figure out how this is used. */ NULL,
+                     obscured_update_number);
+
+    tx_hex = fmt_bitcoin_tx(tmpctx, tx);
+    printf("Settlement tx: %s\n", tx_hex);
+    psbt_b64 = psbt_to_b64(tmpctx, tx->psbt);
+    printf("Settlement psbt: %s\n", psbt_b64);
+
+    /* Regression test vector for now */
+    tx_cmp = bitcoin_tx_from_hex(tmpctx, regression_tx_hex, sizeof(regression_tx_hex)-1);
+    tx_must_be_eq(tx, tx_cmp);
+
+    /* Next we test with htlcs */
+    htlcs = setup_htlcs_0_to_4(tmpctx);
+    htlcs = setup_htlcs_1_5_and_6(tmpctx);
+    assert(htlcs);
+
+    return 0;
 }
 
 static int test_initial_settlement_tx(void)
@@ -272,6 +465,9 @@ int main(int argc, const char *argv[])
     assert(!err);
 
     err |= test_htlc_output_creation();
+    assert(!err);
+
+    err |= test_settlement_tx();
 
 	common_shutdown();
 

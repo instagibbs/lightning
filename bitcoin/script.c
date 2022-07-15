@@ -1193,7 +1193,7 @@ u8 *make_eltoo_update_script(const tal_t *ctx, u32 update_num)
     return script;
 }
 
-u8 *make_eltoo_htlc_success_script(const tal_t *ctx, const struct pubkey *settlement_pubkey, u8 *invoice_hash)
+u8 *make_eltoo_htlc_success_script(const tal_t *ctx, const struct pubkey *settlement_pubkey, const u8 *invoice_hash)
 {
     /* where EXPR_SUCCESS =
      *
