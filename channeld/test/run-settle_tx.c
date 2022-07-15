@@ -317,6 +317,26 @@ static int test_settlement_tx(void)
     htlcs = setup_htlcs_1_5_and_6(tmpctx);
     assert(htlcs);
 
+    assert(tx->wtx->locktime == obscured_update_number);
+
+    obscured_update_number = 1234;
+
+    tal_free(tx);
+    tx = settle_tx(tmpctx,
+                     &update_output,
+                     update_output_sats,
+                     shared_delay,
+                     &eltoo_keyset,
+                     dust_limit,
+                     self_pay,
+                     other_pay,
+                     /* htlcs */ NULL,
+                     &htlc_map,
+                     /* direct_outputs FIXME Cannot figure out how this is used. */ NULL,
+                     obscured_update_number);
+
+    assert(tx->wtx->locktime == obscured_update_number);
+
     return 0;
 }
 
