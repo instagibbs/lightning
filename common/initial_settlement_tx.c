@@ -8,6 +8,10 @@
 #include <common/type_to_string.h>
 #include <stdio.h>
 
+#ifndef SUPERVERBOSE
+#define SUPERVERBOSE(...)
+#endif
+
 int tx_add_to_node_output(struct bitcoin_tx *tx, const struct eltoo_keyset *eltoo_keyset, struct amount_msat pay, enum side receiver)
 {
     struct pubkey taproot_pk;
@@ -29,7 +33,7 @@ int tx_add_to_node_output(struct bitcoin_tx *tx, const struct eltoo_keyset *elto
     pubkey_ptrs[1] = &eltoo_keyset->other_funding_key;
 
     tapleaf_scripts[0] = bitcoin_tapscript_to_node(tmpctx, receiver_pubkey);
-    printf("SELF TO NODE: %s\n", tal_hexstr(tmpctx, tapleaf_scripts[0], tal_count(tapleaf_scripts[0])));
+    SUPERVERBOSE("SELF TO NODE: %s\n", tal_hexstr(tmpctx, tapleaf_scripts[0], tal_count(tapleaf_scripts[0])));
     compute_taptree_merkle_root(&tap_merkle_root, tapleaf_scripts, /* num_scripts */ 1);
     bipmusig_finalize_keys(&taproot_pk, &keyagg_cache, pubkey_ptrs, /* n_pubkeys */ 2,
        &tap_merkle_root, tap_tweak_out.u.u8);
@@ -44,6 +48,86 @@ void tx_add_ephemeral_anchor_output(struct bitcoin_tx *tx)
 	u8 *spk = bitcoin_spk_ephemeral_anchor(tmpctx);
 	bitcoin_tx_add_output(tx, spk, /* wscript */ NULL, AMOUNT_SAT(0));
 }
+
+void add_settlement_input(struct bitcoin_tx *tx, const struct bitcoin_outpoint *update_outpoint,
+    struct amount_sat update_outpoint_sats, u32 shared_delay, secp256k1_xonly_pubkey *inner_pubkey, u32 obscured_update_number, const struct pubkey *pubkey_ptrs[2])
+{
+    u8 *dummy_script;
+    int input_num;
+    u8 *settle_and_update_tapscripts[2];
+    struct sha256 update_merkle_root;
+    struct pubkey update_agg_pk;
+    secp256k1_musig_keyagg_cache update_keyagg_cache;
+    unsigned char update_tap_tweak[32];
+    secp256k1_xonly_pubkey output_pubkey;
+    int parity_bit, ok;
+    u8 *control_block;
+    u8 *script_pubkey;
+    u8 **witness; /* settle_and_update_tapscripts[0] script and control_block */
+    unsigned char inner_pubkey_bytes[32];
+    unsigned char output_pubkey_bytes[32];
+
+    /* 
+     * We do not know what scriptPubKey, tap_tree look like yet because we're computing
+     * a sighash to then put into the input sciript. We pass in dummies
+     * where necessary for now.
+     */
+    dummy_script = bitcoin_spk_ephemeral_anchor(tmpctx);
+	input_num = bitcoin_tx_add_input(tx, update_outpoint, shared_delay,
+			     /* scriptSig */ NULL, update_outpoint_sats, dummy_script, /* input_wscript */ NULL, inner_pubkey, /* tap_tree */ NULL);
+    assert(input_num == 0);
+
+    /* Now the the transaction itself is determined, we must compute the APO sighash to inject it
+      into the inputs' tapscript, then attach the information to the PSBT */
+    settle_and_update_tapscripts[0] = make_eltoo_settle_script(tmpctx, tx, input_num);
+    settle_and_update_tapscripts[1] = make_eltoo_update_script(tmpctx, obscured_update_number);
+    assert(settle_and_update_tapscripts[0]);
+    assert(settle_and_update_tapscripts[1]);
+
+    /* We need to calculate the merkle root to figure the parity bit */
+    compute_taptree_merkle_root(&update_merkle_root, settle_and_update_tapscripts, /* num_scripts */ 2);
+    printf("TAP MERK ROOT: %s\n", tal_hexstr(tmpctx, update_merkle_root.u.u32, 32));
+    bipmusig_finalize_keys(&update_agg_pk,
+           &update_keyagg_cache,
+           pubkey_ptrs,
+           /* n_pubkeys */ 2,
+           &update_merkle_root,
+           update_tap_tweak);
+
+    printf("TAPTWEAK: %s\n", tal_hexstr(tmpctx, update_tap_tweak, 32));
+    /* Convert to x-only, grab parity bit of the output pubkey */
+    ok = secp256k1_xonly_pubkey_from_pubkey(secp256k1_ctx, &output_pubkey, &parity_bit, &(update_agg_pk.pubkey));
+    printf("PARITY BIT: %d\n", parity_bit);
+    assert(ok);
+    control_block = compute_control_block(tmpctx, settle_and_update_tapscripts[1], inner_pubkey, parity_bit);
+    printf("CBLOCK: %s\n", tal_hexstr(tmpctx, control_block, tal_count(control_block)));
+    script_pubkey = scriptpubkey_p2tr(tmpctx, &update_agg_pk);
+
+    ok = secp256k1_xonly_pubkey_serialize(secp256k1_ctx, inner_pubkey_bytes, inner_pubkey);
+    assert(ok);
+    printf("INNER PUBKEY: %s\n", tal_hexstr(tmpctx, inner_pubkey_bytes, 32));
+    ok = secp256k1_xonly_pubkey_serialize(secp256k1_ctx, output_pubkey_bytes, &output_pubkey);
+    assert(ok);
+    printf("OUTER PUBKEY: %s\n", tal_hexstr(tmpctx, output_pubkey_bytes, 32));
+
+    assert(secp256k1_xonly_pubkey_tweak_add_check(secp256k1_ctx, output_pubkey_bytes, parity_bit, inner_pubkey, update_tap_tweak));
+
+    /* Remove and re-add with updated information */
+    bitcoin_tx_remove_input(tx, input_num);
+	input_num = bitcoin_tx_add_input(tx, update_outpoint, shared_delay,
+			     /* scriptSig */ NULL, update_outpoint_sats, script_pubkey, /* input_wscript */ NULL, inner_pubkey, /* tap_tree */ NULL);
+    assert(input_num == 0);
+
+    /* We have the complete witness for this transaction already, just add it
+     * the second-to-last stack element s, the script.
+     * last stack element is called the control block
+     */ 
+    witness = tal_arr(tmpctx, u8 *, 2);
+    witness[0] = settle_and_update_tapscripts[0];
+    witness[1] = control_block;
+    bitcoin_tx_input_set_witness(tx, input_num, witness);
+}
+
 
 struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
 				     const struct bitcoin_outpoint *update_outpoint,
@@ -66,20 +150,7 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
 	/* There is a direct output and possibly a shared anchor output */
 	const void *output_order[NUM_SIDES + 1];
     const struct pubkey *pubkey_ptrs[2];
-    int input_num;
-    secp256k1_xonly_pubkey inner_pubkey, output_pubkey;
-    unsigned char inner_pubkey_bytes[32];
-    unsigned char output_pubkey_bytes[32];
-    u8 *settle_and_update_tapscripts[2];
-    u8 *script_pubkey;
-    u8 *dummy_script;
-    u8 *control_block;
-    u8 **witness; /* settle_and_update_tapscripts[0] script and control_block */
-    struct sha256 update_merkle_root;
-    struct pubkey update_agg_pk;
-    secp256k1_musig_keyagg_cache update_keyagg_cache;
-    unsigned char update_tap_tweak[32];
-    int parity_bit, ok;
+    secp256k1_xonly_pubkey inner_pubkey;
 
    /* For MuSig aggregation for outputs */
     pubkey_ptrs[0] = &(eltoo_keyset->self_funding_key);
@@ -219,65 +290,8 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
 	 *    * `txin[0]` sequence: upper 8 bits are 0x80, lower 24 bits are upper 24 bits of the obscured commitment number
 	 *    * `txin[0]` script bytes: 0
 	 */
-    /* 
-     * We do not know what scriptPubKey, tap_tree look like yet because we're computing
-     * a sighash to then put into the input sciript. We pass in dummies
-     * where necessary for now.
-     */
-    dummy_script = bitcoin_spk_ephemeral_anchor(tmpctx);
-	input_num = bitcoin_tx_add_input(tx, update_outpoint, shared_delay,
-			     /* scriptSig */ NULL, update_outpoint_sats, dummy_script, /* input_wscript */ NULL, &inner_pubkey, /* tap_tree */ NULL);
-    assert(input_num == 0);
 
-    /* Now the the transaction itself is determined, we must compute the APO sighash to inject it
-      into the inputs' tapscript, then attach the information to the PSBT */
-    settle_and_update_tapscripts[0] = make_eltoo_settle_script(tmpctx, tx, input_num);
-    settle_and_update_tapscripts[1] = make_eltoo_update_script(tmpctx, obscured_update_number);
-    assert(settle_and_update_tapscripts[0]);
-    assert(settle_and_update_tapscripts[1]);
-
-    /* We need to calculate the merkle root to figure the parity bit */
-    compute_taptree_merkle_root(&update_merkle_root, settle_and_update_tapscripts, /* num_scripts */ 2);
-    printf("TAP MERK ROOT: %s\n", tal_hexstr(tmpctx, update_merkle_root.u.u32, 32));
-    bipmusig_finalize_keys(&update_agg_pk,
-           &update_keyagg_cache,
-           pubkey_ptrs,
-           /* n_pubkeys */ 2,
-           &update_merkle_root,
-           update_tap_tweak);
-
-    printf("TAPTWEAK: %s\n", tal_hexstr(tmpctx, update_tap_tweak, 32));
-    /* Convert to x-only, grab parity bit of the output pubkey */
-    ok = secp256k1_xonly_pubkey_from_pubkey(ctx, &output_pubkey, &parity_bit, &(update_agg_pk.pubkey));
-    printf("PARITY BIT: %d\n", parity_bit);
-    assert(ok);
-    control_block = compute_control_block(tmpctx, settle_and_update_tapscripts[1], &inner_pubkey, parity_bit);
-    printf("CBLOCK: %s\n", tal_hexstr(tmpctx, control_block, tal_count(control_block)));
-    script_pubkey = scriptpubkey_p2tr(tmpctx, &update_agg_pk);
-
-    ok = secp256k1_xonly_pubkey_serialize(secp256k1_ctx, inner_pubkey_bytes, &inner_pubkey);
-    assert(ok);
-    printf("INNER PUBKEY: %s\n", tal_hexstr(tmpctx, inner_pubkey_bytes, 32));
-    ok = secp256k1_xonly_pubkey_serialize(secp256k1_ctx, output_pubkey_bytes, &output_pubkey);
-    assert(ok);
-    printf("OUTER PUBKEY: %s\n", tal_hexstr(tmpctx, output_pubkey_bytes, 32));
-
-    assert(secp256k1_xonly_pubkey_tweak_add_check(secp256k1_ctx, output_pubkey_bytes, parity_bit, &inner_pubkey, update_tap_tweak));
-
-    /* Remove and re-add with updated information */
-    bitcoin_tx_remove_input(tx, input_num);
-	input_num = bitcoin_tx_add_input(tx, update_outpoint, shared_delay,
-			     /* scriptSig */ NULL, update_outpoint_sats, script_pubkey, /* input_wscript */ NULL, &inner_pubkey, /* tap_tree */ NULL);
-    assert(input_num == 0);
-
-    /* We have the complete witness for this transaction already, just add it
-     * the second-to-last stack element s, the script.
-     * last stack element is called the control block
-     */ 
-    witness = tal_arr(tmpctx, u8 *, 2);
-    witness[0] = settle_and_update_tapscripts[0];
-    witness[1] = control_block;
-    bitcoin_tx_input_set_witness(tx, input_num, witness);
+    add_settlement_input(tx, update_outpoint, update_outpoint_sats, shared_delay, &inner_pubkey, obscured_update_number, pubkey_ptrs);
 
     /* Transaction is now ready for broadcast! */
 
