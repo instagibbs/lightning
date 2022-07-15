@@ -47,7 +47,7 @@ static void add_eltoo_htlc_out(struct bitcoin_tx *tx,
  * @htlcs: tal_arr of htlcs settleted by transaction (some may be trimmed)
  * @htlc_map: outputed map of outnum->HTLC (NULL for direct outputs).
  * @direct_outputs: If non-NULL, fill with pointers to the direct (non-HTLC) outputs (or NULL if none).
- * @obscured_settlement_number: number to encode in settlement transaction
+ * @obscured_settlement_number: number to encode in settlement transaction for update number
  *
  * This does not support liquidity ads (yet)
  */

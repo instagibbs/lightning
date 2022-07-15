@@ -233,7 +233,7 @@ struct bitcoin_tx *settle_tx(const tal_t *ctx,
 	 */
 	assert(tx->wtx->version == 2);
 
-	bitcoin_tx_set_locktime(tx, obscured_update_number);
+	bitcoin_tx_set_locktime(tx, obscured_update_number + 500000000);
 
 	/* BOLT #3:
 	 *

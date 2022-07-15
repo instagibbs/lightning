@@ -23,7 +23,7 @@ struct wally_tx_output;
  * @self_pay: amount to pay directly to self
  * @other_pay: amount to pay directly to the other side
  * @self_reserve: reserve the other side insisted we have
- * @obscured_update_number: number to encode in update transaction as nlocktime
+ * @obscured_update_number: obscured update number "o+k"
  * @direct_outputs: If non-NULL, fill with pointers to the direct (non-HTLC) outputs (or NULL if none).
  * @err_reason: When NULL is returned, this will point to a human readable reason.
  *

@@ -280,7 +280,7 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
 	 * lower 24 bits of the obscured commitment number
 	 */
 	bitcoin_tx_set_locktime(tx,
-	    obscured_update_number);
+	    obscured_update_number + 500000000);
 
 	/* BOLT #???:
 	 *
