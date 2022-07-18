@@ -213,6 +213,9 @@ u8 *make_eltoo_settle_script(const tal_t *ctx, const struct bitcoin_tx *tx, size
 /* Creates the update path tapscript for eltoo, which commits to the masked update number */
 u8 *make_eltoo_update_script(const tal_t *ctx, u32 update_num);
 
+/* Creates the update path tapscript for the special case of a funding output being spent, which is ~4 WU smaller */
+u8 *make_eltoo_funding_update_script(const tal_t *ctx);
+
 /* Creates eltoo HTLC success script, with invoice hash lock */
 u8 *make_eltoo_htlc_success_script(const tal_t *ctx, const struct pubkey *settlement_pubkey, const u8 *invoice_hash);
 

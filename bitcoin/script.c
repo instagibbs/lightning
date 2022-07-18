@@ -1181,15 +1181,28 @@ u8 *make_eltoo_settle_script(const tal_t *ctx, const struct bitcoin_tx *tx, size
 
 u8 *make_eltoo_update_script(const tal_t *ctx, u32 update_num)
 {
-    /* where EXPR_UPDATE(n) =
+    /* TL(n) = `500000000+o+n`
+     * where EXPR_UPDATE(n) =
      *
-     *`OP_1 OP_CHECKSIGVERIFY <n> OP_CLTV`
+     *`<1> OP_CHECKSIGVERIFY <TL(n)> OP_CHECKLOCKTIMEVERIFY` if `n > 0`
      */
 	u8 *script = tal_arr(ctx, u8, 0);
 	add_op(&script, OP_1);
 	add_op(&script, OP_CHECKSIGVERIFY);
-    add_number(&script, update_num);
-	add_op(&script, OP_CHECKSEQUENCEVERIFY);
+    add_number(&script, 500000000 + update_num);
+    add_op(&script, OP_CHECKSEQUENCEVERIFY);
+    return script;
+}
+
+u8 *make_eltoo_funding_update_script(const tal_t *ctx)
+{
+    /* where EXPR_UPDATE(n) =
+     *
+     *`<1> OP_CHECKSIGVERIFY`, in the case of `n == 0`
+     */
+	u8 *script = tal_arr(ctx, u8, 0);
+	add_op(&script, OP_1);
+	add_op(&script, OP_CHECKSIGVERIFY);
     return script;
 }
 
