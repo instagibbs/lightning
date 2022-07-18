@@ -1049,6 +1049,8 @@ void compute_taptree_merkle_root(struct sha256 *hash_out, u8 **scripts, size_t n
         /* k0 == km, this is the merkle root so we directly write it out */
         ok = wally_tagged_hash(tag_hash_buf, p - tag_hash_buf, "TapLeaf", hash_out->u.u8);
         assert(ok == WALLY_OK);
+        printf("SCRIPT(1 branch): %s\n", tal_hexstr(tmpctx, scripts[0], tal_count(scripts[0])));
+        printf("***TAPLEAF PREIMAGE***: %s\n", tal_hexstr(tmpctx, tag_hash_buf, p - tag_hash_buf));
         printf("TAPLEAF HASH(1 branch): %s\n", tal_hexstr(tmpctx, hash_out->u.u8, 32));
     } else if (num_scripts == 2) {
         int i;
@@ -1064,6 +1066,8 @@ void compute_taptree_merkle_root(struct sha256 *hash_out, u8 **scripts, size_t n
 
             ok = wally_tagged_hash(tag_hash_buf, p - tag_hash_buf, "TapLeaf", tap_hashes + (i*32));
             assert(ok == WALLY_OK);
+            printf("SCRIPT(2 branches): %s\n", tal_hexstr(tmpctx, scripts[i], tal_count(scripts[i])));
+            printf("***TAPLEAF PREIMAGE***: %s\n", tal_hexstr(tmpctx, tag_hash_buf, p - tag_hash_buf));
             printf("TAPLEAF HASHES: %s\n", tal_hexstr(tmpctx, tap_hashes + (i*32), 32));
         }
         /* If kj ≥ ej: kj+1 = hashTapBranch(ej || kj), swap them*/

@@ -28,11 +28,24 @@ u8 *make_eltoo_annex(const tal_t *ctx, u8 *settle_tapscript)
 {
     int ok;
     struct sha256 result;
+    u8 *preimage_cursor;
+    u64 tapscript_len = tal_count(settle_tapscript);
+    u8 *tapleaf_preimage = tal_arr(ctx, u8, 1 + varint_size(tapscript_len) + tapscript_len);
     /* Enough space for annex flag plus the one hash we want published */
-    u8 *annex = tal_arr(ctx, u8, 1 + sizeof(result));
+    u8 *annex = tal_arr(ctx, u8, 1 + sizeof(result.u.u8));
 
-    ok = wally_tagged_hash(settle_tapscript, tal_count(settle_tapscript), "TapLeaf", result.u.u8);
+    preimage_cursor = tapleaf_preimage;
+    preimage_cursor[0] = 0xC0;
+    preimage_cursor++;
+    preimage_cursor += varint_put(preimage_cursor, tapscript_len);
+    memcpy(preimage_cursor, settle_tapscript, tapscript_len);
+    preimage_cursor += tapscript_len;
+
+    assert(tal_count(tapleaf_preimage) == preimage_cursor - tapleaf_preimage);
+    printf("***ANNEX PREIMAGE***: %s\n", tal_hexstr(tmpctx, tapleaf_preimage, tal_count(tapleaf_preimage)));
+    ok = wally_tagged_hash(tapleaf_preimage, tal_count(tapleaf_preimage), "TapLeaf", result.u.u8);
     assert(ok == WALLY_OK);
+    printf("TAPLEAF HASH(annex): %s\n", tal_hexstr(tmpctx, result.u.u8, 32));
 
     annex[0] = 0x50; /* annex flag */
     memcpy(annex + 1, result.u.u8, sizeof(result));
