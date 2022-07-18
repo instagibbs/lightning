@@ -18,6 +18,7 @@ static bool print_superverbose;
 #include <common/setup.h>
 #include <common/status.h>
 #include <common/initial_settlement_tx.h>
+#include <common/initial_update_tx.h>
 
 /* Turn this on to brute-force fee values */
 /*#define DEBUG */
@@ -445,7 +446,7 @@ static int test_initial_settlement_tx(void)
     u32 obscured_update_number;
     /* struct wally_tx_output direct_outputs[NUM_SIDES]; Can't figure out how it's used */
     char* err_reason;
-    struct bitcoin_tx *tx, *tx_cmp;
+    struct bitcoin_tx *tx, *tx_cmp, *update_tx;
     struct privkey alice_funding_privkey, bob_funding_privkey, alice_settle_privkey, bob_settle_privkey;
     int ok;
     char *tx_hex;
@@ -504,6 +505,16 @@ static int test_initial_settlement_tx(void)
     tx_cmp = bitcoin_tx_from_hex(tmpctx, regression_tx_hex, sizeof(regression_tx_hex)-1);
     tx_must_be_eq(tx, tx_cmp);
 
+    /* We rebind the outpoint later anyways, so just reuse the outpoint */
+    update_tx = initial_update_tx(tmpctx,
+                     tx,
+                     &update_output,
+                     update_output_sats,
+                     &eltoo_keyset,
+                     &err_reason);
+
+    psbt_b64 = psbt_to_b64(tmpctx, update_tx->psbt);
+    printf("Update psbt: %s\n", psbt_b64);
 
 	return 0;
 }
