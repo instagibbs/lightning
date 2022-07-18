@@ -80,7 +80,10 @@ void add_settlement_input(struct bitcoin_tx *tx, const struct bitcoin_outpoint *
     /* Now the the transaction itself is determined, we must compute the APO sighash to inject it
       into the inputs' tapscript, then attach the information to the PSBT */
     settle_and_update_tapscripts[0] = make_eltoo_settle_script(tmpctx, tx, input_num);
-    settle_and_update_tapscripts[1] = make_eltoo_update_script(tmpctx, obscured_update_number);
+    printf("SETTLE: %s\n", tal_hexstr(tmpctx, settle_and_update_tapscripts[0], tal_count(settle_and_update_tapscripts[0])));
+    /* update number is one more for the update path, which isn't being taken */
+    settle_and_update_tapscripts[1] = make_eltoo_update_script(tmpctx, obscured_update_number + 1);
+    printf("UPDATE: %s\n", tal_hexstr(tmpctx, settle_and_update_tapscripts[1], tal_count(settle_and_update_tapscripts[1])));
     assert(settle_and_update_tapscripts[0]);
     assert(settle_and_update_tapscripts[1]);
 
