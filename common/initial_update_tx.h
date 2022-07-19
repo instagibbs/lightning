@@ -13,7 +13,7 @@ struct bitcoin_outpoint;
 
 int tx_add_settlement_output(struct bitcoin_tx *update_tx, const struct bitcoin_tx *settle_tx);
 
-u8 *make_eltoo_annex(const tal_t *ctx, u8 *settle_tapscript);
+u8 *make_eltoo_annex(const tal_t *ctx, const struct bitcoin_tx *settle_tx);
 
 void tx_add_funding_input(struct bitcoin_tx *update_tx,
                     const struct bitcoin_tx *settle_tx,
