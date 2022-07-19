@@ -1144,6 +1144,7 @@ u8 *make_eltoo_settle_script(const tal_t *ctx, const struct bitcoin_tx *tx, size
                  input_index,
                  sh_type,
                  script,
+                 /* annex */ NULL,
                  &sighash);
 
     printf("SIGHASH: %s\n", tal_hexstr(tmpctx, sighash.sha.u.u32, 32));//\n", sighash.sha.u.u32);

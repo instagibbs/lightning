@@ -348,6 +348,7 @@ void bitcoin_tx_taproot_hash_for_sig(const struct bitcoin_tx *tx,
                  unsigned int input_index,
 			     enum sighash_type sighash_type, /* FIXME get from PSBT? */
                  const unsigned char *tapleaf_script, /* FIXME Get directly from PSBT? */
+                 u8 *annex,
 			     struct sha256_double *dest)
 {
 	int ret, i;
@@ -369,7 +370,7 @@ void bitcoin_tx_taproot_hash_for_sig(const struct bitcoin_tx *tx,
     ret = wally_tx_get_btc_taproot_signature_hash(
         tx->wtx, sighash_type, input_index, input_spks, input_spk_lens,
         input_val_sats, tapleaf_script, tal_bytelen(tapleaf_script), (sighash_type & SIGHASH_ANYPREVOUTANYSCRIPT) == SIGHASH_ANYPREVOUTANYSCRIPT ? 0x01 : 0x00 /* key_version */,
-        0xFFFFFFFF /* codesep_position */, NULL /* annex */, 0 /* annex_len */, 0 /* flags */, dest->sha.u.u8,
+        0xFFFFFFFF /* codesep_position */, annex, tal_count(annex), 0 /* flags */, dest->sha.u.u8,
 		    sizeof(*dest));
 
     assert(ret == WALLY_OK);
@@ -412,7 +413,7 @@ void sign_tx_taproot_input(const struct bitcoin_tx *tx,
     struct privkey privkey;
 
 	/* FIXME assert sighashes we actually support assert(sighash_type_valid(sighash_type)); */
-	bitcoin_tx_taproot_hash_for_sig(tx, input_index, sighash_type, tapleaf_script, &hash);
+	bitcoin_tx_taproot_hash_for_sig(tx, input_index, sighash_type, tapleaf_script, NULL /* annex */,  &hash);
 
     /* TODO just have it take keypair? */
     ret = secp256k1_keypair_xonly_pub(secp256k1_ctx, &pubkey, NULL /* pk_parity */, key_pair);
@@ -498,7 +499,7 @@ bool check_tx_taproot_sig(const struct bitcoin_tx *tx, size_t input_num,
 	}
 	assert(input_num < tx->wtx->num_inputs);
 
-	bitcoin_tx_taproot_hash_for_sig(tx, input_num, sighash_type, tapleaf_script, &hash);
+	bitcoin_tx_taproot_hash_for_sig(tx, input_num, sighash_type, tapleaf_script, /* annex */ NULL, &hash);
 
 	dump_tx("check_tx_sig", tx, input_num, tapleaf_script, NULL /* key */, x_key, &hash);
 
