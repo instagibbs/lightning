@@ -458,10 +458,11 @@ static int test_initial_settlement_tx(void)
     const struct pubkey *pubkey_ptrs[2];
     const struct sha256 tap_merkle_root;
     unsigned char tap_tweak_out[32];
-    int i;
+    int i, pk_parity;
     secp256k1_xonly_pubkey xonly_pubkey;
 
     /* MuSig signing stuff */
+    secp256k1_xonly_pubkey inner_pubkey;
     secp256k1_musig_secnonce secnonce[2];
     const secp256k1_musig_pubnonce *pubnonce_ptrs[2];
     secp256k1_musig_pubnonce pubnonces[2];
@@ -470,8 +471,10 @@ static int test_initial_settlement_tx(void)
     secp256k1_musig_partial_sig p_sigs[2];
     u8 *tapleaf_script;
     struct bip340sig sig;
-    u8 *annex;
     secp256k1_musig_session session[2];
+    u8 *annex;
+    u8 **update_witness;
+    u8 *final_sig;
 
     /* Test initial settlement tx */
 
@@ -501,6 +504,11 @@ static int test_initial_settlement_tx(void)
     pubkey_ptrs[0] = &eltoo_keyset.self_funding_key;
     pubkey_ptrs[1] = &eltoo_keyset.other_funding_key;
 
+    /* Calculate inner pubkey */
+    bipmusig_inner_pubkey(&inner_pubkey,
+           pubkey_ptrs,
+           /* n_pubkeys */ 1);
+
     dust_limit.satoshis = 294;
     self_pay.millisatoshis = (update_output_sats.satoshis - 10000)*1000;
     other_pay.millisatoshis = (update_output_sats.satoshis*1000) - self_pay.millisatoshis;
@@ -523,7 +531,7 @@ static int test_initial_settlement_tx(void)
     tx_hex = fmt_bitcoin_tx(tmpctx, tx);
     printf("Settlement tx: %s\n", tx_hex);
     psbt_b64 = psbt_to_b64(tmpctx, tx->psbt);
-    printf("Settlement psbt: %s\n", psbt_b64);
+    printf("Initial Settlement psbt: %s\n", psbt_b64);
 
     /* Regression test vector for now */
     tx_cmp = bitcoin_tx_from_hex(tmpctx, regression_tx_hex, sizeof(regression_tx_hex)-1);
@@ -553,7 +561,7 @@ static int test_initial_settlement_tx(void)
         ok = secp256k1_xonly_pubkey_from_pubkey(
             secp256k1_ctx,
             &xonly_pubkey,
-            /* pk_parity */ NULL, 
+            &pk_parity, 
             &(taproot_pubkey.pubkey));
         assert(ok);
 
@@ -568,6 +576,7 @@ static int test_initial_settlement_tx(void)
 
     /* This should be stored in bitcoin_tx->psbt... */
     tapleaf_script = make_eltoo_funding_update_script(tmpctx);
+
     annex = make_eltoo_annex(tmpctx, tx);
     for (i=0; i<2; ++i){
         bitcoin_tx_taproot_hash_for_sig(update_tx, /* input_index */ 0, SIGHASH_ANYPREVOUTANYSCRIPT|SIGHASH_SINGLE, tapleaf_script, annex, &msg_out);
@@ -592,6 +601,21 @@ static int test_initial_settlement_tx(void)
                &sig);
         assert(ok);
     }
+
+    final_sig = tal_arr(tmpctx, u8, sizeof(sig.u8)+1);
+    memcpy(final_sig, sig.u8, sizeof(sig.u8));
+    final_sig[sizeof(final_sig) - 1] = SIGHASH_ANYPREVOUTANYSCRIPT|SIGHASH_SINGLE;
+
+    /* Witness stack, bottom to top:  MuSig2 sig + tapscript + control block + Annex data */
+    update_witness = tal_arr(tmpctx, u8 *, 4);
+    update_witness[0] = final_sig;
+    update_witness[1] = make_eltoo_funding_update_script(tmpctx);
+    update_witness[2] = compute_control_block(tmpctx, update_witness[1], &inner_pubkey, pk_parity);
+    update_witness[3] = annex;
+    bitcoin_tx_input_set_witness(update_tx, /* input_num */ 0, update_witness);
+
+    psbt_b64 = psbt_to_b64(tmpctx, update_tx->psbt);
+    printf("Initial update psbt with finalized witness for input: %s\n", psbt_b64);
 
 	return 0;
 }
