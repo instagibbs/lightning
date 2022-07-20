@@ -452,6 +452,27 @@ static int test_initial_settlement_tx(void)
     char *tx_hex;
     char *psbt_b64;
 
+    /* Aggregation stuff */
+    struct pubkey taproot_pubkey;
+    secp256k1_musig_keyagg_cache keyagg_cache[2];
+    const struct pubkey *pubkey_ptrs[2];
+    const struct sha256 tap_merkle_root;
+    unsigned char tap_tweak_out[32];
+    int i;
+    secp256k1_xonly_pubkey xonly_pubkey;
+
+    /* MuSig signing stuff */
+    secp256k1_musig_secnonce secnonce[2];
+    const secp256k1_musig_pubnonce *pubnonce_ptrs[2];
+    secp256k1_musig_pubnonce pubnonces[2];
+    struct sha256_double msg_out;
+    const secp256k1_musig_partial_sig *p_sig_ptrs[2];
+    secp256k1_musig_partial_sig p_sigs[2];
+    u8 *tapleaf_script;
+    struct bip340sig sig;
+    u8 *annex;
+    secp256k1_musig_session session[2];
+
     /* Test initial settlement tx */
 
     update_output.txid = txid_from_hex("8984484a580b825b9972d7adb15050b3ab624ccd731946b3eeddb92f4e7ef6be");
@@ -476,6 +497,9 @@ static int test_initial_settlement_tx(void)
     ok = pubkey_from_privkey(&bob_settle_privkey,
              &eltoo_keyset.other_settle_key);
     assert(ok);
+
+    pubkey_ptrs[0] = &eltoo_keyset.self_funding_key;
+    pubkey_ptrs[1] = &eltoo_keyset.other_funding_key;
 
     dust_limit.satoshis = 294;
     self_pay.millisatoshis = (update_output_sats.satoshis - 10000)*1000;
@@ -515,6 +539,59 @@ static int test_initial_settlement_tx(void)
 
     psbt_b64 = psbt_to_b64(tmpctx, update_tx->psbt);
     printf("Update psbt: %s\n", psbt_b64);
+
+    /* Generate signing session for "both sides" */
+    for (i=0; i<2; ++i){
+        bipmusig_finalize_keys(&taproot_pubkey,
+               &keyagg_cache[i],
+               pubkey_ptrs,
+               /* n_pubkeys */ 2,
+               &tap_merkle_root,
+               tap_tweak_out);
+
+        /* FIXME we should just accept compressed pubkey whole way */
+        ok = secp256k1_xonly_pubkey_from_pubkey(
+            secp256k1_ctx,
+            &xonly_pubkey,
+            /* pk_parity */ NULL, 
+            &(taproot_pubkey.pubkey));
+        assert(ok);
+
+        /* "Presharing" nonces here */
+        bipmusig_gen_nonce(&secnonce[i],
+               &pubnonces[i],
+               (i == 0) ? &alice_funding_privkey : &bob_funding_privkey,
+               &keyagg_cache[i],
+               /* msg32 */ NULL);
+        pubnonce_ptrs[i] = &pubnonces[i];
+    }
+
+    /* This should be stored in bitcoin_tx->psbt... */
+    tapleaf_script = make_eltoo_funding_update_script(tmpctx);
+    annex = make_eltoo_annex(tmpctx, tx);
+    for (i=0; i<2; ++i){
+        bitcoin_tx_taproot_hash_for_sig(update_tx, /* input_index */ 0, SIGHASH_ANYPREVOUTANYSCRIPT|SIGHASH_SINGLE, tapleaf_script, annex, &msg_out);
+        bipmusig_partial_sign((i == 0) ? &alice_funding_privkey : &bob_funding_privkey,
+               &secnonce[i],
+               pubnonce_ptrs,
+               2,
+               msg_out.sha.u.u8, /* FIXME harmonize this to sha256_double */
+               &keyagg_cache[i],
+               &session[i],
+               &p_sigs[i]);
+        p_sig_ptrs[i] = &p_sigs[i];
+    }
+
+    /* Finally, combine sig */
+    for (i=0; i<2; ++i){
+        ok = bipmusig_partial_sigs_combine_verify(p_sig_ptrs,
+               2,
+               &xonly_pubkey,
+               &session[i],
+               &msg_out,
+               &sig);
+        assert(ok);
+    }
 
 	return 0;
 }
