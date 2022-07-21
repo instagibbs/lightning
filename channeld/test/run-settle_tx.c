@@ -505,9 +505,10 @@ static int test_initial_settlement_tx(void)
     pubkey_ptrs[1] = &eltoo_keyset.other_funding_key;
 
     /* Calculate inner pubkey */
+    printf("INNER PUBKEY INITIAL UPDATE\n");
     bipmusig_inner_pubkey(&inner_pubkey,
            pubkey_ptrs,
-           /* n_pubkeys */ 1);
+           /* n_pubkeys */ 2);
 
     dust_limit.satoshis = 294;
     self_pay.millisatoshis = (update_output_sats.satoshis - 10000)*1000;
@@ -553,6 +554,7 @@ static int test_initial_settlement_tx(void)
 
     /* FIXME This as well as inner key will be in PSBT so no need to recompute again */
     compute_taptree_merkle_root(&funding_tap_merkle_root, funding_tapleaf_script, /* num_scripts */ 1);
+    printf("UPDATE FUNDING MERKLE ROOT: %s\n", tal_hexstr(tmpctx, funding_tap_merkle_root.u.u8, 32));
 
     /* Generate signing session for "both sides" */
     for (i=0; i<2; ++i){
@@ -562,6 +564,7 @@ static int test_initial_settlement_tx(void)
                /* n_pubkeys */ 2,
                &funding_tap_merkle_root,
                tap_tweak_out);
+        printf("UPDATE FUNDING TAPTWEAK: %s\n", tal_hexstr(tmpctx, tap_tweak_out, 32));
 
         /* FIXME we should just accept compressed pubkey whole way */
         ok = secp256k1_xonly_pubkey_from_pubkey(
