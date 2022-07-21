@@ -586,6 +586,7 @@ static int test_initial_settlement_tx(void)
     annex = make_eltoo_annex(tmpctx, tx);
     for (i=0; i<2; ++i){
         bitcoin_tx_taproot_hash_for_sig(update_tx, /* input_index */ 0, SIGHASH_ANYPREVOUTANYSCRIPT|SIGHASH_SINGLE, funding_tapleaf_script[0], annex, &msg_out);
+        printf("UPDATE FUNDING SIGHASH: %s\n", tal_hexstr(tmpctx, msg_out.sha.u.u8, 32));
         bipmusig_partial_sign((i == 0) ? &alice_funding_privkey : &bob_funding_privkey,
                &secnonce[i],
                pubnonce_ptrs,
@@ -610,7 +611,7 @@ static int test_initial_settlement_tx(void)
 
     final_sig = tal_arr(tmpctx, u8, sizeof(sig.u8)+1);
     memcpy(final_sig, sig.u8, sizeof(sig.u8));
-    final_sig[sizeof(final_sig) - 1] = SIGHASH_ANYPREVOUTANYSCRIPT|SIGHASH_SINGLE;
+    final_sig[tal_count(final_sig)-1] = SIGHASH_ANYPREVOUTANYSCRIPT|SIGHASH_SINGLE;
 
     /* Witness stack, bottom to top:  MuSig2 sig + tapscript + control block + Annex data */
     update_witness = tal_arr(tmpctx, u8 *, 4);
