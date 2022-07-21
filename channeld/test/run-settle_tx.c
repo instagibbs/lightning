@@ -610,7 +610,7 @@ static int test_initial_settlement_tx(void)
     update_witness = tal_arr(tmpctx, u8 *, 4);
     update_witness[0] = final_sig;
     update_witness[1] = make_eltoo_funding_update_script(tmpctx);
-    update_witness[2] = compute_control_block(tmpctx, update_witness[1], &inner_pubkey, pk_parity);
+    update_witness[2] = compute_control_block(tmpctx, /* other_script */ NULL, &inner_pubkey, pk_parity);
     update_witness[3] = annex;
     bitcoin_tx_input_set_witness(update_tx, /* input_num */ 0, update_witness);
 
