@@ -1203,11 +1203,11 @@ u8 *make_eltoo_funding_update_script(const tal_t *ctx)
 {
     /* where EXPR_UPDATE(n) =
      *
-     *`<1> OP_CHECKSIGVERIFY`, in the case of `n == 0`
+     *`<1> OP_CHECKSIG`, in the case of `n == 0`
      */
 	u8 *script = tal_arr(ctx, u8, 0);
 	add_op(&script, OP_1);
-	add_op(&script, OP_CHECKSIGVERIFY);
+	add_op(&script, OP_CHECKSIG);
     return script;
 }
 
