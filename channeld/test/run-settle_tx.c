@@ -453,16 +453,17 @@ static int test_initial_settlement_tx(void)
     char *psbt_b64;
 
     /* Aggregation stuff */
-    struct pubkey taproot_pubkey;
     secp256k1_musig_keyagg_cache keyagg_cache[2];
     const struct pubkey *pubkey_ptrs[2];
     struct sha256 funding_tap_merkle_root;
     unsigned char tap_tweak_out[32];
     int i, pk_parity;
-    secp256k1_xonly_pubkey xonly_pubkey;
+    secp256k1_xonly_pubkey dummy_xonly_pubkey;
+    struct pubkey taproot_pubkey;
+    secp256k1_musig_keyagg_cache dummy_cache;
 
     /* MuSig signing stuff */
-    secp256k1_xonly_pubkey inner_pubkey;
+    secp256k1_xonly_pubkey xo_inner_pubkey;
     secp256k1_musig_secnonce secnonce[2];
     const secp256k1_musig_pubnonce *pubnonce_ptrs[2];
     secp256k1_musig_pubnonce pubnonces[2];
@@ -504,11 +505,14 @@ static int test_initial_settlement_tx(void)
     pubkey_ptrs[0] = &eltoo_keyset.self_funding_key;
     pubkey_ptrs[1] = &eltoo_keyset.other_funding_key;
 
-    /* Calculate inner pubkey */
+    /* Calculate inner pubkey, cache reused at end for tapscript signing */
     printf("INNER PUBKEY INITIAL UPDATE\n");
-    bipmusig_inner_pubkey(&inner_pubkey,
-           pubkey_ptrs,
-           /* n_pubkeys */ 2);
+    for (i=0; i<2; ++i) {
+        bipmusig_inner_pubkey(&xo_inner_pubkey,
+               &keyagg_cache[i],
+               pubkey_ptrs,
+               /* n_pubkeys */ 2);
+    }
 
     dust_limit.satoshis = 294;
     self_pay.millisatoshis = (update_output_sats.satoshis - 10000)*1000;
@@ -552,27 +556,30 @@ static int test_initial_settlement_tx(void)
     /* This should be stored in bitcoin_tx->psbt... */
     funding_tapleaf_script[0] = make_eltoo_funding_update_script(tmpctx);
 
+    /* FIXME  Next three blocks only needed for parity bit to make witness... refactor this */
+
     /* FIXME This as well as inner key will be in PSBT so no need to recompute again */
     compute_taptree_merkle_root(&funding_tap_merkle_root, funding_tapleaf_script, /* num_scripts */ 1);
     printf("UPDATE FUNDING MERKLE ROOT: %s\n", tal_hexstr(tmpctx, funding_tap_merkle_root.u.u8, 32));
 
+    bipmusig_finalize_keys(&taproot_pubkey,
+           &dummy_cache,
+           pubkey_ptrs,
+           /* n_pubkeys */ 2,
+           &funding_tap_merkle_root,
+          tap_tweak_out);
+   printf("UPDATE FUNDING TAPTWEAK: %s\n", tal_hexstr(tmpctx, tap_tweak_out, 32));
+
+    /* FIXME we should just accept compressed pubkey whole way */
+    ok = secp256k1_xonly_pubkey_from_pubkey(
+        secp256k1_ctx,
+        &dummy_xonly_pubkey,
+        &pk_parity, 
+        &(taproot_pubkey.pubkey));
+    assert(ok);
+
     /* Generate signing session for "both sides" */
     for (i=0; i<2; ++i){
-        bipmusig_finalize_keys(&taproot_pubkey,
-               &keyagg_cache[i],
-               pubkey_ptrs,
-               /* n_pubkeys */ 2,
-               &funding_tap_merkle_root,
-               tap_tweak_out);
-        printf("UPDATE FUNDING TAPTWEAK: %s\n", tal_hexstr(tmpctx, tap_tweak_out, 32));
-
-        /* FIXME we should just accept compressed pubkey whole way */
-        ok = secp256k1_xonly_pubkey_from_pubkey(
-            secp256k1_ctx,
-            &xonly_pubkey,
-            &pk_parity, 
-            &(taproot_pubkey.pubkey));
-        assert(ok);
 
         /* "Presharing" nonces here */
         bipmusig_gen_nonce(&secnonce[i],
@@ -602,7 +609,7 @@ static int test_initial_settlement_tx(void)
     for (i=0; i<2; ++i){
         ok = bipmusig_partial_sigs_combine_verify(p_sig_ptrs,
                2,
-               &xonly_pubkey,
+               &xo_inner_pubkey,
                &session[i],
                &msg_out,
                &sig);
@@ -617,7 +624,7 @@ static int test_initial_settlement_tx(void)
     update_witness = tal_arr(tmpctx, u8 *, 4);
     update_witness[0] = final_sig;
     update_witness[1] = make_eltoo_funding_update_script(tmpctx);
-    update_witness[2] = compute_control_block(tmpctx, /* other_script */ NULL, &inner_pubkey, pk_parity);
+    update_witness[2] = compute_control_block(tmpctx, /* other_script */ NULL, &xo_inner_pubkey, pk_parity);
     update_witness[3] = annex;
     bitcoin_tx_input_set_witness(update_tx, /* input_num */ 0, update_witness);
 
@@ -658,6 +665,7 @@ static int test_htlc_output_creation(void)
 
     /* Calculate inner pubkey */
     bipmusig_inner_pubkey(&inner_pubkey,
+           /* keyagg_cache */ NULL,
            pubkey_ptrs,
            /* n_pubkeys */ 1);
 

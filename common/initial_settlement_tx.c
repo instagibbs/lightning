@@ -161,6 +161,7 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
 
     /* Channel-wide inner public key computed here */
     bipmusig_inner_pubkey(&inner_pubkey,
+           /* keyagg_cache */ NULL,
            pubkey_ptrs,
            /* n_pubkeys */ 2);
 

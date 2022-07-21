@@ -110,13 +110,15 @@ void bip340_sign_hash(const struct privkey *privkey,
            struct bip340sig *sig);
 
 /**
- * bipmusig_inner_pubkey - produce the sorted taproot inner pubkey.
- * Does not create a signing session.
+ * bipmusig_inner_pubkey - produce the sorted taproot inner pubkey using sort order.
+ * Can be used for signing for internal pubkey if keyagg_cache is non-NULL.
  * @inner_pubkey: resulting aggregated(untweaked) x-only pubkey
+ * @keyagg_cache: cache for signing session for tapscript usage
  * @pubkeys: array of public keys to aggregate
  * @n_pubkeys: number of pubkeys in @pubkeys array
  */
 void bipmusig_inner_pubkey(secp256k1_xonly_pubkey *inner_pubkey,
+           secp256k1_musig_keyagg_cache *keyagg_cache,
            const struct pubkey * const* pubkeys,
            size_t n_pubkeys);
 

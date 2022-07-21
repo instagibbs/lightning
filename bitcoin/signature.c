@@ -152,6 +152,7 @@ void bip340_sign_hash(const struct privkey *privkey,
 }
 
 void bipmusig_inner_pubkey(secp256k1_xonly_pubkey *inner_pubkey,
+           secp256k1_musig_keyagg_cache *keyagg_cache,
            const struct pubkey * const* pubkeys,
            size_t n_pubkeys)
 {
@@ -178,7 +179,7 @@ void bipmusig_inner_pubkey(secp256k1_xonly_pubkey *inner_pubkey,
     ok = secp256k1_musig_pubkey_agg(secp256k1_ctx,
         NULL /* scratch */,
         inner_pubkey,
-        /* keyagg_cache */ NULL,
+        keyagg_cache,
         x_keys_ptr,
         n_pubkeys); 
 
