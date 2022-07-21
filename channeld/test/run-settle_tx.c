@@ -456,7 +456,7 @@ static int test_initial_settlement_tx(void)
     struct pubkey taproot_pubkey;
     secp256k1_musig_keyagg_cache keyagg_cache[2];
     const struct pubkey *pubkey_ptrs[2];
-    const struct sha256 tap_merkle_root;
+    struct sha256 funding_tap_merkle_root;
     unsigned char tap_tweak_out[32];
     int i, pk_parity;
     secp256k1_xonly_pubkey xonly_pubkey;
@@ -469,7 +469,7 @@ static int test_initial_settlement_tx(void)
     struct sha256_double msg_out;
     const secp256k1_musig_partial_sig *p_sig_ptrs[2];
     secp256k1_musig_partial_sig p_sigs[2];
-    u8 *tapleaf_script;
+    u8 *funding_tapleaf_script[1];
     struct bip340sig sig;
     secp256k1_musig_session session[2];
     u8 *annex;
@@ -548,13 +548,19 @@ static int test_initial_settlement_tx(void)
     psbt_b64 = psbt_to_b64(tmpctx, update_tx->psbt);
     printf("Update psbt: %s\n", psbt_b64);
 
+    /* This should be stored in bitcoin_tx->psbt... */
+    funding_tapleaf_script[0] = make_eltoo_funding_update_script(tmpctx);
+
+    /* FIXME This as well as inner key will be in PSBT so no need to recompute again */
+    compute_taptree_merkle_root(&funding_tap_merkle_root, funding_tapleaf_script, /* num_scripts */ 1);
+
     /* Generate signing session for "both sides" */
     for (i=0; i<2; ++i){
         bipmusig_finalize_keys(&taproot_pubkey,
                &keyagg_cache[i],
                pubkey_ptrs,
                /* n_pubkeys */ 2,
-               &tap_merkle_root,
+               &funding_tap_merkle_root,
                tap_tweak_out);
 
         /* FIXME we should just accept compressed pubkey whole way */
@@ -574,12 +580,9 @@ static int test_initial_settlement_tx(void)
         pubnonce_ptrs[i] = &pubnonces[i];
     }
 
-    /* This should be stored in bitcoin_tx->psbt... */
-    tapleaf_script = make_eltoo_funding_update_script(tmpctx);
-
     annex = make_eltoo_annex(tmpctx, tx);
     for (i=0; i<2; ++i){
-        bitcoin_tx_taproot_hash_for_sig(update_tx, /* input_index */ 0, SIGHASH_ANYPREVOUTANYSCRIPT|SIGHASH_SINGLE, tapleaf_script, annex, &msg_out);
+        bitcoin_tx_taproot_hash_for_sig(update_tx, /* input_index */ 0, SIGHASH_ANYPREVOUTANYSCRIPT|SIGHASH_SINGLE, funding_tapleaf_script[0], annex, &msg_out);
         bipmusig_partial_sign((i == 0) ? &alice_funding_privkey : &bob_funding_privkey,
                &secnonce[i],
                pubnonce_ptrs,
