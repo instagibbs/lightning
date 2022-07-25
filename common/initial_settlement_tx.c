@@ -98,11 +98,10 @@ void add_settlement_input(struct bitcoin_tx *tx, const struct bitcoin_outpoint *
            update_tap_tweak);
 
     printf("TAPTWEAK: %s\n", tal_hexstr(tmpctx, update_tap_tweak, 32));
-    /* Convert to x-only, grab parity bit of the output pubkey */
-    ok = secp256k1_xonly_pubkey_from_pubkey(secp256k1_ctx, &output_pubkey, &parity_bit, &(update_agg_pk.pubkey));
+    parity_bit = pubkey_parity(&update_agg_pk);
     printf("PARITY BIT: %d\n", parity_bit);
     assert(ok);
-    control_block = compute_control_block(tmpctx, settle_and_update_tapscripts[1], inner_pubkey, parity_bit);
+    control_block = compute_control_block(tmpctx, settle_and_update_tapscripts[1], /* annex_hint */ NULL, inner_pubkey, parity_bit);
     printf("CBLOCK: %s\n", tal_hexstr(tmpctx, control_block, tal_count(control_block)));
     script_pubkey = scriptpubkey_p2tr(tmpctx, &update_agg_pk);
 

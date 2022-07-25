@@ -118,18 +118,70 @@ void bind_update_tx_to_funding_outpoint(struct bitcoin_tx *update_tx,
     update_witness = tal_arr(tmpctx, u8 *, 4);
     update_witness[0] = final_sig;
     update_witness[1] = update_tapscript[0];
-    update_witness[2] = compute_control_block(tmpctx, /* other_script */ NULL, psbt_inner_pubkey, pubkey_parity(&taproot_pk));
+    update_witness[2] = compute_control_block(tmpctx, /* other_script */ NULL, /* annex_hint */ NULL, psbt_inner_pubkey, pubkey_parity(&taproot_pk));
     update_witness[3] = make_eltoo_annex(tmpctx, settle_tx);;
     bitcoin_tx_input_set_witness(update_tx, /* input_num */ 0, update_witness);
 }
 
 void bind_update_tx_to_update_outpoint(struct bitcoin_tx *update_tx,
-                    const struct bitcoin_outpoint *funding_outpoint,
+                    struct bitcoin_tx *settle_tx,
+                    const struct bitcoin_outpoint *outpoint,
                     const struct eltoo_keyset *eltoo_keyset,
                     const u8 *invalidated_annex_hint,
-                    u32 invalidated_update_number)
+                    u32 invalidated_update_number,
+                    secp256k1_xonly_pubkey *psbt_inner_pubkey,
+                    u8 *final_sig)
 {
-  // FIXME
+    const struct pubkey *pubkey_ptrs[2];
+    u8 *update_tapscript;
+    int input_num;
+    /* For committing to the output's settle path tapleaf hash inside the annex itself */
+    u8 *script_pubkey;
+    struct pubkey taproot_pk;
+    secp256k1_musig_keyagg_cache unused_coop_cache;
+    u8 **update_witness;
+    struct amount_sat funding_sats;
+
+    /* Stuff that should go in PSBT eventually */
+    struct sha256 psbt_tap_merkle_root;
+    unsigned char psbt_tap_tweak[32];
+
+   /* For MuSig aggregation for outputs */
+    pubkey_ptrs[0] = &(eltoo_keyset->self_funding_key);
+    pubkey_ptrs[1] = &(eltoo_keyset->other_funding_key);
+
+    /* FIXME embed this in PSBT as well... */
+    update_tapscript = make_eltoo_update_script(tmpctx, invalidated_update_number);
+
+    compute_taptree_merkle_root_with_hint(&psbt_tap_merkle_root, update_tapscript, invalidated_annex_hint);
+
+    bipmusig_finalize_keys(&taproot_pk,
+           &unused_coop_cache,
+           pubkey_ptrs,
+           /* n_pubkeys */ 2,
+           &psbt_tap_merkle_root,
+           psbt_tap_tweak);
+
+    script_pubkey = scriptpubkey_p2tr(tmpctx, &taproot_pk);
+
+    /* Remove existing input since we're over-writing all details */
+    funding_sats.satoshis = update_tx->psbt->inputs[0].witness_utxo->satoshi;
+    bitcoin_tx_remove_input(update_tx, /* input_num */ 0);
+
+    /* FIXME carry inner pubkey and tapscript/taptree info in PSBT, even though not needed to complete this tx per se */
+    input_num = bitcoin_tx_add_input(update_tx, outpoint, /* sequence */ 0xFFFFFFFD,
+                 /* scriptSig */ NULL, funding_sats, script_pubkey, /* input_wscript */ NULL, /* inner_pubkey */ NULL, /* tap_tree */ NULL);
+    assert(input_num == 0);
+
+    /* FIXME we can now rebind settle_tx's prevout */
+
+    /* Witness stack, bottom to top:  MuSig2 sig + tapscript + control block + Annex data */
+    update_witness = tal_arr(tmpctx, u8 *, 4);
+    update_witness[0] = final_sig;
+    update_witness[1] = update_tapscript;
+    update_witness[2] = compute_control_block(tmpctx, /* other_script */ NULL, invalidated_annex_hint, psbt_inner_pubkey, pubkey_parity(&taproot_pk));
+    update_witness[3] = make_eltoo_annex(tmpctx, settle_tx);
+    bitcoin_tx_input_set_witness(update_tx, /* input_num */ 0, update_witness);
 }
 
 struct bitcoin_tx *unbound_update_tx(const tal_t *ctx,

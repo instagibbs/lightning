@@ -43,21 +43,28 @@ void bind_update_tx_to_funding_outpoint(struct bitcoin_tx *update_tx,
  * transactions are published, e.g. faulty watchtower, or malicious
  * counter-party.
  * @update_tx: The transaction being re-binded
+ * @settle_tx: The corresponding settlement transaction, also re-binded
  * @funding_outpoint: The outpoint to be spend on chain
  * @eltoo_keyset: Set of keys to derive inner public key
  * @invalidated_annex_hint: The annex data of the update transaction
  *   which is having its outpoint spent by @update_tx
  * @invalidated_update_number: The locktime of the update transaction
  *   which is having its outpoint spent by @update_tx
+ * @psbt_inner_pubkey: Inner pubkey for the state input
+ * @final_sig: Raw 65-bytes of signature to put into witness
  */
 void bind_update_tx_to_update_outpoint(struct bitcoin_tx *update_tx,
-                    const struct bitcoin_outpoint *funding_outpoint,
+                    struct bitcoin_tx *settle_tx,
+                    const struct bitcoin_outpoint *outpoint,
                     const struct eltoo_keyset *eltoo_keyset,
                     const u8 *invalidated_annex_hint,
-                    u32 invalidated_update_number);
+                    u32 invalidated_update_number,
+                    secp256k1_xonly_pubkey *psbt_inner_pubkey,
+                    u8 *final_sig);
 
 /**
  * unbound_update_tx: create (unsigned) update tx to spend a yet-to-decided ouutpoint
+ * FIXME return annex here too(or include as proprietary field in PSBT?)
  * @ctx: context to allocate transaction and @htlc_map from.
  * @settlement_tx: initial settlement tx created via `initial_settlement_tx`
  * @funding_sats: funding amount

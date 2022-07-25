@@ -199,22 +199,23 @@ u8 *bitcoin_tapscript_to_node(const tal_t *ctx, const struct pubkey *settlement_
 /* Computes taproot merkle root from list of up to two scripts in depth 1 tree, in order */
 void compute_taptree_merkle_root(struct sha256 *hash_out, u8 **scripts, size_t num_scripts);
 
-/* FIXME implement */
-void compute_taptree_merkle_root_with_hint(struct sha256 *update_merkle_root, u8 *update_tapscript, u8 *invalidated_annex_hint);
+/* Compute merkle root via annex hint from invalidated update tx */
+void compute_taptree_merkle_root_with_hint(struct sha256 *update_merkle_root, const u8 *update_tapscript, const u8 *invalidated_annex_hint);
 
 /* Computes control block for a spend from a taptree of size two, depth of 1, tops. other_script is NULL if only one script is committed.
  * Returns the control block array.
  * @other_script: The script that needs to be hashed and put in control block
+ * @annex_hint: ... or if @other_script is NULL, must supply annex hint from the posted update tx
  * @inner_pubkey: Inner pubkey for taproot control block
  * @parity_bit: Parity of outer taproot pubkey
  */
-u8 *compute_control_block(const tal_t *ctx, u8 *other_script, secp256k1_xonly_pubkey *inner_pubkey, int parity_bit);
+u8 *compute_control_block(const tal_t *ctx, const u8 *other_script, const u8 *annex_hint, const secp256k1_xonly_pubkey *inner_pubkey, int parity_bit);
 
 /* Creates tapscript that makes a sig-in-script ANYPREVOUTANYSCRIPT covenant
  * which commits to the tx argument:
  * CovSig(n) 1_G OP_CHECKSIG
  */
-u8 *make_eltoo_settle_script(const tal_t *ctx, const struct bitcoin_tx *tx, size_t input_index);
+u8 *make_eltoo_settle_script(const tal_t *ctx, const struct bitcoin_tx *settle_tx, size_t input_index);
 
 /* Creates the update path tapscript for eltoo, which commits to the masked update number */
 u8 *make_eltoo_update_script(const tal_t *ctx, u32 update_num);

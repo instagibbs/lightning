@@ -1095,16 +1095,48 @@ void compute_taptree_merkle_root(struct sha256 *hash_out, u8 **scripts, size_t n
     }
 }
 
-void compute_taptree_merkle_root_with_hint(struct sha256 *update_merkle_root, u8 *update_tapscript, u8 *invalidated_annex_hint)
+void compute_taptree_merkle_root_with_hint(struct sha256 *update_merkle_root, const u8 *update_tapscript, const u8 *invalidated_annex_hint)
 {
+    int ok;
+    unsigned char leaf_version = 0xc0;
+    unsigned char tag_hash_buf[1000]; /* Needs to be large enough for HTLC scripts */
+    unsigned char tap_hashes[64]; /* To store the leaves for comparison */
 
+    size_t script_len = tal_count(update_tapscript);
+    unsigned char *p = tag_hash_buf;
+
+    assert(tal_count(invalidated_annex_hint) == 32 && invalidated_annex_hint[0] == 0x50);
+
+    /* Let k0 = hashTapLeaf(v || compact_size(size of s) || s); also call it the tapleaf hash. */
+    p[0] = leaf_version;
+    p++;
+    p += varint_put(p, script_len);
+    memcpy(p, update_tapscript, script_len);
+    p += script_len;
+
+    ok = wally_tagged_hash(tag_hash_buf, p - tag_hash_buf, "TapLeaf", tap_hashes);
+    assert(ok == WALLY_OK);
+
+    /* Put invalidated hint in place as a tapleaf hash directly */
+    memcpy(tap_hashes + 32, invalidated_annex_hint + 1, 32);
+
+    /* If kj ≥ ej: kj+1 = hashTapBranch(ej || kj), swap them*/
+    if (memcmp(tap_hashes, tap_hashes + 32, 32) >= 0) {
+        memcpy(tag_hash_buf, tap_hashes, 32);
+        memcpy(tap_hashes, tap_hashes + 32, 32);
+        memcpy(tap_hashes + 32, tag_hash_buf, 32);
+    }
+    ok = wally_tagged_hash(tap_hashes, sizeof(tap_hashes), "TapBranch", update_merkle_root->u.u8);
+    assert(ok == WALLY_OK);
 }
 
-u8 *compute_control_block(const tal_t *ctx, u8 *other_script, secp256k1_xonly_pubkey *inner_pubkey, int parity_bit)
+u8 *compute_control_block(const tal_t *ctx, const u8 *other_script, const u8 *annex_hint, const secp256k1_xonly_pubkey *inner_pubkey, int parity_bit)
 {
     int ok;
     u8 *control_block_cursor;
-    u8 *control_block = tal_arr(ctx, u8, other_script ? 33 + 32 : 33);
+    u8 *control_block = tal_arr(ctx, u8, (!!other_script | !!annex_hint) ? 33 + 32 : 33);
+
+    assert(other_script != annex_hint);
 
     control_block_cursor = control_block;
 
@@ -1138,11 +1170,16 @@ u8 *compute_control_block(const tal_t *ctx, u8 *other_script, secp256k1_xonly_pu
         ok = wally_tagged_hash(tag_hash_buf, p - tag_hash_buf, "TapLeaf", control_block_cursor);
         assert(ok == WALLY_OK);
         control_block_cursor += 32;
+    } else if (annex_hint) {
+        assert(tal_count(annex_hint) == 33);
+        assert(annex_hint[0] == 0x50);
+        memcpy(control_block_cursor, annex_hint + 1, 32);
+        control_block_cursor += 32;
     }
     return control_block;
 }
 
-u8 *make_eltoo_settle_script(const tal_t *ctx, const struct bitcoin_tx *tx, size_t input_index)
+u8 *make_eltoo_settle_script(const tal_t *ctx, const struct bitcoin_tx *settle_tx, size_t input_index)
 {
     int ok;
     enum sighash_type sh_type = SIGHASH_ANYPREVOUTANYSCRIPT|SIGHASH_ALL;
@@ -1159,7 +1196,7 @@ u8 *make_eltoo_settle_script(const tal_t *ctx, const struct bitcoin_tx *tx, size
      * We really shouldn't, but for now we pass in dummy
      * since APOAS sighash doesn't cover it anyways.
      */
-    bitcoin_tx_taproot_hash_for_sig(tx,
+    bitcoin_tx_taproot_hash_for_sig(settle_tx,
                  input_index,
                  sh_type,
                  script,
