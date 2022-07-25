@@ -455,12 +455,7 @@ static int test_initial_settlement_tx(void)
     /* Aggregation stuff */
     secp256k1_musig_keyagg_cache keyagg_cache[2];
     const struct pubkey *pubkey_ptrs[2];
-    struct sha256 funding_tap_merkle_root;
-    unsigned char tap_tweak_out[32];
-    int i, pk_parity;
-    secp256k1_xonly_pubkey dummy_xonly_pubkey;
-    struct pubkey taproot_pubkey;
-    secp256k1_musig_keyagg_cache dummy_cache;
+    int i;
 
     /* MuSig signing stuff */
     secp256k1_xonly_pubkey xo_inner_pubkey;
@@ -470,11 +465,9 @@ static int test_initial_settlement_tx(void)
     struct sha256_double msg_out;
     const secp256k1_musig_partial_sig *p_sig_ptrs[2];
     secp256k1_musig_partial_sig p_sigs[2];
-    u8 *funding_tapleaf_script[1];
     struct bip340sig sig;
     secp256k1_musig_session session[2];
     u8 *annex;
-    u8 **update_witness;
     u8 *final_sig;
 
     /* Test initial settlement tx */
@@ -505,15 +498,6 @@ static int test_initial_settlement_tx(void)
     pubkey_ptrs[0] = &eltoo_keyset.self_funding_key;
     pubkey_ptrs[1] = &eltoo_keyset.other_funding_key;
 
-    /* Calculate inner pubkey, cache reused at end for tapscript signing */
-    printf("INNER PUBKEY INITIAL UPDATE\n");
-    for (i=0; i<2; ++i) {
-        bipmusig_inner_pubkey(&xo_inner_pubkey,
-               &keyagg_cache[i],
-               pubkey_ptrs,
-               /* n_pubkeys */ 2);
-    }
-
     dust_limit.satoshis = 294;
     self_pay.millisatoshis = (update_output_sats.satoshis - 10000)*1000;
     other_pay.millisatoshis = (update_output_sats.satoshis*1000) - self_pay.millisatoshis;
@@ -542,41 +526,26 @@ static int test_initial_settlement_tx(void)
     tx_cmp = bitcoin_tx_from_hex(tmpctx, regression_tx_hex, sizeof(regression_tx_hex)-1);
     tx_must_be_eq(tx, tx_cmp);
 
-    /* We rebind the outpoint later anyways, so just reuse the outpoint */
-    update_tx = initial_update_tx(tmpctx,
+    /* Calculate inner pubkey, caches reused at end for tapscript signing */
+    printf("INNER PUBKEY INITIAL UPDATE\n");
+    for (i=0; i<2; ++i) {
+        bipmusig_inner_pubkey(&xo_inner_pubkey,
+               &keyagg_cache[i],
+               pubkey_ptrs,
+               /* n_pubkeys */ 2);
+    }
+
+    /* Will be bound later */
+    update_tx = unbound_update_tx(tmpctx,
                      tx,
-                     &update_output,
                      update_output_sats,
-                     &eltoo_keyset,
+                     &xo_inner_pubkey,
                      &err_reason);
 
     psbt_b64 = psbt_to_b64(tmpctx, update_tx->psbt);
-    printf("Update psbt: %s\n", psbt_b64);
+    printf("Unbound update psbt: %s\n", psbt_b64);
 
-    /* This should be stored in bitcoin_tx->psbt... */
-    funding_tapleaf_script[0] = make_eltoo_funding_update_script(tmpctx);
-
-    /* FIXME  Next three blocks only needed for parity bit to make witness... refactor this */
-
-    /* FIXME This as well as inner key will be in PSBT so no need to recompute again */
-    compute_taptree_merkle_root(&funding_tap_merkle_root, funding_tapleaf_script, /* num_scripts */ 1);
-    printf("UPDATE FUNDING MERKLE ROOT: %s\n", tal_hexstr(tmpctx, funding_tap_merkle_root.u.u8, 32));
-
-    bipmusig_finalize_keys(&taproot_pubkey,
-           &dummy_cache,
-           pubkey_ptrs,
-           /* n_pubkeys */ 2,
-           &funding_tap_merkle_root,
-          tap_tweak_out);
-   printf("UPDATE FUNDING TAPTWEAK: %s\n", tal_hexstr(tmpctx, tap_tweak_out, 32));
-
-    /* FIXME we should just accept compressed pubkey whole way */
-    ok = secp256k1_xonly_pubkey_from_pubkey(
-        secp256k1_ctx,
-        &dummy_xonly_pubkey,
-        &pk_parity, 
-        &(taproot_pubkey.pubkey));
-    assert(ok);
+    /* Signing happens next */
 
     /* Generate signing session for "both sides" */
     for (i=0; i<2; ++i){
@@ -592,7 +561,7 @@ static int test_initial_settlement_tx(void)
 
     annex = make_eltoo_annex(tmpctx, tx);
     for (i=0; i<2; ++i){
-        bitcoin_tx_taproot_hash_for_sig(update_tx, /* input_index */ 0, SIGHASH_ANYPREVOUTANYSCRIPT|SIGHASH_SINGLE, funding_tapleaf_script[0], annex, &msg_out);
+        bitcoin_tx_taproot_hash_for_sig(update_tx, /* input_index */ 0, SIGHASH_ANYPREVOUTANYSCRIPT|SIGHASH_SINGLE, /* non-NULL script signals bip342... */ annex, annex, &msg_out);
         printf("UPDATE FUNDING SIGHASH: %s\n", tal_hexstr(tmpctx, msg_out.sha.u.u8, 32));
         bipmusig_partial_sign((i == 0) ? &alice_funding_privkey : &bob_funding_privkey,
                &secnonce[i],
@@ -618,15 +587,18 @@ static int test_initial_settlement_tx(void)
 
     final_sig = tal_arr(tmpctx, u8, sizeof(sig.u8)+1);
     memcpy(final_sig, sig.u8, sizeof(sig.u8));
+    /* FIXME store signature in PSBT_IN_PARTIAL_SIG */
     final_sig[tal_count(final_sig)-1] = SIGHASH_ANYPREVOUTANYSCRIPT|SIGHASH_SINGLE;
 
-    /* Witness stack, bottom to top:  MuSig2 sig + tapscript + control block + Annex data */
-    update_witness = tal_arr(tmpctx, u8 *, 4);
-    update_witness[0] = final_sig;
-    update_witness[1] = make_eltoo_funding_update_script(tmpctx);
-    update_witness[2] = compute_control_block(tmpctx, /* other_script */ NULL, &xo_inner_pubkey, pk_parity);
-    update_witness[3] = annex;
-    bitcoin_tx_input_set_witness(update_tx, /* input_num */ 0, update_witness);
+    /* We want to close the channel without cooperation... time to rebind and finalize */
+
+    /* Re-bind, add final script/tapscript info into PSBT */
+    bind_update_tx_to_funding_outpoint(update_tx,
+                    tx,
+                    &update_output,
+                    &eltoo_keyset,
+                    &xo_inner_pubkey,
+                    final_sig);
 
     psbt_b64 = psbt_to_b64(tmpctx, update_tx->psbt);
     printf("Initial update psbt with finalized witness for input: %s\n", psbt_b64);

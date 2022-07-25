@@ -15,26 +15,61 @@ int tx_add_settlement_output(struct bitcoin_tx *update_tx, const struct bitcoin_
 
 u8 *make_eltoo_annex(const tal_t *ctx, const struct bitcoin_tx *settle_tx);
 
-void tx_add_funding_input(struct bitcoin_tx *update_tx,
+/* Appends a tx input to the update transaction, without
+ * binding it to a particular outpoint or script */
+void tx_add_unbound_input(struct bitcoin_tx *update_tx,
+                    struct amount_sat funding_sats,
+                    const secp256k1_xonly_pubkey *inner_pubkey);
+
+/* Used to bind the update transaction to the funding outpoint
+ * of the eltoo contract. This is the expected (non-malicious)
+ * failure mode of a channel. Also finalizes the witness data.
+ * @update_tx: The transaction being re-binded
+ * @settle_tx: The corresponding settlement transaction, also re-binded
+ * @funding_outpoint: The outpoint to be spend on chain
+ * @eltoo_keyset: Set of keys to derive inner public key
+ * @psbt_inner_pubkey: Inner pubkey for the state input
+ * @final_sig: Raw 65-bytes of signature to be put into witness
+ */
+void bind_update_tx_to_funding_outpoint(struct bitcoin_tx *update_tx,
                     const struct bitcoin_tx *settle_tx,
                     const struct bitcoin_outpoint *funding_outpoint,
-                    struct amount_sat funding_outpoint_sats,
-                    const struct eltoo_keyset *eltoo_keyset);
+                    const struct eltoo_keyset *eltoo_keyset,
+                    secp256k1_xonly_pubkey *psbt_inner_pubkey,
+                    u8 *final_sig);
+
+/* Used to bind the update transaction to the non-funding outpoints
+ * of the eltoo contract. This only occurs if invalidated update
+ * transactions are published, e.g. faulty watchtower, or malicious
+ * counter-party.
+ * @update_tx: The transaction being re-binded
+ * @funding_outpoint: The outpoint to be spend on chain
+ * @eltoo_keyset: Set of keys to derive inner public key
+ * @invalidated_annex_hint: The annex data of the update transaction
+ *   which is having its outpoint spent by @update_tx
+ * @invalidated_update_number: The locktime of the update transaction
+ *   which is having its outpoint spent by @update_tx
+ */
+void bind_update_tx_to_update_outpoint(struct bitcoin_tx *update_tx,
+                    const struct bitcoin_outpoint *funding_outpoint,
+                    const struct eltoo_keyset *eltoo_keyset,
+                    const u8 *invalidated_annex_hint,
+                    u32 invalidated_update_number);
 
 /**
- * initial_update_tx: create (unsigned) update tx to spend the funding output
+ * unbound_update_tx: create (unsigned) update tx to spend a yet-to-decided ouutpoint
  * @ctx: context to allocate transaction and @htlc_map from.
  * @settlement_tx: initial settlement tx created via `initial_settlement_tx`
- * @funding_outpoint, @funding_outpoint_sats: funding outpoint and amount
- * @eltoo_keyset: set of keys for deriving inner public key
+ * @funding_sats: funding amount
+ * @inner_pubkey: inner public key for the eltoo channel
  * @err_reason: When NULL is returned, this will point to a human readable reason.
  *
  */
-struct bitcoin_tx *initial_update_tx(const tal_t *ctx,
+struct bitcoin_tx *unbound_update_tx(const tal_t *ctx,
                      const struct bitcoin_tx *settle_tx,
-				     const struct bitcoin_outpoint *funding_outpoint,
-				     struct amount_sat funding_outpoint_sats,
-                     const struct eltoo_keyset *eltoo_keyset,
+				     struct amount_sat funding_sats,
+                     const secp256k1_xonly_pubkey *inner_pubkey,
 				     char** err_reason);
+
 
 #endif /* LIGHTNING_COMMON_INITIAL_UPDATE_TX_H */

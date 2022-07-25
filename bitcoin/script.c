@@ -316,6 +316,20 @@ u8 *scriptpubkey_witness_raw(const tal_t *ctx, u8 version,
 	return script;
 }
 
+int pubkey_parity(const struct pubkey *pubkey)
+{
+    int ok, pk_parity;
+    secp256k1_xonly_pubkey x_key;
+
+    ok = secp256k1_xonly_pubkey_from_pubkey(secp256k1_ctx,
+        &x_key,
+        &pk_parity,
+        &(pubkey->pubkey));
+    assert(ok);
+
+    return pk_parity;
+}
+
 u8 *scriptpubkey_raw_p2tr(const tal_t *ctx, const struct pubkey *output_pubkey)
 {
 	int ok;
@@ -1079,6 +1093,11 @@ void compute_taptree_merkle_root(struct sha256 *hash_out, u8 **scripts, size_t n
         ok = wally_tagged_hash(tap_hashes, sizeof(tap_hashes), "TapBranch", hash_out->u.u8);
         assert(ok == WALLY_OK);
     }
+}
+
+void compute_taptree_merkle_root_with_hint(struct sha256 *update_merkle_root, u8 *update_tapscript, u8 *invalidated_annex_hint)
+{
+
 }
 
 u8 *compute_control_block(const tal_t *ctx, u8 *other_script, secp256k1_xonly_pubkey *inner_pubkey, int parity_bit)

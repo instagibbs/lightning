@@ -139,6 +139,17 @@ void bitcoin_tx_remove_output(struct bitcoin_tx *tx, size_t outnum);
 /* Set the locktime for a transaction */
 void bitcoin_tx_set_locktime(struct bitcoin_tx *tx, u32 locktime);
 
+/* Add a new input to a bitcoin tx that will be signed
+ * using ANYPREVOUT(ANYSCRIPT).
+ * Since at signing time we do not know what the outpoint
+ * will be, or the script being signed for at all,
+ * we ommitt all those values.
+ */
+int bitcoin_tx_add_unbound_input(struct bitcoin_tx *tx,
+             u32 sequence,
+             struct amount_sat amount,
+             const secp256k1_xonly_pubkey *inner_pubkey);
+
 /* Add a new input to a bitcoin tx.
  *
  * For P2WSH inputs, we'll also store the wscript and/or scriptPubkey

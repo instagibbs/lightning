@@ -46,6 +46,9 @@ u8 *p2wpkh_scriptcode(const tal_t *ctx, const struct pubkey *key);
 /* Create an output script for a 32-byte witness program. */
 u8 *scriptpubkey_p2wsh(const tal_t *ctx, const u8 *witnessscript);
 
+/* Retrieve x-only parity bit from pubkey */
+int pubkey_parity(const struct pubkey *pubkey);
+
 /* Create an output script for a taproot output */
 u8 *scriptpubkey_p2tr(const tal_t *ctx, const struct pubkey *pubkey);
 
@@ -195,6 +198,9 @@ u8 *bitcoin_tapscript_to_node(const tal_t *ctx, const struct pubkey *settlement_
 
 /* Computes taproot merkle root from list of up to two scripts in depth 1 tree, in order */
 void compute_taptree_merkle_root(struct sha256 *hash_out, u8 **scripts, size_t num_scripts);
+
+/* FIXME implement */
+void compute_taptree_merkle_root_with_hint(struct sha256 *update_merkle_root, u8 *update_tapscript, u8 *invalidated_annex_hint);
 
 /* Computes control block for a spend from a taptree of size two, depth of 1, tops. other_script is NULL if only one script is committed.
  * Returns the control block array.
