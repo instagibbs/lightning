@@ -2,7 +2,7 @@
 #include <bitcoin/script.h>
 #include <bitcoin/tx.h>
 #include <ccan/array_size/array_size.h>
-#include <common/initial_update_tx.h>
+#include <common/update_tx.h>
 #include <common/keyset.h>
 #include <common/permute_tx.h>
 #include <common/status.h>
@@ -16,7 +16,7 @@
 
 struct wally_psbt;
 
-int tx_add_settlement_output(struct bitcoin_tx *update_tx, const struct bitcoin_tx *settle_tx)
+int tx_add_state_output(struct bitcoin_tx *update_tx, const struct bitcoin_tx *settle_tx)
 {
     struct amount_sat amount;
     amount.satoshis = settle_tx->psbt->inputs[0].witness_utxo->satoshi;
@@ -74,7 +74,6 @@ void bind_update_tx_to_funding_outpoint(struct bitcoin_tx *update_tx,
     const struct pubkey *pubkey_ptrs[2];
     u8 *update_tapscript[1];
     int input_num;
-    /* For committing to the output's settle path tapleaf hash inside the annex itself */
     u8 *script_pubkey;
     struct pubkey taproot_pk;
     secp256k1_musig_keyagg_cache unused_coop_cache;
@@ -135,7 +134,6 @@ void bind_update_tx_to_update_outpoint(struct bitcoin_tx *update_tx,
     const struct pubkey *pubkey_ptrs[2];
     u8 *update_tapscript;
     int input_num;
-    /* For committing to the output's settle path tapleaf hash inside the annex itself */
     u8 *script_pubkey;
     struct pubkey taproot_pk;
     secp256k1_musig_keyagg_cache unused_coop_cache;
@@ -197,7 +195,7 @@ struct bitcoin_tx *unbound_update_tx(const tal_t *ctx,
     update_tx = bitcoin_tx(ctx, chainparams, 1, 1, 0);
 
     /* Add output */
-    pos = tx_add_settlement_output(update_tx, settle_tx);
+    pos = tx_add_state_output(update_tx, settle_tx);
     assert(pos == 0);
 
     /* Add unsigned, un-bound funding input */

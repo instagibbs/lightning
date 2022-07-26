@@ -1,6 +1,5 @@
-/* Commit tx without HTLC support; needed for openingd. */
-#ifndef LIGHTNING_COMMON_INITIAL_UPDATE_TX_H
-#define LIGHTNING_COMMON_INITIAL_UPDATE_TX_H
+#ifndef LIGHTNING_COMMON_UPDATE_TX_H
+#define LIGHTNING_COMMON_UPDATE_TX_H
 #include "config.h"
 #include <bitcoin/chainparams.h>
 #include <bitcoin/pubkey.h>
@@ -11,7 +10,8 @@
 
 struct bitcoin_outpoint;
 
-int tx_add_settlement_output(struct bitcoin_tx *update_tx, const struct bitcoin_tx *settle_tx);
+/* Generates the "state" output for eltoo update transaction, based on the settlement tx */
+int tx_add_state_output(struct bitcoin_tx *update_tx, const struct bitcoin_tx *settle_tx);
 
 u8 *make_eltoo_annex(const tal_t *ctx, const struct bitcoin_tx *settle_tx);
 
@@ -79,4 +79,4 @@ struct bitcoin_tx *unbound_update_tx(const tal_t *ctx,
 				     char** err_reason);
 
 
-#endif /* LIGHTNING_COMMON_INITIAL_UPDATE_TX_H */
+#endif /* LIGHTNING_COMMON_UPDATE_TX_H */

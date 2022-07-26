@@ -59,13 +59,10 @@ void add_settlement_input(struct bitcoin_tx *tx, const struct bitcoin_outpoint *
     struct pubkey update_agg_pk;
     secp256k1_musig_keyagg_cache update_keyagg_cache;
     unsigned char update_tap_tweak[32];
-    secp256k1_xonly_pubkey output_pubkey;
-    int parity_bit, ok;
+    int parity_bit;
     u8 *control_block;
     u8 *script_pubkey;
     u8 **witness; /* settle_and_update_tapscripts[0] script and control_block */
-    unsigned char inner_pubkey_bytes[32];
-    unsigned char output_pubkey_bytes[32];
 
     /* 
      * We do not know what scriptPubKey, tap_tree look like yet because we're computing
@@ -100,19 +97,9 @@ void add_settlement_input(struct bitcoin_tx *tx, const struct bitcoin_outpoint *
     printf("TAPTWEAK: %s\n", tal_hexstr(tmpctx, update_tap_tweak, 32));
     parity_bit = pubkey_parity(&update_agg_pk);
     printf("PARITY BIT: %d\n", parity_bit);
-    assert(ok);
     control_block = compute_control_block(tmpctx, settle_and_update_tapscripts[1], /* annex_hint */ NULL, inner_pubkey, parity_bit);
     printf("CBLOCK: %s\n", tal_hexstr(tmpctx, control_block, tal_count(control_block)));
     script_pubkey = scriptpubkey_p2tr(tmpctx, &update_agg_pk);
-
-    ok = secp256k1_xonly_pubkey_serialize(secp256k1_ctx, inner_pubkey_bytes, inner_pubkey);
-    assert(ok);
-    printf("INNER PUBKEY: %s\n", tal_hexstr(tmpctx, inner_pubkey_bytes, 32));
-    ok = secp256k1_xonly_pubkey_serialize(secp256k1_ctx, output_pubkey_bytes, &output_pubkey);
-    assert(ok);
-    printf("OUTER PUBKEY: %s\n", tal_hexstr(tmpctx, output_pubkey_bytes, 32));
-
-    assert(secp256k1_xonly_pubkey_tweak_add_check(secp256k1_ctx, output_pubkey_bytes, parity_bit, inner_pubkey, update_tap_tweak));
 
     /* Remove and re-add with updated information */
     bitcoin_tx_remove_input(tx, input_num);

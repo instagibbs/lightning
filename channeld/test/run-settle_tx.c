@@ -14,11 +14,11 @@ static bool print_superverbose;
 #include <ccan/err/err.h>
 #include <ccan/str/hex/hex.h>
 #include <common/channel_id.h>
+#include <common/initial_settlement_tx.h>
 #include <common/key_derive.h>
 #include <common/setup.h>
 #include <common/status.h>
-#include <common/initial_settlement_tx.h>
-#include <common/initial_update_tx.h>
+#include <common/update_tx.h>
 
 /* Turn this on to brute-force fee values */
 /*#define DEBUG */

@@ -1134,9 +1134,10 @@ u8 *compute_control_block(const tal_t *ctx, const u8 *other_script, const u8 *an
 {
     int ok;
     u8 *control_block_cursor;
-    u8 *control_block = tal_arr(ctx, u8, (!!other_script | !!annex_hint) ? 33 + 32 : 33);
+    u8 *control_block = tal_arr(ctx, u8, (other_script || annex_hint) ? 33 + 32 : 33);
 
-    assert(other_script != annex_hint);
+    /* other_script and annex_hint are mutually exclusive args */
+    assert(!(other_script && annex_hint));
 
     control_block_cursor = control_block;
 
