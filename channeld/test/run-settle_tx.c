@@ -97,6 +97,63 @@ static struct secret secret_from_hex(const char *hex)
 	return s;
 }
 
+static u8 *musig_sign(struct bitcoin_tx *update_tx, u8 *annex, struct privkey *alice_privkey, struct privkey *bob_privkey, secp256k1_xonly_pubkey *xo_inner_pubkey)
+{
+    u8 *final_sig;
+    secp256k1_musig_keyagg_cache keyagg_cache[2];
+    const secp256k1_musig_pubnonce *pubnonce_ptrs[2];
+    struct sha256_double msg_out;
+    secp256k1_musig_session session[2];
+    const secp256k1_musig_partial_sig *p_sig_ptrs[2];
+    secp256k1_musig_partial_sig p_sigs[2];
+    struct bip340sig sig;
+    int i;
+    bool ok;
+    secp256k1_musig_secnonce secnonce[2];
+    secp256k1_musig_pubnonce pubnonces[2];
+
+    for (i=0; i<2; ++i){
+
+        /* "Presharing" nonces here */
+        bipmusig_gen_nonce(&secnonce[i],
+               &pubnonces[i],
+               (i == 0) ? alice_privkey : bob_privkey,
+               &keyagg_cache[i],
+               /* msg32 */ NULL);
+        pubnonce_ptrs[i] = &pubnonces[i];
+    }
+
+    for (i=0; i<2; ++i){
+        bitcoin_tx_taproot_hash_for_sig(update_tx, /* input_index */ 0, SIGHASH_ANYPREVOUTANYSCRIPT|SIGHASH_SINGLE, /* non-NULL script signals bip342... */ annex, annex, &msg_out);
+        bipmusig_partial_sign((i == 0) ? alice_privkey : bob_privkey,
+               &secnonce[i],
+               pubnonce_ptrs,
+               2,
+               msg_out.sha.u.u8, /* FIXME harmonize this to sha256_double */
+               &keyagg_cache[i],
+               &session[i],
+               &p_sigs[i]);
+        p_sig_ptrs[i] = &p_sigs[i];
+    }
+
+    /* Finally, combine sig */
+    for (i=0; i<2; ++i){
+        ok = bipmusig_partial_sigs_combine_verify(p_sig_ptrs,
+               2,
+               xo_inner_pubkey,
+               &session[i],
+               &msg_out,
+               &sig);
+        assert(ok);
+    }
+
+    final_sig = tal_arr(tmpctx, u8, sizeof(sig.u8)+1);
+    memcpy(final_sig, sig.u8, sizeof(sig.u8));
+    /* FIXME store signature in PSBT_IN_PARTIAL_SIG */
+    final_sig[tal_count(final_sig)-1] = SIGHASH_ANYPREVOUTANYSCRIPT|SIGHASH_SINGLE;
+    return final_sig;
+}
+
 static void tx_must_be_eq(const struct bitcoin_tx *a,
 			  const struct bitcoin_tx *b)
 {
@@ -433,6 +490,182 @@ static int test_settlement_tx(void)
     return 0;
 }
 
+static int test_invalid_update_tx(void)
+{
+    /* Exercise the code when >1 state
+     * update is authorized, and an invalidated
+     * update tx is posted.
+     */
+
+    struct bitcoin_outpoint update_output;
+    struct amount_sat update_output_sats;
+    u32 shared_delay;
+    struct eltoo_keyset eltoo_keyset;
+    struct amount_sat dust_limit;
+    struct amount_msat self_pay;
+    struct amount_msat other_pay;
+    struct amount_sat self_reserve;
+    u32 obscured_update_number;
+    /* struct wally_tx_output direct_outputs[NUM_SIDES]; Can't figure out how it's used */
+    char* err_reason;
+    struct bitcoin_tx *tx, *tx_cmp, *update_tx, *settle_tx_1, *update_tx_1_A;
+    struct privkey alice_funding_privkey, bob_funding_privkey, alice_settle_privkey, bob_settle_privkey;
+    int ok;
+    char *psbt_b64;
+
+    /* Aggregation stuff */
+    secp256k1_musig_keyagg_cache keyagg_cache[2];
+    const struct pubkey *pubkey_ptrs[2];
+    int i;
+
+    /* MuSig signing stuff */
+    secp256k1_xonly_pubkey xo_inner_pubkey;
+    u8 *annex_0, *annex_1;
+    u8 *final_sig;
+
+    /* Test initial settlement tx */
+
+    update_output.txid = txid_from_hex("8984484a580b825b9972d7adb15050b3ab624ccd731946b3eeddb92f4e7ef6be");
+    update_output.n = 0;
+    update_output_sats.satoshis = 69420;
+
+    alice_funding_privkey.secret = secret_from_hex("30ff4956bbdd3222d44cc5e8a1261dab1e07957bdac5ae88fe3261ef321f374901");
+    bob_funding_privkey.secret = secret_from_hex("1552dfba4f6cf29a62a0af13c8d6981d36d0ef8d61ba10fb0fe90da7634d7e1301");
+
+    ok = pubkey_from_privkey(&alice_funding_privkey,
+             &eltoo_keyset.self_funding_key);
+    ok = pubkey_from_privkey(&bob_funding_privkey,
+             &eltoo_keyset.other_funding_key);
+
+    shared_delay = 42;
+
+    alice_settle_privkey.secret = secret_from_hex("1111111111111111111111111111111111111111111111111111111111111111");
+    bob_settle_privkey.secret = secret_from_hex("2222222222222222222222222222222222222222222222222222222222222222");
+
+    ok = pubkey_from_privkey(&alice_settle_privkey,
+             &eltoo_keyset.self_settle_key);
+    ok = pubkey_from_privkey(&bob_settle_privkey,
+             &eltoo_keyset.other_settle_key);
+    assert(ok);
+
+    pubkey_ptrs[0] = &eltoo_keyset.self_funding_key;
+    pubkey_ptrs[1] = &eltoo_keyset.other_funding_key;
+
+    dust_limit.satoshis = 294;
+    self_pay.millisatoshis = (update_output_sats.satoshis - 10000)*1000;
+    other_pay.millisatoshis = (update_output_sats.satoshis*1000) - self_pay.millisatoshis;
+    self_reserve.satoshis = 0; /* not testing this yet since it's really layer violation here */
+    obscured_update_number = 0; /* non-0 mask not allowed currently, this should always be 0 */
+
+    tx = initial_settlement_tx(tmpctx,
+                     &update_output,
+                     update_output_sats,
+                     shared_delay,
+                     &eltoo_keyset,
+                     dust_limit,
+                     self_pay,
+                     other_pay,
+                     self_reserve,
+                     obscured_update_number,
+                     /* direct_outputs FIXME Cannot figure out how this is used. */ NULL,
+                     &err_reason);
+
+    psbt_b64 = psbt_to_b64(tmpctx, tx->psbt);
+    printf("Settlement psbt 0: %s\n", psbt_b64);
+
+    /* Regression test vector for now */
+    tx_cmp = bitcoin_tx_from_hex(tmpctx, regression_tx_hex, sizeof(regression_tx_hex)-1);
+    tx_must_be_eq(tx, tx_cmp);
+
+    /* Calculate inner pubkey, caches reused at end for tapscript signing */
+    for (i=0; i<2; ++i) {
+        bipmusig_inner_pubkey(&xo_inner_pubkey,
+               &keyagg_cache[i],
+               pubkey_ptrs,
+               /* n_pubkeys */ 2);
+    }
+
+    /* Will be bound later */
+    update_tx = unbound_update_tx(tmpctx,
+                     tx,
+                     update_output_sats,
+                     &xo_inner_pubkey,
+                     &err_reason);
+
+    /* Signing happens next */
+    annex_0 = make_eltoo_annex(tmpctx, tx);
+    final_sig = musig_sign(update_tx, annex_0, &alice_funding_privkey, &bob_funding_privkey, &xo_inner_pubkey);
+
+    /* Re-bind, add final script/tapscript info into PSBT */
+    bind_update_tx_to_funding_outpoint(update_tx,
+                    tx,
+                    &update_output,
+                    &eltoo_keyset,
+                    &xo_inner_pubkey,
+                    final_sig);
+
+    psbt_b64 = psbt_to_b64(tmpctx, update_tx->psbt);
+    printf("Update transaction 0: %s\n", psbt_b64);
+
+    /* Go to second update, Bob gets paid */
+    obscured_update_number++;
+    self_pay.millisatoshis -= 1000;
+    other_pay.millisatoshis += 1000;
+
+    settle_tx_1 = settle_tx(tmpctx,
+                     &update_output,
+                     update_output_sats,
+                     shared_delay,
+                     &eltoo_keyset,
+                     dust_limit,
+                     self_pay,
+                     other_pay,
+                     /* htlcs */ NULL,
+                     /* htlc_map */ NULL,
+                     /* direct_outputs FIXME Cannot figure out how this is used. */ NULL,
+                     obscured_update_number);
+
+    assert(settle_tx_1);
+
+    /* Will be bound to funding output */
+    update_tx_1_A = unbound_update_tx(tmpctx,
+                     settle_tx_1,
+                     update_output_sats,
+                     &xo_inner_pubkey,
+                     &err_reason);
+
+    /* Authorize this next state update */
+    annex_1 = make_eltoo_annex(tmpctx, settle_tx_1);
+    final_sig = musig_sign(update_tx_1_A, annex_1, &alice_funding_privkey, &bob_funding_privkey, &xo_inner_pubkey);
+
+    /* This can RBF the first update tx */
+    bind_update_tx_to_funding_outpoint(update_tx_1_A,
+                    settle_tx_1,
+                    &update_output,
+                    &eltoo_keyset,
+                    &xo_inner_pubkey,
+                    final_sig);
+
+    psbt_b64 = psbt_to_b64(tmpctx, update_tx_1_A->psbt);
+    printf("Update transaction 1A(funding output): %s\n", psbt_b64);
+
+    /* Re-bind same transaction and signature to non-funding output? */
+    bind_update_tx_to_update_outpoint(update_tx_1_A,
+                    settle_tx_1,
+                    &update_output, /* FIXME should be update_tx's first output */
+                    &eltoo_keyset,
+                    annex_0, /* annex you see on chain */
+                    obscured_update_number - 1, /* locktime you see on old update tx */
+                    &xo_inner_pubkey,
+                    final_sig);
+
+    psbt_b64 = psbt_to_b64(tmpctx, update_tx_1_A->psbt);
+    printf("Update transaction 1B(update output): %s\n", psbt_b64);
+
+	return 0;
+}
+
+
 static int test_initial_settlement_tx(void)
 {
     struct bitcoin_outpoint update_output;
@@ -458,14 +691,6 @@ static int test_initial_settlement_tx(void)
 
     /* MuSig signing stuff */
     secp256k1_xonly_pubkey xo_inner_pubkey;
-    secp256k1_musig_secnonce secnonce[2];
-    const secp256k1_musig_pubnonce *pubnonce_ptrs[2];
-    secp256k1_musig_pubnonce pubnonces[2];
-    struct sha256_double msg_out;
-    const secp256k1_musig_partial_sig *p_sig_ptrs[2];
-    secp256k1_musig_partial_sig p_sigs[2];
-    struct bip340sig sig;
-    secp256k1_musig_session session[2];
     u8 *annex;
     u8 *final_sig;
 
@@ -542,48 +767,8 @@ static int test_initial_settlement_tx(void)
     printf("Unbound update psbt: %s\n", psbt_b64);
 
     /* Signing happens next */
-
-    /* Generate signing session for "both sides" */
-    for (i=0; i<2; ++i){
-
-        /* "Presharing" nonces here */
-        bipmusig_gen_nonce(&secnonce[i],
-               &pubnonces[i],
-               (i == 0) ? &alice_funding_privkey : &bob_funding_privkey,
-               &keyagg_cache[i],
-               /* msg32 */ NULL);
-        pubnonce_ptrs[i] = &pubnonces[i];
-    }
-
     annex = make_eltoo_annex(tmpctx, tx);
-    for (i=0; i<2; ++i){
-        bitcoin_tx_taproot_hash_for_sig(update_tx, /* input_index */ 0, SIGHASH_ANYPREVOUTANYSCRIPT|SIGHASH_SINGLE, /* non-NULL script signals bip342... */ annex, annex, &msg_out);
-        bipmusig_partial_sign((i == 0) ? &alice_funding_privkey : &bob_funding_privkey,
-               &secnonce[i],
-               pubnonce_ptrs,
-               2,
-               msg_out.sha.u.u8, /* FIXME harmonize this to sha256_double */
-               &keyagg_cache[i],
-               &session[i],
-               &p_sigs[i]);
-        p_sig_ptrs[i] = &p_sigs[i];
-    }
-
-    /* Finally, combine sig */
-    for (i=0; i<2; ++i){
-        ok = bipmusig_partial_sigs_combine_verify(p_sig_ptrs,
-               2,
-               &xo_inner_pubkey,
-               &session[i],
-               &msg_out,
-               &sig);
-        assert(ok);
-    }
-
-    final_sig = tal_arr(tmpctx, u8, sizeof(sig.u8)+1);
-    memcpy(final_sig, sig.u8, sizeof(sig.u8));
-    /* FIXME store signature in PSBT_IN_PARTIAL_SIG */
-    final_sig[tal_count(final_sig)-1] = SIGHASH_ANYPREVOUTANYSCRIPT|SIGHASH_SINGLE;
+    final_sig = musig_sign(update_tx, annex, &alice_funding_privkey, &bob_funding_privkey, &xo_inner_pubkey);
 
     /* We want to close the channel without cooperation... time to rebind and finalize */
 
@@ -670,6 +855,10 @@ int main(int argc, const char *argv[])
     assert(!err);
 
     err |= test_settlement_tx();
+    assert(!err);
+
+    err |= test_invalid_update_tx();
+    assert(!err);
 
 	common_shutdown();
 
