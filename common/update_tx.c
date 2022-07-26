@@ -43,10 +43,8 @@ u8 *make_eltoo_annex(const tal_t *ctx, const struct bitcoin_tx *settle_tx)
     preimage_cursor += tapscript_len;
 
     assert(tal_count(tapleaf_preimage) == preimage_cursor - tapleaf_preimage);
-    printf("***ANNEX PREIMAGE***: %s\n", tal_hexstr(tmpctx, tapleaf_preimage, tal_count(tapleaf_preimage)));
     ok = wally_tagged_hash(tapleaf_preimage, tal_count(tapleaf_preimage), "TapLeaf", result.u.u8);
     assert(ok == WALLY_OK);
-    printf("TAPLEAF HASH(annex): %s\n", tal_hexstr(tmpctx, result.u.u8, 32));
 
     annex[0] = 0x50; /* annex flag */
     memcpy(annex + 1, result.u.u8, sizeof(result));

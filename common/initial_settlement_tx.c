@@ -77,16 +77,15 @@ void add_settlement_input(struct bitcoin_tx *tx, const struct bitcoin_outpoint *
     /* Now the the transaction itself is determined, we must compute the APO sighash to inject it
       into the inputs' tapscript, then attach the information to the PSBT */
     settle_and_update_tapscripts[0] = make_eltoo_settle_script(tmpctx, tx, input_num);
-    printf("SETTLE: %s\n", tal_hexstr(tmpctx, settle_and_update_tapscripts[0], tal_count(settle_and_update_tapscripts[0])));
+
     /* update number is one more for the update path, which isn't being taken */
     settle_and_update_tapscripts[1] = make_eltoo_update_script(tmpctx, obscured_update_number + 1);
-    printf("UPDATE: %s\n", tal_hexstr(tmpctx, settle_and_update_tapscripts[1], tal_count(settle_and_update_tapscripts[1])));
+
     assert(settle_and_update_tapscripts[0]);
     assert(settle_and_update_tapscripts[1]);
 
     /* We need to calculate the merkle root to figure the parity bit */
     compute_taptree_merkle_root(&update_merkle_root, settle_and_update_tapscripts, /* num_scripts */ 2);
-    printf("TAP MERK ROOT: %s\n", tal_hexstr(tmpctx, update_merkle_root.u.u32, 32));
     bipmusig_finalize_keys(&update_agg_pk,
            &update_keyagg_cache,
            pubkey_ptrs,
@@ -94,11 +93,8 @@ void add_settlement_input(struct bitcoin_tx *tx, const struct bitcoin_outpoint *
            &update_merkle_root,
            update_tap_tweak);
 
-    printf("TAPTWEAK: %s\n", tal_hexstr(tmpctx, update_tap_tweak, 32));
     parity_bit = pubkey_parity(&update_agg_pk);
-    printf("PARITY BIT: %d\n", parity_bit);
     control_block = compute_control_block(tmpctx, settle_and_update_tapscripts[1], /* annex_hint */ NULL, inner_pubkey, parity_bit);
-    printf("CBLOCK: %s\n", tal_hexstr(tmpctx, control_block, tal_count(control_block)));
     script_pubkey = scriptpubkey_p2tr(tmpctx, &update_agg_pk);
 
     /* Remove and re-add with updated information */

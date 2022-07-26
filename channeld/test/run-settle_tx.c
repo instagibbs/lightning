@@ -449,7 +449,6 @@ static int test_initial_settlement_tx(void)
     struct bitcoin_tx *tx, *tx_cmp, *update_tx;
     struct privkey alice_funding_privkey, bob_funding_privkey, alice_settle_privkey, bob_settle_privkey;
     int ok;
-    char *tx_hex;
     char *psbt_b64;
 
     /* Aggregation stuff */
@@ -517,8 +516,6 @@ static int test_initial_settlement_tx(void)
                      /* direct_outputs FIXME Cannot figure out how this is used. */ NULL,
                      &err_reason);
 
-    tx_hex = fmt_bitcoin_tx(tmpctx, tx);
-    printf("Settlement tx: %s\n", tx_hex);
     psbt_b64 = psbt_to_b64(tmpctx, tx->psbt);
     printf("Initial Settlement psbt: %s\n", psbt_b64);
 
@@ -527,7 +524,6 @@ static int test_initial_settlement_tx(void)
     tx_must_be_eq(tx, tx_cmp);
 
     /* Calculate inner pubkey, caches reused at end for tapscript signing */
-    printf("INNER PUBKEY INITIAL UPDATE\n");
     for (i=0; i<2; ++i) {
         bipmusig_inner_pubkey(&xo_inner_pubkey,
                &keyagg_cache[i],
@@ -562,7 +558,6 @@ static int test_initial_settlement_tx(void)
     annex = make_eltoo_annex(tmpctx, tx);
     for (i=0; i<2; ++i){
         bitcoin_tx_taproot_hash_for_sig(update_tx, /* input_index */ 0, SIGHASH_ANYPREVOUTANYSCRIPT|SIGHASH_SINGLE, /* non-NULL script signals bip342... */ annex, annex, &msg_out);
-        printf("UPDATE FUNDING SIGHASH: %s\n", tal_hexstr(tmpctx, msg_out.sha.u.u8, 32));
         bipmusig_partial_sign((i == 0) ? &alice_funding_privkey : &bob_funding_privkey,
                &secnonce[i],
                pubnonce_ptrs,
@@ -643,12 +638,9 @@ static int test_htlc_output_creation(void)
 
     ok = secp256k1_xonly_pubkey_serialize(secp256k1_ctx, inner_pubkey_bytes, &inner_pubkey);
     assert(ok);
-    printf("INNER PUBKEY: %s\n", tal_hexstr(tmpctx, inner_pubkey_bytes, 32));
 
     htlc_success_script = make_eltoo_htlc_success_script(tmpctx, &settlement_pubkey, invoice_hash);
-    printf("HTLC Success script: %s\n", tal_hexstr(tmpctx, htlc_success_script, tal_count(htlc_success_script)));
     htlc_timeout_script = make_eltoo_htlc_timeout_script(tmpctx, &settlement_pubkey, 420);
-    printf("HTLC Timeout script: %s\n", tal_hexstr(tmpctx, htlc_timeout_script, tal_count(htlc_timeout_script)));
     tapleaf_scripts[0] = htlc_success_script;
     tapleaf_scripts[1] = htlc_timeout_script;
     compute_taptree_merkle_root(&tap_merkle_root, tapleaf_scripts, /* num_scripts */ 2);
@@ -658,7 +650,6 @@ static int test_htlc_output_creation(void)
     /* Size of OP_1 <tap key> script in hex output*/
     assert(tal_count(taproot_script) == 1+1+32);
     tap_hex = tal_hexstr(tmpctx, taproot_script, tal_count(taproot_script));
-    printf("Taproot script: %s\n", tap_hex);
     assert(tal_count(tap_hex) == (1+1+32)*2 + 1);
     assert(!memcmp(tap_hex, hex_script, tal_count(tap_hex)));
     return 0;
