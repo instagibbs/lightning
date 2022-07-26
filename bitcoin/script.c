@@ -1099,7 +1099,7 @@ void compute_taptree_merkle_root_with_hint(struct sha256 *update_merkle_root, co
     size_t script_len = tal_count(update_tapscript);
     unsigned char *p = tag_hash_buf;
 
-    assert(tal_count(invalidated_annex_hint) == 32 && invalidated_annex_hint[0] == 0x50);
+    assert(tal_count(invalidated_annex_hint) == 33 && invalidated_annex_hint[0] == 0x50);
 
     /* Let k0 = hashTapLeaf(v || compact_size(size of s) || s); also call it the tapleaf hash. */
     p[0] = leaf_version;
