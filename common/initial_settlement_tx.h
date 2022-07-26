@@ -16,7 +16,7 @@ struct wally_tx_output;
 /**
  * initial_settlement_tx: create (unsigned) update tx to spend the first update tx
  * @ctx: context to allocate transaction and @htlc_map from.
- * @funding, @funding_sats: funding outpoint and amount
+ * @update_outpoint, @update_outpoint_sats: funding outpoint and amount
  * @shared_delay: delay before this settlement transaction can be included in a block
  * @eltoo_keyset: keys for the update and settlement outputs.
  * @dust_limit: dust limit below which to trim outputs.
@@ -29,8 +29,8 @@ struct wally_tx_output;
  *
  */
 struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
-				     const struct bitcoin_outpoint *update_output,
-				     struct amount_sat update_output_sats,
+				     const struct bitcoin_outpoint *update_outpoint,
+				     struct amount_sat update_outpoint_sats,
 				     u32 shared_delay,
 				     const struct eltoo_keyset *eltoo_keyset,
 				     struct amount_sat dust_limit,

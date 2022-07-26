@@ -38,7 +38,6 @@ static void add_eltoo_htlc_out(struct bitcoin_tx *tx,
 /**
  * settle_tx: create (unsigned) settlement tx to spend the funding tx output
  * @ctx: context to allocate transaction and @htlc_map from.
- * @update_outpoint, @update_outpoint_sats: funding outpoint and amount
  * @shared_delay: delay before this settlement transaction can be included in a block
  * @eltoo_keyset: keys derived for this settle tx.
  * @dust_limit: dust limit below which to trim outputs.

@@ -66,7 +66,7 @@ void add_settlement_input(struct bitcoin_tx *tx, const struct bitcoin_outpoint *
 
     /* 
      * We do not know what scriptPubKey, tap_tree look like yet because we're computing
-     * a sighash to then put into the input sciript. We pass in dummies
+     * a sighash to then put into the input script. We pass in dummies
      * where necessary for now.
      */
     dummy_script = bitcoin_spk_ephemeral_anchor(tmpctx);

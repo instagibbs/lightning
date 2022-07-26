@@ -94,7 +94,7 @@ static void add_eltoo_htlc_out(struct bitcoin_tx *tx,
 }
 
 struct bitcoin_tx *settle_tx(const tal_t *ctx,
-			     const struct bitcoin_outpoint *update_outpoint,
+                 const struct bitcoin_outpoint *update_outpoint,
 			     struct amount_sat update_outpoint_sats,
 			     u16 shared_delay,
 			     const struct eltoo_keyset *eltoo_keyset,
@@ -115,6 +115,13 @@ struct bitcoin_tx *settle_tx(const tal_t *ctx,
 		*dummy_to_remote = (struct htlc *)0x02;
     secp256k1_xonly_pubkey inner_pubkey;
     const struct pubkey *pubkey_ptrs[2];
+    /* For non-initial settlement tx, we cannot safely
+     * predict prevout, we will rebind this last second,
+     * so just put something in to satisfy PSBT et al
+     */
+    struct bitcoin_outpoint dummy_update_outpoint;
+    memset(dummy_update_outpoint.txid.shad.sha.u.u8, 0, 32);
+    dummy_update_outpoint.n = 0;
 
    /* For MuSig aggregation for outputs */
     pubkey_ptrs[0] = &(eltoo_keyset->self_funding_key);
@@ -246,7 +253,7 @@ struct bitcoin_tx *settle_tx(const tal_t *ctx,
 	 *
 	 *    * `txin[0]` sequence: upper 8 bits are 0x80, lower 24 bits are upper 24 bits of the obscured settlement number
 	 */
-    add_settlement_input(tx, update_outpoint, update_outpoint_sats, shared_delay, &inner_pubkey, obscured_update_number, pubkey_ptrs);
+    add_settlement_input(tx, &dummy_update_outpoint, update_outpoint_sats, shared_delay, &inner_pubkey, obscured_update_number, pubkey_ptrs);
 
 	/* Identify the direct outputs (to_us, to_them). */
 	if (direct_outputs != NULL) {
