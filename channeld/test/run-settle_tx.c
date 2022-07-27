@@ -623,6 +623,9 @@ static int test_invalid_update_tx(void)
 
     assert(settle_tx_1);
 
+    psbt_b64 = psbt_to_b64(tmpctx, settle_tx_1->psbt);
+    printf("Settlement psbt 1: %s\n", psbt_b64);
+
     /* Will be bound to funding output */
     update_tx_1_A = unbound_update_tx(tmpctx,
                      settle_tx_1,
