@@ -1245,7 +1245,7 @@ u8 *make_eltoo_update_script(const tal_t *ctx, u32 update_num)
 	add_op(&script, OP_1);
 	add_op(&script, OP_CHECKSIGVERIFY);
     add_number(&script, 500000000 + update_num);
-    add_op(&script, OP_CHECKSEQUENCEVERIFY);
+    add_op(&script, OP_CHECKLOCKTIMEVERIFY);
     return script;
 }
 

@@ -147,7 +147,12 @@ void bind_update_tx_to_update_outpoint(struct bitcoin_tx *update_tx,
     pubkey_ptrs[1] = &(eltoo_keyset->other_funding_key);
 
     /* FIXME embed this in PSBT as well... */
-    update_tapscript = make_eltoo_update_script(tmpctx, invalidated_update_number);
+    /* We are regenerating the the witness stack for the latest published state
+     * which locks coins to that state + 1
+     *
+     * * tapscript: EXPR_UPDATE(m+1)
+     */
+    update_tapscript = make_eltoo_update_script(tmpctx, invalidated_update_number + 1);
 
     compute_taptree_merkle_root_with_hint(&psbt_tap_merkle_root, update_tapscript, invalidated_annex_hint);
 
