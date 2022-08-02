@@ -13,9 +13,8 @@ struct keyset {
 	struct pubkey self_payment_key, other_payment_key;
 };
 
-/* Keys needed to derive a particular settlement tx. */
+/* Keys needed to derive a particular update/settlement tx pair. */
 struct eltoo_keyset {
-	struct pubkey self_htlc_key, other_htlc_key;
 	struct pubkey self_settle_key, other_settle_key;
     struct pubkey self_funding_key, other_funding_key;
 };
