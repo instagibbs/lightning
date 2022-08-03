@@ -499,7 +499,6 @@ static int test_invalid_update_tx(void)
     struct amount_sat dust_limit;
     struct amount_msat self_pay;
     struct amount_msat other_pay;
-    struct amount_sat self_reserve;
     u32 obscured_update_number;
     /* struct wally_tx_output direct_outputs[NUM_SIDES]; Can't figure out how it's used */
     char* err_reason;
@@ -550,7 +549,6 @@ static int test_invalid_update_tx(void)
     dust_limit.satoshis = 294;
     self_pay.millisatoshis = (update_output_sats.satoshis - 10000)*1000;
     other_pay.millisatoshis = (update_output_sats.satoshis*1000) - self_pay.millisatoshis;
-    self_reserve.satoshis = 0; /* not testing this yet since it's really layer violation here */
     obscured_update_number = 0; /* non-0 mask not allowed currently, this should always be 0 */
 
     tx = initial_settlement_tx(tmpctx,
@@ -561,7 +559,6 @@ static int test_invalid_update_tx(void)
                      dust_limit,
                      self_pay,
                      other_pay,
-                     self_reserve,
                      obscured_update_number,
                      /* direct_outputs FIXME Cannot figure out how this is used. */ NULL,
                      &err_reason);
@@ -674,7 +671,6 @@ static int test_initial_settlement_tx(void)
     struct amount_sat dust_limit;
     struct amount_msat self_pay;
     struct amount_msat other_pay;
-    struct amount_sat self_reserve;
     u32 obscured_update_number;
     /* struct wally_tx_output direct_outputs[NUM_SIDES]; Can't figure out how it's used */
     char* err_reason;
@@ -724,7 +720,6 @@ static int test_initial_settlement_tx(void)
     dust_limit.satoshis = 294;
     self_pay.millisatoshis = (update_output_sats.satoshis - 10000)*1000;
     other_pay.millisatoshis = (update_output_sats.satoshis*1000) - self_pay.millisatoshis;
-    self_reserve.satoshis = 0; /* not testing this yet since it's really layer violation here */
     obscured_update_number = 0; /* non-0 mask not allowed currently, this should always be 0 */
 
     tx = initial_settlement_tx(tmpctx,
@@ -735,7 +730,6 @@ static int test_initial_settlement_tx(void)
                      dust_limit,
                      self_pay,
                      other_pay,
-                     self_reserve,
                      obscured_update_number,
                      /* direct_outputs FIXME Cannot figure out how this is used. */ NULL,
                      &err_reason);

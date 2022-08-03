@@ -122,7 +122,6 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
 				     struct amount_sat dust_limit,
 				     struct amount_msat self_pay,
 				     struct amount_msat other_pay,
-				     struct amount_sat self_reserve,
 				     u32 obscured_update_number,
 				     struct wally_tx_output *direct_outputs[NUM_SIDES],
 				     char** err_reason)
@@ -157,32 +156,6 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
 	 * [Trimmed Outputs](#trimmed-outputs)).
 	 */
 	num_untrimmed = 0;
-
-	/* FIXME, should be in #2:
-	 *
-	 * The receiving node MUST fail the channel if:
-	 *...
-	 * - both `to_local` and `to_remote` amounts for the initial
-	 *   commitment transaction are less than or equal to
-	 *   `channel_reserve_satoshis`.
-	 */
-	if (!amount_msat_greater_sat(self_pay, self_reserve)
-	    && !amount_msat_greater_sat(other_pay, self_reserve)) {
-		*err_reason = "Neither self amount nor other amount exceed reserve on "
-				   "initial commitment transaction";
-		status_unusual("Neither self amount %s"
-			       " nor other amount %s"
-			       " exceed reserve %s"
-			       " on initial commitment transaction",
-			       type_to_string(tmpctx, struct amount_msat,
-					      &self_pay),
-			       type_to_string(tmpctx, struct amount_msat,
-					      &other_pay),
-			       type_to_string(tmpctx, struct amount_sat,
-					      &self_reserve));
-		return NULL;
-	}
-
 
 	/* Worst-case sizing: both to-local and to-remote outputs + single anchor. */
 	tx = bitcoin_tx(ctx, chainparams, 1, num_untrimmed + NUM_SIDES + 1, 0);

@@ -22,7 +22,6 @@ struct wally_tx_output;
  * @dust_limit: dust limit below which to trim outputs.
  * @self_pay: amount to pay directly to self
  * @other_pay: amount to pay directly to the other side
- * @self_reserve: reserve the other side insisted we have
  * @obscured_update_number: obscured update number "o+k"
  * @direct_outputs: If non-NULL, fill with pointers to the direct (non-HTLC) outputs (or NULL if none).
  * @err_reason: When NULL is returned, this will point to a human readable reason.
@@ -36,7 +35,6 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
 				     struct amount_sat dust_limit,
 				     struct amount_msat self_pay,
 				     struct amount_msat other_pay,
-				     struct amount_sat self_reserve,
 				     u32 obscured_update_number,
 				     struct wally_tx_output *direct_outputs[NUM_SIDES],
 				     char** err_reason);
