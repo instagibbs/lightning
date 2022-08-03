@@ -102,12 +102,6 @@ struct eltoo_channel_config {
 
 	/* BOLT #2:
 	 *
-	 * `channel_reserve_satoshis` is the minimum amount that the other
-	 * node is to keep as a direct payment. */
-	struct amount_sat channel_reserve;
-
-	/* BOLT #2:
-	 *
 	 * `htlc_minimum_msat` indicates the smallest value HTLC this node
 	 * will accept.
 	 */
