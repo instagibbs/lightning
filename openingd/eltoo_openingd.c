@@ -284,7 +284,7 @@ static void set_remote_upfront_shutdown(struct eltoo_state *state,
 static u8 *funder_channel_start(struct eltoo_state *state, u8 channel_flags)
 {
 	u8 *msg = NULL; /* FIXME make sure initialized otherwise */
-	u8 *funding_output_script = NULL; /* FIXME make sure initialized otherwise */
+	u8 *funding_output_script;
 	struct channel_id id_in;
 	struct tlv_open_channel_tlvs *open_tlvs = NULL; /* FIXME make sure initialized otherwise */
 	struct tlv_accept_channel_tlvs *accept_tlvs = NULL; /* FIXME make sure initialized otherwise */
@@ -418,13 +418,9 @@ static u8 *funder_channel_start(struct eltoo_state *state, u8 channel_flags)
 		return NULL;
 	}
 
-    /* FIXME compute the scriptpubkey of funding transaction output
-	funding_output_script =
-		scriptpubkey_p2wsh(tmpctx,
-				   bitcoin_redeem_2of2(tmpctx,
-						       &state->our_funding_pubkey,
-						       &state->their_funding_pubkey));
-    */
+	funding_output_script = scriptpubkey_eltoo_funding(tmpctx,
+                               &state->our_funding_pubkey,
+						       &state->their_funding_pubkey);
 
 	/* Update the billboard with our infos */
 	peer_billboard(false,

@@ -734,3 +734,29 @@ void create_keypair_of_one(secp256k1_keypair *G_pair)
         g);
     assert(ok);
 }
+
+u8 *scriptpubkey_eltoo_funding(const tal_t *ctx, const struct pubkey *pubkey1, const struct pubkey *pubkey2)
+{
+    struct pubkey taproot_pubkey;
+    secp256k1_musig_keyagg_cache keyagg_cache;
+    const struct pubkey *pk_ptrs[2];
+    struct sha256 tap_merkle_root;
+    unsigned char tap_tweak_out[32];
+    u8 *update_tapscript[1];
+
+    pk_ptrs[0] = pubkey1;
+    pk_ptrs[1] = pubkey2;
+
+    update_tapscript[0] = make_eltoo_funding_update_script(tmpctx);
+
+    compute_taptree_merkle_root(&tap_merkle_root, update_tapscript, /* num_scripts */ 1);
+
+    bipmusig_finalize_keys(&taproot_pubkey,
+           &keyagg_cache,
+           pk_ptrs,
+           /* n_pubkeys */ 2,
+           &tap_merkle_root,
+           tap_tweak_out);
+
+    return scriptpubkey_p2tr(ctx, &taproot_pubkey);
+}

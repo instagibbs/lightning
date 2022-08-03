@@ -334,4 +334,7 @@ extern bool dev_no_signature_grind;
 /* Used for APO style covenant signatures */
 void create_keypair_of_one(secp256k1_keypair *G_pair);
 
+/* Compute an output script for funding output */
+u8 *scriptpubkey_eltoo_funding(const tal_t *ctx, const struct pubkey *pubkey1, const struct pubkey *pubkey2);
+
 #endif /* LIGHTNING_BITCOIN_SIGNATURE_H */
