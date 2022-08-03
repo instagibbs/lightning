@@ -288,6 +288,7 @@ static u8 *funder_channel_start(struct eltoo_state *state, u8 channel_flags)
 	struct channel_id id_in;
 	struct tlv_open_channel_tlvs *open_tlvs = NULL; /* FIXME make sure initialized otherwise */
 	struct tlv_accept_channel_tlvs *accept_tlvs = NULL; /* FIXME make sure initialized otherwise */
+    char *err_reason;
 
 	status_debug("funder_channel_start");
 	if (!setup_channel_funder(state))
@@ -407,22 +408,15 @@ static u8 *funder_channel_start(struct eltoo_state *state, u8 channel_flags)
 				type_to_string(msg, struct channel_id,
 					       &state->channel_id));
 
-    /* FIXME implement eltoo bounds checking
-	if (!check_config_bounds(tmpctx, state->funding_sats,
-				 state->feerate_per_kw,
-				 state->max_to_self_delay,
+	if (!check_eltoo_config_bounds(tmpctx, state->funding_sats,
+				 state->max_shared_delay,
 				 state->min_effective_htlc_capacity,
 				 &state->remoteconf,
 				 &state->localconf,
-				 true,
-				 feature_negotiated(state->our_features,
-						    state->their_features,
-						    OPT_ANCHOR_OUTPUTS),
 				 &err_reason)) {
 		negotiation_failed(state, "%s", err_reason);
 		return NULL;
 	}
-    */
 
     /* FIXME compute the scriptpubkey of funding transaction output
 	funding_output_script =
@@ -843,22 +837,15 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 	}
 
 	/* These checks are the same whether we're opener or accepter... */
-    /* FIXME implement bounds checking for eltoo
-	if (!check_config_bounds(tmpctx, state->funding_sats,
-				 state->feerate_per_kw,
-				 state->max_to_self_delay,
+	if (!check_eltoo_config_bounds(tmpctx, state->funding_sats,
+				 state->max_shared_delay,
 				 state->min_effective_htlc_capacity,
 				 &state->remoteconf,
 				 &state->localconf,
-				 false,
-				 feature_negotiated(state->our_features,
-						    state->their_features,
-						    OPT_ANCHOR_OUTPUTS),
 				 &err_reason)) {
 		negotiation_failed(state, "%s", err_reason);
 		return NULL;
 	}
-    */
 
 	/* If they give us a reason to reject, do so. */
 	if (err_reason) {
