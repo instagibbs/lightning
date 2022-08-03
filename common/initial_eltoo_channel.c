@@ -5,20 +5,20 @@
 #include <common/blockheight_states.h>
 #include <common/channel_type.h>
 #include <common/fee_states.h>
-#include <common/initial_channel.h>
-#include <common/initial_commit_tx.h>
+#include <common/initial_eltoo_channel.h>
+#include <common/initial_settlement_tx.h>
 #include <common/keyset.h>
 #include <common/type_to_string.h>
+#include <common/update_tx.h>
 
-struct channel *new_initial_eltoo_channel(const tal_t *ctx,
+struct eltoo_channel *new_initial_eltoo_channel(const tal_t *ctx,
 				    const struct channel_id *cid,
 				    const struct bitcoin_outpoint *funding,
 				    u32 minimum_depth,
-				    const struct height_states *height_states TAKES,
 				    struct amount_sat funding_sats,
 				    struct amount_msat local_msatoshi,
-				    const struct channel_config *local,
-				    const struct channel_config *remote,
+				    const struct eltoo_channel_config *local,
+				    const struct eltoo_channel_config *remote,
 				    const struct pubkey *local_funding_pubkey,
 				    const struct pubkey *remote_funding_pubkey,
 				    const struct pubkey *local_settle_pubkey,
@@ -27,7 +27,7 @@ struct channel *new_initial_eltoo_channel(const tal_t *ctx,
 				    bool option_wumbo,
 				    enum side opener)
 {
-	struct eltoo_channel *channel = tal(ctx, struct channel);
+	struct eltoo_channel *channel = tal(ctx, struct eltoo_channel);
 	struct amount_msat remote_msatoshi;
 
 	channel->cid = *cid;
@@ -41,10 +41,10 @@ struct channel *new_initial_eltoo_channel(const tal_t *ctx,
 	channel->opener = opener;
 	channel->config[LOCAL] = *local;
 	channel->config[REMOTE] = *remote;
-	channel->eltoo_keyset->self_funding_key = *local_funding_pubkey;
-	channel->eltoo_keyset->other_funding_key = *remote_funding_pubkey;
-	channel->eltoo_keyset->self_settle_key = *local_settle_pubkey;
-	channel->eltoo_keyset->other_settle_key = *remote_settle_pubkey;
+	channel->eltoo_keyset.self_funding_key = *local_funding_pubkey;
+	channel->eltoo_keyset.other_funding_key = *remote_funding_pubkey;
+	channel->eltoo_keyset.self_settle_key = *local_settle_pubkey;
+	channel->eltoo_keyset.other_settle_key = *remote_settle_pubkey;
 	channel->htlcs = NULL;
 
 	channel->view[LOCAL].owed[LOCAL]
@@ -77,21 +77,21 @@ struct bitcoin_tx *initial_settle_channel_tx(const tal_t *ctx,
     init_settle_tx = initial_settlement_tx(ctx,
                     &channel->funding,
                     channel->funding_sats,
-                    channel->config.shared_delay,
-                    channel->eltoo_keyset,
-                    channel->config.dust_limit,
-                    channel->view.owed[LOCAL],
-                    channel->view.owed[REMOTE],
-                    channel->config.channel_reserve,
-                    0 ^ channel->commitment_number_obscurer,
+                    channel->config->shared_delay,
+                    &channel->eltoo_keyset,
+                    channel->config->dust_limit,
+                    channel->view->owed[LOCAL],
+                    channel->view->owed[REMOTE],
+                    channel->config->channel_reserve,
+                    0 ^ channel->update_number_obscurer,
                     direct_outputs,
                     err_reason);
 
 	if (init_settle_tx) {
 		psbt_input_add_pubkey(init_settle_tx->psbt, 0,
-				      &channel->eltoo_keyset->self_funding_key);
+				      &channel->eltoo_keyset.self_funding_key);
 		psbt_input_add_pubkey(init_settle_tx->psbt, 0,
-				      &channel->eltoo_keyset->other_funding_key);
+				      &channel->eltoo_keyset.other_funding_key);
 	}
 
 	return init_settle_tx;
@@ -107,6 +107,7 @@ struct bitcoin_tx *initial_update_channel_tx(const tal_t *ctx,
      * it's generated in initial_settlement_tx. This is unused otherwise.
      */
     secp256k1_xonly_pubkey dummy_inner_pubkey;
+    memset(dummy_inner_pubkey.data, 0, sizeof(dummy_inner_pubkey.data));
 
 	/* This assumes no HTLCs! */
 	assert(!channel->htlcs);
@@ -119,12 +120,10 @@ struct bitcoin_tx *initial_update_channel_tx(const tal_t *ctx,
 
 	if (init_update_tx) {
 		psbt_input_add_pubkey(init_update_tx->psbt, 0,
-				      &channel->eltoo_keyset->self_funding_key);
+				      &channel->eltoo_keyset.self_funding_key);
 		psbt_input_add_pubkey(init_update_tx->psbt, 0,
-				      &channel->eltoo_keyset->other_funding_key);
+				      &channel->eltoo_keyset.other_funding_key);
 	}
 
 	return init_update_tx;
 }
-/* Magic comment. */
-REGISTER_TYPE_TO_STRING(channel, fmt_channel);

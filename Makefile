@@ -467,6 +467,7 @@ PKGLIBEXEC_PROGRAMS = \
 	       lightningd/lightning_hsmd \
 	       lightningd/lightning_onchaind \
 	       lightningd/lightning_openingd \
+	       lightningd/lightning_eltoo_openingd \
 	       lightningd/lightning_websocketd
 
 mkdocs.yml: $(MANPAGES:=.md)

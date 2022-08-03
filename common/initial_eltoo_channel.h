@@ -8,6 +8,7 @@
 #include <common/channel_id.h>
 #include <common/derive_basepoints.h>
 #include <common/htlc.h>
+#include <common/keyset.h>
 
 struct signature;
 struct added_htlc;
@@ -29,7 +30,7 @@ struct eltoo_channel {
 	struct bitcoin_outpoint funding;
 
     /* Keys used for the lifetime of the channel */
-    struct eltoo_keyset;
+    struct eltoo_keyset eltoo_keyset;
 
 	/* satoshis in from commitment tx */
 	struct amount_sat funding_sats;
@@ -41,7 +42,7 @@ struct eltoo_channel {
 	enum side opener;
 
 	/* Limits and settings on this channel. */
-	struct channel_config config;
+	struct eltoo_channel_config config[NUM_SIDES];
 
 	/* Mask for obscuring the encoding of the update number. */
 	u32 update_number_obscurer;
@@ -50,7 +51,7 @@ struct eltoo_channel {
 	struct htlc_map *htlcs;
 
 	/* What it looks like to nodes. */
-	struct channel_view view;
+	struct channel_view view[NUM_SIDES];
 
 	/* Features which apply to this channel. */
 	struct channel_type *type;
@@ -80,14 +81,14 @@ struct eltoo_channel {
  *
  * Returns channel, or NULL if malformed.
  */
-struct channel *new_initial_eltoo_channel(const tal_t *ctx,
+struct eltoo_channel *new_initial_eltoo_channel(const tal_t *ctx,
 				    const struct channel_id *cid,
 				    const struct bitcoin_outpoint *funding,
 				    u32 minimum_depth,
 				    struct amount_sat funding_sats,
 				    struct amount_msat local_msatoshi,
-				    const struct channel_config *local,
-				    const struct channel_config *remote,
+				    const struct eltoo_channel_config *local,
+				    const struct eltoo_channel_config *remote,
 				    const struct pubkey *local_funding_pubkey,
 				    const struct pubkey *remote_funding_pubkey,
 				    const struct pubkey *local_settle_pubkey,
@@ -106,14 +107,14 @@ struct channel *new_initial_eltoo_channel(const tal_t *ctx,
  * Returns the fully signed settlement transaction, or NULL
  * if the channel size was insufficient to cover reserves.
  */
-struct bitcoin_tx *initial_eltoo_channel_tx(const tal_t *ctx,
+struct bitcoin_tx *initial_settle_channel_tx(const tal_t *ctx,
 				      const struct eltoo_channel *channel,
 				      struct wally_tx_output *direct_outputs[NUM_SIDES],
 				      char** err_reason);
 
 /**
  * initial_update_channel_tx: Get the current update tx for the *empty* channel. Must be called
- * *after* initial_eltoo_channel_tx.
+ * *after* initial_settle_channel_tx.
  * @ctx: tal context to allocate return value from.
  * @settle_tx: The settlement transaction to commit to
  * @channel: The channel to evaluate
