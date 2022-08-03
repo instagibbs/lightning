@@ -137,25 +137,6 @@ static void NORETURN negotiation_failed(struct eltoo_state *state,
 	negotiation_aborted(state, errmsg);
 }
 
-/* We always set channel_reserve_satoshis to 1%, rounded down. */
-static void set_reserve(struct eltoo_state *state, const struct amount_sat dust_limit)
-{
-	state->localconf.channel_reserve
-		= amount_sat_div(state->funding_sats, 100);
-
-	/* BOLT #2:
-	 *
-	 * The sending node:
-	 *...
-	 * - MUST set `channel_reserve_satoshis` greater than or equal to
-         *   `dust_limit_satoshis` from the `open_channel` message.
-	 */
-	if (amount_sat_greater(dust_limit,
-			       state->localconf.channel_reserve))
-		state->localconf.channel_reserve
-			= dust_limit;
-}
-
 /*~ Handle random messages we might get during opening negotiation, (eg. gossip)
  * returning the first non-handled one, or NULL if we aborted negotiation. */
 static u8 *opening_negotiate_msg(const tal_t *ctx, struct eltoo_state *state,
@@ -233,9 +214,6 @@ static u8 *opening_negotiate_msg(const tal_t *ctx, struct eltoo_state *state,
 
 static bool setup_channel_funder(struct eltoo_state *state)
 {
-	/*~ For symmetry, we calculate our own reserve even though lightningd
-	 * could do it for the we-are-funding case. */
-	set_reserve(state, state->localconf.dust_limit);
 
 #if DEVELOPER
 	/* --dev-force-tmp-channel-id specified */
@@ -429,18 +407,6 @@ static u8 *funder_channel_start(struct eltoo_state *state, u8 channel_flags)
 				type_to_string(msg, struct channel_id,
 					       &state->channel_id));
 
-	if (amount_sat_greater(state->remoteconf.dust_limit,
-			       state->localconf.channel_reserve)) {
-		negotiation_failed(state,
-				   "dust limit %s"
-				   " would be above our reserve %s",
-				   type_to_string(tmpctx, struct amount_sat,
-						  &state->remoteconf.dust_limit),
-				   type_to_string(tmpctx, struct amount_sat,
-						  &state->localconf.channel_reserve));
-		return NULL;
-	}
-
     /* FIXME implement eltoo bounds checking
 	if (!check_config_bounds(tmpctx, state->funding_sats,
 				 state->feerate_per_kw,
@@ -561,20 +527,16 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
 	settle_tx = initial_settle_channel_tx(tmpctx, state->channel,
                     direct_outputs, &err_reason);
 	if (!settle_tx) {
-		/* This should not happen: we should never create channels we
-		 * can't afford the fees for after reserve. */
 		negotiation_failed(state,
-				   "Could not meet their reserve: %s", err_reason);
+				   "Could not make settle tx: %s", err_reason);
 		goto fail;
 	}
 
     *update_tx = initial_update_channel_tx(tmpctx, settle_tx, state->channel, &err_reason);
 
 	if (!*update_tx) {
-		/* This should not happen: we should never create channels we
-		 * can't afford the fees for after reserve. */
 		negotiation_failed(state,
-				   "Could not meet their reserve: %s", err_reason);
+				   "Could not make update tx: %s", err_reason);
 		goto fail;
 	}
 
@@ -749,7 +711,6 @@ static u8 *funder_channel_complete(struct eltoo_state *state)
 					   &state->their_funding_pubkey,
 					   &state->their_settlement_pubkey,
 					   &state->funding,
-					   state->localconf.channel_reserve,
 					   state->upfront_shutdown_script[REMOTE],
 					   state->channel_type);
 }
@@ -878,41 +839,6 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 					       &state->push_msat),
 				type_to_string(tmpctx, struct amount_sat,
 					       &state->funding_sats));
-		return NULL;
-	}
-
-	/* This reserves 1% of the channel (rounded up) */
-	set_reserve(state, state->remoteconf.dust_limit);
-
-	/* BOLT #2:
-	 *
-	 * The sender:
-	 *...
-	 * - MUST set `channel_reserve_satoshis` greater than or equal to
-	 *   `dust_limit_satoshis` from the `open_channel` message.
-	 * - MUST set `dust_limit_satoshis` less than or equal to
-         *   `channel_reserve_satoshis` from the `open_channel` message.
-	 */
-	if (amount_sat_greater(state->remoteconf.dust_limit,
-			       state->localconf.channel_reserve)) {
-		negotiation_failed(state,
-				   "Our channel reserve %s"
-				   " would be below their dust %s",
-				   type_to_string(tmpctx, struct amount_sat,
-						  &state->localconf.channel_reserve),
-				   type_to_string(tmpctx, struct amount_sat,
-						  &state->remoteconf.dust_limit));
-		return NULL;
-	}
-	if (amount_sat_greater(state->localconf.dust_limit,
-			       state->remoteconf.channel_reserve)) {
-		negotiation_failed(state,
-				   "Our dust limit %s"
-				   " would be above their reserve %s",
-				   type_to_string(tmpctx, struct amount_sat,
-						  &state->localconf.dust_limit),
-				   type_to_string(tmpctx, struct amount_sat,
-						  &state->remoteconf.channel_reserve));
 		return NULL;
 	}
 
@@ -1067,7 +993,7 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 	/* This shouldn't happen either, AFAICT. */
 	if (!settle_tx) {
 		negotiation_failed(state,
-				   "Could not meet our reserve: %s", err_reason);
+				   "Failed to make settle tx: %s", err_reason);
 		return NULL;
 	}
 
@@ -1173,7 +1099,6 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 				     state->push_msat,
 				     channel_flags,
 				     msg,
-				     state->localconf.channel_reserve,
 				     state->upfront_shutdown_script[LOCAL],
 				     state->upfront_shutdown_script[REMOTE],
 				     state->channel_type);

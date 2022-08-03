@@ -13,7 +13,6 @@ msgdata,openingd_eltoo_init,chainparams,chainparams,
 msgdata,openingd_eltoo_init,our_features,feature_set,
 msgdata,openingd_eltoo_init,their_init_features_len,u16,
 msgdata,openingd_eltoo_init,their_init_features,u8,their_init_features_len
-# Base configuration we'll offer (channel reserve will vary with amount)
 msgdata,openingd_eltoo_init,our_config,eltoo_channel_config,
 # Minimum/maximum configuration values we'll accept
 msgdata,openingd_eltoo_init,max_shared_delay,u32,
@@ -37,7 +36,6 @@ msgdata,openingd_eltoo_funder_reply,minimum_depth,u32,
 msgdata,openingd_eltoo_funder_reply,remote_funding_key,pubkey,
 msgdata,openingd_eltoo_funder_reply,remote_settlement_key,pubkey,
 msgdata,openingd_eltoo_funder_reply,funding,bitcoin_outpoint,
-msgdata,openingd_eltoo_funder_reply,our_channel_reserve_satoshis,amount_sat,
 msgdata,openingd_eltoo_funder_reply,shutdown_len,u16,
 msgdata,openingd_eltoo_funder_reply,shutdown_scriptpubkey,u8,shutdown_len
 msgdata,openingd_eltoo_funder_reply,channel_type,channel_type,
@@ -89,7 +87,6 @@ msgdata,openingd_eltoo_fundee,channel_flags,u8,
 # The funding signed message: send this and we're committed.
 msgdata,openingd_eltoo_fundee,msglen,u16,
 msgdata,openingd_eltoo_fundee,funding_signed_eltoo_msg,u8,msglen
-msgdata,openingd_eltoo_fundee,our_channel_reserve_satoshis,amount_sat,
 msgdata,openingd_eltoo_fundee,local_shutdown_len,u16,
 msgdata,openingd_eltoo_fundee,local_shutdown_scriptpubkey,u8,local_shutdown_len
 msgdata,openingd_eltoo_fundee,remote_shutdown_len,u16,
