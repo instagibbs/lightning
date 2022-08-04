@@ -35,11 +35,12 @@ WIRE_BOLT_DEPS := $(BOLT_DEPS) tools/gen/impl_template tools/gen/header_template
 PEER_PATCHES := $(sort $(wildcard wire/extracted_peer*.patch))
 ONION_PATCHES := $(sort $(wildcard wire/extracted_onion*.patch))
 BOLT12_PATCHES := $(sort $(wildcard wire/extracted_bolt12*.patch))
+ELTOO_PATCHES := $(sort $(wildcard wire/extracted_eltoo*.patch))
 
 # Explicit command to re-extract CSV from BOLTs and patch.
 # This is not a normal make depencency, since we don't want this
 # called implicitly.
-extract-bolt-csv: extract-peer-csv extract-onion-csv extract-bolt12-csv
+extract-bolt-csv: extract-peer-csv extract-onion-csv extract-bolt12-csv extract-eltoo-csv
 
 extract-peer-csv: wire/peer_wire.csv.raw
 	@set -e; T=wire/peer_wire.csv; trap "rm -f $$T.$$$$" 0; cp $< $$T.$$$$; for p in $(PEER_PATCHES); do echo APPLY $$p; patch $$T.$$$$ $$p; done; mv $$T.$$$$ $$T
@@ -50,6 +51,9 @@ extract-onion-csv: wire/onion_wire.csv.raw
 extract-bolt12-csv: wire/bolt12_wire.csv.raw
 	@set -e; T=wire/bolt12_wire.csv; trap "rm -f $$T.$$$$" 0; cp $< $$T.$$$$; for p in $(BOLT12_PATCHES); do echo APPLY $$p; patch $$T.$$$$ $$p; done; mv $$T.$$$$ $$T
 
+extract-eltoo-csv: wire/eltoo_wire.csv.raw
+	@set -e; T=wire/eltoo_wire.csv; trap "rm -f $$T.$$$$" 0; cp $< $$T.$$$$; for p in $(ELTOO_PATCHES); do echo APPLY $$p; patch $$T.$$$$ $$p; done; mv $$T.$$$$ $$T
+
 wire/peer_wire.csv.raw: bolt-precheck
 	@$(BOLT_EXTRACT) $(LOCAL_BOLTDIR)/0[127]*.md > $@
 
@@ -59,8 +63,11 @@ wire/onion_wire.csv.raw: bolt-precheck
 wire/bolt12_wire.csv.raw: bolt-precheck
 	@$(BOLT_EXTRACT) $(LOCAL_BOLTDIR)/12*.md > $@
 
+wire/eltoo_wire.csv.raw: bolt-precheck
+	@$(BOLT_EXTRACT) $(LOCAL_BOLTDIR)/XX*.md > $@
+
 # These can be deleted.
-.INTERMEDIATE: wire/peer_wire.csv.raw wire/onion_wire.csv.raw wire/bolt12_wire.csv.raw
+.INTERMEDIATE: wire/peer_wire.csv.raw wire/onion_wire.csv.raw wire/bolt12_wire.csv.raw wire/eltoo_wire.csv.raw
 
 # Explicit command to add patchfile for BOLT CSV's against current one.
 generate-bolt-csv-patch: bolt-precheck
