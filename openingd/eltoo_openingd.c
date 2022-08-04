@@ -449,9 +449,8 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
     struct bitcoin_tx *settle_tx;
 
 	/*~ Channel is ready; Report the channel parameters to the signer. */
-    /* FIXME hsmd messages need implementing.
 	msg = towire_hsmd_ready_eltoo_channel(NULL,
-				       true,
+				       /* is_outbound */ true,
 				       state->funding_sats,
 				       state->push_msat,
 				       &state->funding.txid,
@@ -459,13 +458,11 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
 				       state->localconf.shared_delay,
 				       state->upfront_shutdown_script[LOCAL],
 				       state->local_upfront_shutdown_wallet_index,
-				       &state->their_points,
 				       &state->their_funding_pubkey,
-				       state->remoteconf.to_self_delay,
+				       &state->their_settlement_pubkey,
 				       state->upfront_shutdown_script[REMOTE],
 				       state->channel_type);
 	wire_sync_write(HSM_FD, take(msg));
-    */
 	msg = wire_sync_read(tmpctx, HSM_FD);
 	if (!fromwire_hsmd_ready_eltoo_channel_reply(msg))
 		status_failed(STATUS_FAIL_HSM_IO, "Bad ready_channel_reply %s",
@@ -519,7 +516,7 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
 	if (!settle_tx) {
 		negotiation_failed(state,
 				   "Could not make settle tx: %s", err_reason);
-		goto fail;
+		return false;
 	}
 
     *update_tx = initial_update_channel_tx(tmpctx, settle_tx, state->channel, &err_reason);
@@ -527,7 +524,7 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
 	if (!*update_tx) {
 		negotiation_failed(state,
 				   "Could not make update tx: %s", err_reason);
-		goto fail;
+		return false;
 	}
 
 	/* We ask the HSM to sign their commitment transaction for us: it knows
@@ -535,20 +532,13 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
 	 * witness script.  It also needs the amount of the funding output,
 	 * as segwit signatures commit to that as well, even though it doesn't
 	 * explicitly appear in the transaction itself. */
-    /* FIXME implement HSM signing message
 	struct simple_htlc **htlcs = tal_arr(tmpctx, struct simple_htlc *, 0);
-	u32 feerate = 0; // unused since there are no htlcs
-	u64 commit_num = 0;
+	u64 update_num = 0;
 	msg = towire_hsmd_sign_update_tx(NULL,
-						   update_tx,
-						   &state->channel->funding_pubkey[REMOTE],
-						   &state->first_per_commitment_point[REMOTE],
-						    channel_has(state->channel,
-								OPT_STATIC_REMOTEKEY),
-						    commit_num,
-						    (const struct simple_htlc **) htlcs,
-						    feerate);
-    */
+						   *update_tx,
+						   &state->channel->eltoo_keyset.other_funding_key,
+						    update_num,
+						    (const struct simple_htlc **) htlcs);
 	wire_sync_write(HSM_FD, take(msg));
 	msg = wire_sync_read(tmpctx, HSM_FD);
 	if (!fromwire_hsmd_sign_update_tx_reply(msg, sig))
@@ -589,7 +579,7 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
 	 * "cid" */
 	msg = opening_negotiate_msg(tmpctx, state, &cid);
 	if (!msg)
-		goto fail;
+		return false;
 
     /* FIXME implement funding_signed message
 	sig->sighash_type = SIGHASH_ALL;
@@ -663,12 +653,6 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
 	peer_billboard(false, "Funding channel: opening negotiation succeeded");
 
 	return true;
-
-fail:
-    /* FIXME free whatever we allocate 
-	tal_free(wscript);
-    */
-	return false;
 }
 
 static u8 *funder_channel_complete(struct eltoo_state *state)
@@ -1028,27 +1012,14 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 	 * commitment transaction, so it can broadcast the transaction knowing
 	 * that funds can be redeemed, if need be.
 	 */
-    /* FIXME this is the 2nd commitment tx being signed, unnneeded?
-	remote_commit = initial_channel_tx(state, &wscript, state->channel,
-					   &state->first_per_commitment_point[REMOTE],
-					   REMOTE, direct_outputs, &err_reason);
-    */
 
 	/* Make HSM sign it */
-    /* FIXME implement HSM signing message
 	struct simple_htlc **htlcs = tal_arr(tmpctx, struct simple_htlc *, 0);
-	u32 feerate = 0; // unused since there are no htlcs
-	u64 commit_num = 0;
-	msg = towire_hsmd_sign_remote_commitment_tx(NULL,
-						   remote_commit,
-						   &state->channel->funding_pubkey[REMOTE],
-						   &state->first_per_commitment_point[REMOTE],
-						    channel_has(state->channel,
-								OPT_STATIC_REMOTEKEY),
-						   commit_num,
-						   (const struct simple_htlc **) htlcs,
-						   feerate);
-    */
+	msg = towire_hsmd_sign_update_tx(NULL,
+						   update_tx,
+						   &state->channel->eltoo_keyset.other_funding_key,
+						   /* update_num */ 0,
+						   (const struct simple_htlc **) htlcs);
 	wire_sync_write(HSM_FD, take(msg));
 	msg = wire_sync_read(tmpctx, HSM_FD);
 	if (!fromwire_hsmd_sign_update_tx_reply(msg, &sig))
