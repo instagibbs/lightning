@@ -359,20 +359,20 @@ void validate_initial_commitment_signature(int hsm_fd,
 
 void validate_initial_update_signature(int hsm_fd,
 					   struct bitcoin_tx *update_tx,
-					   struct bip340sig *sig)
+					   struct partial_sig *p_sig)
 {
 	struct existing_htlc **htlcs;
 	u64 update_num;
 	const u8 *msg;
 
-	/* Validate the counterparty's signature. */
+	/* Validate the counterparty's partial signature. */
 	htlcs = tal_arr(NULL, struct existing_htlc *, 0);
 	update_num = 0;
 	msg = towire_hsmd_validate_update_tx(NULL,
 						 update_tx,
 						 (const struct simple_htlc **) htlcs,
 						 update_num,
-						 sig);
+						 p_sig);
 	tal_free(htlcs);
 	wire_sync_write(hsm_fd, take(msg));
 	msg = wire_sync_read(tmpctx, hsm_fd);
