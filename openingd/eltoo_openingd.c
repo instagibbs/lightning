@@ -1148,18 +1148,14 @@ static u8 *handle_master_in(struct eltoo_state *state)
 
 	switch (t) {
 	case WIRE_OPENINGD_ELTOO_FUNDER_START:
-        /* FIXME
-		if (!fromwire_openingd_funder_start(state, msg,
+		if (!fromwire_openingd_eltoo_funder_start(state, msg,
 						    &state->funding_sats,
 						    &state->push_msat,
 						    &state->upfront_shutdown_script[LOCAL],
 						    &state->local_upfront_shutdown_wallet_index,
-						    &state->feerate_per_kw,
 						    &state->channel_id,
 						    &channel_flags))
-			master_badmsg(WIRE_OPENINGD_FUNDER_START, msg);
-
-        */
+			master_badmsg(WIRE_OPENINGD_ELTOO_FUNDER_START, msg);
 		msg = funder_channel_start(state, channel_flags);
 		/* We want to keep openingd alive, since we're not done yet */
 		if (msg)
