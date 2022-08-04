@@ -64,7 +64,7 @@ wire/bolt12_wire.csv.raw: bolt-precheck
 	@$(BOLT_EXTRACT) $(LOCAL_BOLTDIR)/12*.md > $@
 
 wire/eltoo_wire.csv.raw: bolt-precheck
-	@$(BOLT_EXTRACT) $(LOCAL_BOLTDIR)/XX*.md > $@
+	@$(BOLT_EXTRACT) $(LOCAL_BOLTDIR)/XX-eltoo*.md > $@
 
 # These can be deleted.
 .INTERMEDIATE: wire/peer_wire.csv.raw wire/onion_wire.csv.raw wire/bolt12_wire.csv.raw wire/eltoo_wire.csv.raw
