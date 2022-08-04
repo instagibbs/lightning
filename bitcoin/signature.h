@@ -30,6 +30,10 @@ struct bip340sig {
 	u8 u8[64];
 };
 
+struct partial_sig {
+    secp256k1_musig_partial_sig p_sig;
+};
+
 #define SIGHASH_MASK 0x7F
 
 static inline bool sighash_single(enum sighash_type sighash_type)
@@ -314,6 +318,10 @@ void fromwire_bitcoin_signature(const u8 **cursor, size_t *max,
 void towire_bip340sig(u8 **pptr, const struct bip340sig *bip340sig);
 void fromwire_bip340sig(const u8 **cursor, size_t *max,
 			struct bip340sig *bip340sig);
+
+void towire_partial_sig(u8 **pptr, const struct partial_sig *p_sig);
+void fromwire_partial_sig(const u8 **cursor, size_t *max,
+			struct partial_sig *p_sig);
 
 /* Get a hex string sig */
 char *fmt_secp256k1_ecdsa_signature(const tal_t *ctx,

@@ -11,6 +11,10 @@
 #include <wire/wire.h>
 #include <sodium/randombytes.h>
 
+#ifndef SUPERVERBOSE
+#define SUPERVERBOSE(...)
+#endif
+
 #undef DEBUG
 #ifdef DEBUG
 # include <ccan/err/err.h>
@@ -657,6 +661,26 @@ void fromwire_bip340sig(const u8 **cursor, size_t *max,
 			struct bip340sig *bip340sig)
 {
 	fromwire_u8_array(cursor, max, bip340sig->u8, sizeof(bip340sig->u8));
+}
+
+void towire_partial_sig(u8 **pptr, const struct partial_sig *p_sig)
+{
+    secp256k1_musig_partial_sig_serialize(secp256k1_ctx, *pptr, &p_sig->p_sig);
+}
+
+void fromwire_partial_sig(const u8 **cursor, size_t *max,
+            struct partial_sig *p_sig)
+{
+    u8 raw[32];
+
+
+    if (!fromwire(cursor, max, raw, sizeof(raw)))
+        return;
+
+    if (!secp256k1_musig_partial_sig_parse(secp256k1_ctx, &p_sig->p_sig, raw)) {
+        SUPERVERBOSE("not a valid musig partial sig");
+        fromwire_fail(cursor, max);
+    }
 }
 
 char *fmt_bip340sig(const tal_t *ctx, const struct bip340sig *bip340sig)
