@@ -1,4 +1,5 @@
 #include <bitcoin/chainparams.h>
+#include <bitcoin/signature.h>
 #include <common/cryptomsg.h>
 #include <common/channel_config.h>
 #include <common/channel_id.h>
@@ -31,7 +32,7 @@ msgdata,openingd_eltoo_init,dev_temporary_channel_id,?byte,32
 msgtype,openingd_eltoo_funder_reply,6601
 msgdata,openingd_eltoo_funder_reply,their_config,eltoo_channel_config,
 msgdata,openingd_eltoo_funder_reply,first_commit,bitcoin_tx,
-msgdata,openingd_eltoo_funder_reply,first_update_psig,bitcoin_signature,
+msgdata,openingd_eltoo_funder_reply,first_update_psig,bip340sig,
 msgdata,openingd_eltoo_funder_reply,minimum_depth,u32,
 msgdata,openingd_eltoo_funder_reply,remote_funding_key,pubkey,
 msgdata,openingd_eltoo_funder_reply,remote_settlement_key,pubkey,
@@ -78,7 +79,7 @@ msgdata,openingd_eltoo_failed,reason,wirestring,
 msgtype,openingd_eltoo_fundee,6503
 msgdata,openingd_eltoo_fundee,their_config,eltoo_channel_config,
 msgdata,openingd_eltoo_fundee,first_settlement,bitcoin_tx,
-msgdata,openingd_eltoo_fundee,first_update_sig,bitcoin_signature,
+msgdata,openingd_eltoo_fundee,first_update_sig,bip340sig,
 msgdata,openingd_eltoo_fundee,remote_fundingkey,pubkey,
 msgdata,openingd_eltoo_fundee,funding,bitcoin_outpoint,
 msgdata,openingd_eltoo_fundee,funding_satoshis,amount_sat,

@@ -5,6 +5,7 @@
 #include <common/shutdown_scriptpubkey.h>
 #include <common/status.h>
 #include <hsmd/hsmd_wiregen.h>
+#include <hsmd/hsmd_eltoo_wiregen.h>
 #include <openingd/common.h>
 #include <wire/wire_sync.h>
 
@@ -351,6 +352,34 @@ void validate_initial_commitment_signature(int hsm_fd,
 	wire_sync_write(hsm_fd, take(msg));
 	msg = wire_sync_read(tmpctx, hsm_fd);
 	if (!fromwire_hsmd_validate_commitment_tx_reply(tmpctx, msg, &old_secret, &next_point))
+		status_failed(STATUS_FAIL_HSM_IO,
+			      "Reading validate_commitment_tx reply: %s",
+			      tal_hex(tmpctx, msg));
+}
+
+void validate_initial_update_signature(int hsm_fd,
+					   struct bitcoin_tx *update_tx,
+					   struct bip340sig *sig)
+{
+	struct existing_htlc **htlcs;
+	struct bitcoin_signature *htlc_sigs;
+	u64 update_num;
+	const u8 *msg;
+
+	/* Validate the counterparty's signature. */
+	htlcs = tal_arr(NULL, struct existing_htlc *, 0);
+	htlc_sigs = tal_arr(NULL, struct bitcoin_signature, 0);
+	update_num = 0;
+	msg = towire_hsmd_validate_update_tx(NULL,
+						 update_tx,
+						 (const struct simple_htlc **) htlcs,
+						 update_num,
+						 sig);
+	tal_free(htlc_sigs);
+	tal_free(htlcs);
+	wire_sync_write(hsm_fd, take(msg));
+	msg = wire_sync_read(tmpctx, hsm_fd);
+	if (!fromwire_hsmd_validate_update_tx_reply(msg))
 		status_failed(STATUS_FAIL_HSM_IO,
 			      "Reading validate_commitment_tx reply: %s",
 			      tal_hex(tmpctx, msg));

@@ -29,7 +29,7 @@
 #include <common/type_to_string.h>
 #include <common/wire_error.h>
 #include <errno.h>
-#include <hsmd/hsmd_wiregen.h>
+#include <hsmd/hsmd_eltoo_wiregen.h>
 #include <openingd/common.h>
 #include <openingd/eltoo_openingd_wiregen.h>
 #include <wire/peer_wire.h>
@@ -438,7 +438,7 @@ static u8 *funder_channel_start(struct eltoo_state *state, u8 channel_flags)
 
 static bool funder_finalize_channel_setup(struct eltoo_state *state,
 					  struct amount_msat local_msat,
-					  struct bitcoin_signature *sig,
+					  struct bip340sig *sig,
 					  struct bitcoin_tx **update_tx)
 {
 	u8 *msg;
@@ -450,7 +450,7 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
 
 	/*~ Channel is ready; Report the channel parameters to the signer. */
     /* FIXME hsmd messages need implementing.
-	msg = towire_hsmd_ready_channel(NULL,
+	msg = towire_hsmd_ready_eltoo_channel(NULL,
 				       true,
 				       state->funding_sats,
 				       state->push_msat,
@@ -467,7 +467,7 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
 	wire_sync_write(HSM_FD, take(msg));
     */
 	msg = wire_sync_read(tmpctx, HSM_FD);
-	if (!fromwire_hsmd_ready_channel_reply(msg))
+	if (!fromwire_hsmd_ready_eltoo_channel_reply(msg))
 		status_failed(STATUS_FAIL_HSM_IO, "Bad ready_channel_reply %s",
 			      tal_hex(tmpctx, msg));
 
@@ -551,24 +551,25 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
     */
 	wire_sync_write(HSM_FD, take(msg));
 	msg = wire_sync_read(tmpctx, HSM_FD);
-	if (!fromwire_hsmd_sign_tx_reply(msg, sig))
+	if (!fromwire_hsmd_sign_update_tx_reply(msg, sig))
 		status_failed(STATUS_FAIL_HSM_IO, "Bad sign_tx_reply %s",
 			      tal_hex(tmpctx, msg));
 
 	/* You can tell this has been a problem before, since there's a debug
 	 * message here: */
 	status_debug("signature %s on tx %s using key %s",
-		     type_to_string(tmpctx, struct bitcoin_signature, sig),
+		     type_to_string(tmpctx, struct bip340sig, sig),
 		     type_to_string(tmpctx, struct bitcoin_tx, *update_tx),
 		     type_to_string(tmpctx, struct pubkey,
 				    &state->our_funding_pubkey));
 
 	/* Now we give our peer the signature for their first commitment
 	 * transaction. */
+    /* FIXME implement funding_created message
 	msg = towire_funding_created(state, &state->channel_id,
 				     &state->funding.txid,
 				     state->funding.n,
-				     &sig->s);
+				     &sig->s);*/
 	peer_write(state->pps, msg);
 
 	/* BOLT #2:
@@ -590,10 +591,12 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
 	if (!msg)
 		goto fail;
 
+    /* FIXME implement funding_signed message
 	sig->sighash_type = SIGHASH_ALL;
 	if (!fromwire_funding_signed(msg, &id_in, &sig->s))
 		peer_failed_err(state->pps, &state->channel_id,
 				"Parsing funding_signed: %s", tal_hex(msg, msg));
+    */
 	/* BOLT #2:
 	 *
 	 * This message introduces the `channel_id` to identify the channel.
@@ -632,9 +635,9 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
 	 *   - if `signature` is incorrect OR non-compliant with LOW-S-standard rule...:
 	 *     - MUST fail the channel
 	 */
-	/* So we create *our* initial commitment transaction, and check the
+	/* So we create the initial update transaction, and check the
 	 * signature they sent against that. */
-	validate_initial_commitment_signature(HSM_FD, *update_tx, sig);
+	validate_initial_update_signature(HSM_FD, *update_tx, sig);
 
     /* FIXME check psig
 	if (!check_tx_sig(*tx, 0, NULL, wscript, &state->their_funding_pubkey, sig)) {
@@ -672,7 +675,7 @@ static u8 *funder_channel_complete(struct eltoo_state *state)
 {
 	/* Remote commitment tx */
 	struct bitcoin_tx *tx;
-	struct bitcoin_signature sig;
+	struct bip340sig sig;
 	struct amount_msat local_msat;
 
 	/* Update the billboard about what we're doing*/
@@ -712,13 +715,12 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
     /* FIXME Can't these just be read into eltoo_keyset? */
 	struct pubkey their_funding_pubkey;
     struct pubkey their_settlement_pubkey;
-	struct bitcoin_signature theirsig, sig;
+	struct bip340sig theirsig, sig;
 	struct bitcoin_tx *settle_tx, *update_tx;
 	struct bitcoin_blkid chain_hash;
 	u8 *msg = NULL; /* FIXME properly intiialize this */
-	const u8 *wscript = NULL; /* FIXME get rid of this*/
 	u8 channel_flags = 0; /* FIXME properly intiialize this */
-	u16 funding_txout;
+	u16 funding_txout = 0; /* FIXME actually initialize this */
 	char* err_reason;
 	struct tlv_accept_channel_tlvs *accept_tlvs;
 	struct tlv_open_channel_tlvs *open_tlvs = NULL; /* FIXME get this initialized */
@@ -895,6 +897,7 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 
 	/* The message should be "funding_created" which tells us what funding
 	 * tx they generated; the sighash type is implied, so we set it here. */
+    /* FIXME implement funding_created message
 	theirsig.sighash_type = SIGHASH_ALL;
 	if (!fromwire_funding_created(msg, &id_in,
 				      &state->funding.txid,
@@ -902,6 +905,7 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 				      &theirsig.s))
 		peer_failed_err(state->pps, &state->channel_id,
 			    "Parsing funding_created");
+    */
 	/* We only allow 16 bits for this on the wire. */
 	state->funding.n = funding_txout;
 
@@ -918,25 +922,22 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 				type_to_string(msg, struct channel_id, &id_in));
 
 	/*~ Channel is ready; Report the channel parameters to the signer. */
-    /* FIXME implement HSM messages
-	msg = towire_hsmd_ready_channel(NULL,
-				       false,
+	msg = towire_hsmd_ready_eltoo_channel(NULL,
+				       /* is_outbound */ false,
 				       state->funding_sats,
 				       state->push_msat,
 				       &state->funding.txid,
 				       state->funding.n,
-				       state->localconf.to_self_delay,
+				       state->localconf.shared_delay,
 				       state->upfront_shutdown_script[LOCAL],
 				       state->local_upfront_shutdown_wallet_index,
-				       &theirs,
 				       &their_funding_pubkey,
-				       state->remoteconf.to_self_delay,
+                       &their_settlement_pubkey,
 				       state->upfront_shutdown_script[REMOTE],
 				       state->channel_type);
-    */
 	wire_sync_write(HSM_FD, take(msg));
 	msg = wire_sync_read(tmpctx, HSM_FD);
-	if (!fromwire_hsmd_ready_channel_reply(msg))
+	if (!fromwire_hsmd_ready_eltoo_channel_reply(msg))
 		status_failed(STATUS_FAIL_HSM_IO, "Bad ready_channel_reply %s",
 			      tal_hex(tmpctx, msg));
 
@@ -990,23 +991,10 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 
     /* FIXME bind update tx to funding output, then check partial sig */
 
-	validate_initial_commitment_signature(HSM_FD, update_tx, &theirsig);
-
+	validate_initial_update_signature(HSM_FD, update_tx, &theirsig);
+    /* FIXME check psig?
 	if (!check_tx_sig(update_tx, 0, NULL, wscript, &their_funding_pubkey,
 			  &theirsig)) {
-		/* BOLT #1:
-		 *
-		 * ### The `error` and `warning` Messages
-		 *...
-		 * - when failure was caused by an invalid signature check:
-		 *    - SHOULD include the raw, hex-encoded transaction in reply
-		 *      to a `funding_created`, `funding_signed`,
-		 *      `closing_signed`, or `commitment_signed` message.
-		 */
-		/*~ This verbosity is not only useful for our own testing, but
-		 * a courtesy to other implementaters whose brains may be so
-		 * twisted by coding in Go, Scala and Rust that they can no
-		 * longer read C code. */
 		peer_failed_err(state->pps, &state->channel_id,
 				"Bad signature %s on tx %s using key %s",
 				type_to_string(tmpctx, struct bitcoin_signature,
@@ -1015,7 +1003,7 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 				type_to_string(tmpctx, struct pubkey,
 					       &their_funding_pubkey));
 	}
-
+    */
 	/* BOLT #2:
 	 *
 	 * This message introduces the `channel_id` to identify the
@@ -1063,15 +1051,17 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
     */
 	wire_sync_write(HSM_FD, take(msg));
 	msg = wire_sync_read(tmpctx, HSM_FD);
-	if (!fromwire_hsmd_sign_tx_reply(msg, &sig))
+	if (!fromwire_hsmd_sign_update_tx_reply(msg, &sig))
 		status_failed(STATUS_FAIL_HSM_IO,
 			      "Bad sign_tx_reply %s", tal_hex(tmpctx, msg));
 
 	/* We don't send this ourselves: channeld does, because master needs
 	 * to save state to disk before doing so. */
+    /* FIXME funding_signed logic
 	assert(sig.sighash_type == SIGHASH_ALL);
 	msg = towire_funding_signed(state, &state->channel_id, &sig.s);
 
+    */
 	return towire_openingd_eltoo_fundee(state,
 				     &state->remoteconf,
 				     update_tx,

@@ -5,6 +5,7 @@
 #include <common/utils.h>
 
 struct amount_sat;
+struct bip340sig;
 struct bitcoin_tx;
 struct bitcoin_signature;
 struct channel_config;
@@ -44,4 +45,8 @@ char *validate_remote_upfront_shutdown(const tal_t *ctx,
 				       const u8 *their_features,
 				       u8 *shutdown_scriptpubkey STEALS,
 				       u8 **state_script);
+
+void validate_initial_update_signature(int hsm_fd,
+                       struct bitcoin_tx *update_tx,
+                       struct bip340sig *sig);
 #endif /* LIGHTNING_OPENINGD_COMMON_H */
