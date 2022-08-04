@@ -1141,10 +1141,9 @@ static u8 *handle_master_in(struct eltoo_state *state)
 {
 	u8 *msg = wire_sync_read(tmpctx, REQ_FD);
 	enum eltoo_openingd_wire t = fromwire_peektype(msg);
-	u8 channel_flags = 0; /* FIXME intiailize properly */
-    /* FIXME
+	u8 channel_flags;
 	struct bitcoin_txid funding_txid;
-	u16 funding_txout;*/
+	u16 funding_txout;
 
 	switch (t) {
 	case WIRE_OPENINGD_ELTOO_FUNDER_START:
@@ -1162,15 +1161,13 @@ static u8 *handle_master_in(struct eltoo_state *state)
 			wire_sync_write(REQ_FD, take(msg));
 		return NULL;
 	case WIRE_OPENINGD_ELTOO_FUNDER_COMPLETE:
-        /* FIXME
-		if (!fromwire_openingd_funder_complete(state, msg,
+		if (!fromwire_openingd_eltoo_funder_complete(state, msg,
 						       &funding_txid,
 						       &funding_txout,
 						       &state->channel_type))
-			master_badmsg(WIRE_OPENINGD_FUNDER_COMPLETE, msg);
+			master_badmsg(WIRE_OPENINGD_ELTOO_FUNDER_COMPLETE, msg);
 		state->funding.txid = funding_txid;
 		state->funding.n = funding_txout;
-        */
 		return funder_channel_complete(state);
 	case WIRE_OPENINGD_ELTOO_FUNDER_CANCEL:
 		/* We're aborting this, simple */
