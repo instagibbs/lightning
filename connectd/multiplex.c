@@ -384,6 +384,8 @@ static bool is_urgent(enum peer_wire type)
 	case WIRE_START_BATCH:
 	case WIRE_COMMITMENT_SIGNED:
 	case WIRE_REVOKE_AND_ACK:
+    case WIRE_UPDATE_NOOP:
+    case WIRE_YIELD:
 		return true;
 	};
 
