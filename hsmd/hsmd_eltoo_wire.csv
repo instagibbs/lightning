@@ -23,7 +23,8 @@ msgtype,hsmd_ready_eltoo_channel_reply,181
 
 # Reply for all the above requests.
 msgtype,hsmd_sign_update_tx_reply,162
-msgdata,hsmd_sign_update_tx_reply,sig,bip340sig,
+msgdata,hsmd_sign_update_tx_reply,p_sig,partial_sig,
+msgdata,hsmd_sign_update_tx_reply,nonce,nonce,
 
 # Openingd/channeld asks HSM to sign the shared update tx.
 #include <common/htlc_wire.h>

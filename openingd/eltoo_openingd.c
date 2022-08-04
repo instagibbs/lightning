@@ -284,11 +284,11 @@ static void set_remote_upfront_shutdown(struct eltoo_state *state,
  * stop when we get to the part where we need the funding txid */
 static u8 *funder_channel_start(struct eltoo_state *state, u8 channel_flags)
 {
-	u8 *msg = NULL; /* FIXME make sure initialized otherwise */
+	u8 *msg;
 	u8 *funding_output_script;
 	struct channel_id id_in;
-	struct tlv_open_channel_eltoo_tlvs *open_tlvs = NULL; /* FIXME make sure initialized otherwise */
-	struct tlv_accept_channel_eltoo_tlvs *accept_tlvs = NULL; /* FIXME make sure initialized otherwise */
+	struct tlv_open_channel_eltoo_tlvs *open_tlvs;
+	struct tlv_accept_channel_eltoo_tlvs *accept_tlvs;
     char *err_reason;
 
 	status_debug("funder_channel_start");
@@ -352,27 +352,20 @@ static u8 *funder_channel_start(struct eltoo_state *state, u8 channel_flags)
 	 *    `payment_basepoint`, or `delayed_payment_basepoint` are not
 	 *    valid secp256k1 pubkeys in compressed format.
 	 */
-    /* FIXME generate BOLT message for accept_channel_eltoo
-	if (!fromwire_accept_channel(tmpctx, msg, &id_in,
+	if (!fromwire_accept_channel_eltoo(tmpctx, msg, &id_in,
 				     &state->remoteconf.dust_limit,
 				     &state->remoteconf.max_htlc_value_in_flight,
-				     &state->remoteconf.channel_reserve,
 				     &state->remoteconf.htlc_minimum,
 				     &state->minimum_depth,
-				     &state->remoteconf.to_self_delay,
+				     &state->remoteconf.shared_delay,
 				     &state->remoteconf.max_accepted_htlcs,
 				     &state->their_funding_pubkey,
-				     &state->their_points.revocation,
-				     &state->their_points.payment,
-				     &state->their_points.delayed_payment,
-				     &state->their_points.htlc,
-				     &state->first_per_commitment_point[REMOTE],
+				     &state->their_settlement_pubkey,
 				     &accept_tlvs)) {
 		peer_failed_err(state->pps,
 				&state->channel_id,
 				"Parsing accept_channel %s", tal_hex(msg, msg));
 	}
-    */
 	set_remote_upfront_shutdown(state, accept_tlvs->upfront_shutdown_script);
 
 	/* BOLT #2:
@@ -441,6 +434,8 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
 	char *err_reason;
 	struct wally_tx_output *direct_outputs[NUM_SIDES];
     struct bitcoin_tx *settle_tx;
+    struct partial_sig update_psig;
+    struct nonce next_nonce;
 
 	/*~ Channel is ready; Report the channel parameters to the signer. */
 	msg = towire_hsmd_ready_eltoo_channel(NULL,
@@ -535,7 +530,7 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
 						    (const struct simple_htlc **) htlcs);
 	wire_sync_write(HSM_FD, take(msg));
 	msg = wire_sync_read(tmpctx, HSM_FD);
-	if (!fromwire_hsmd_sign_update_tx_reply(msg, sig))
+	if (!fromwire_hsmd_sign_update_tx_reply(msg, &update_psig, &next_nonce))
 		status_failed(STATUS_FAIL_HSM_IO, "Bad sign_tx_reply %s",
 			      tal_hex(tmpctx, msg));
 
@@ -547,13 +542,13 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
 		     type_to_string(tmpctx, struct pubkey,
 				    &state->our_funding_pubkey));
 
-	/* Now we give our peer the signature for their first commitment
+	/* Now we give our peer the partial signature for the first update
 	 * transaction. */
-    /* FIXME implement funding_created message
-	msg = towire_funding_created(state, &state->channel_id,
+	msg = towire_funding_created_eltoo(state, &state->channel_id,
 				     &state->funding.txid,
 				     state->funding.n,
-				     &sig->s);*/
+				     &update_psig,
+                     &next_nonce);
 	peer_write(state->pps, msg);
 
 	/* BOLT #2:
@@ -575,12 +570,10 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
 	if (!msg)
 		return false;
 
-    /* FIXME implement funding_signed message
-	sig->sighash_type = SIGHASH_ALL;
-	if (!fromwire_funding_signed(msg, &id_in, &sig->s))
+	// FIXME ? sig->sighash_type = SIGHASH_ALL;
+	if (!fromwire_funding_signed_eltoo(msg, &id_in, &update_psig, &next_nonce))
 		peer_failed_err(state->pps, &state->channel_id,
-				"Parsing funding_signed: %s", tal_hex(msg, msg));
-    */
+				"Parsing funding_signed_eltoo: %s", tal_hex(msg, msg));
 	/* BOLT #2:
 	 *
 	 * This message introduces the `channel_id` to identify the channel.
@@ -621,6 +614,8 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
 	 */
 	/* So we create the initial update transaction, and check the
 	 * signature they sent against that. */
+
+    /* FIXME we don't have full sig here... sign then check? */
 	validate_initial_update_signature(HSM_FD, *update_tx, sig);
 
     /* FIXME check psig
@@ -693,16 +688,19 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
     /* FIXME Can't these just be read into eltoo_keyset? */
 	struct pubkey their_funding_pubkey;
     struct pubkey their_settlement_pubkey;
-	struct bip340sig theirsig, sig;
+	struct bip340sig theirsig;
 	struct bitcoin_tx *settle_tx, *update_tx;
 	struct bitcoin_blkid chain_hash;
-	u8 *msg = NULL; /* FIXME properly intiialize this */
-	u8 channel_flags = 0; /* FIXME properly intiialize this */
-	u16 funding_txout = 0; /* FIXME actually initialize this */
+	u8 *msg;
+	u8 channel_flags;
+	u16 funding_txout;
 	char* err_reason;
-	struct tlv_accept_channel_tlvs *accept_tlvs;
-	struct tlv_open_channel_eltoo_tlvs *open_tlvs = NULL; /* FIXME get this initialized */
+	struct tlv_accept_channel_eltoo_tlvs *accept_tlvs;
+	struct tlv_open_channel_eltoo_tlvs *open_tlvs;
 	struct wally_tx_output *direct_outputs[NUM_SIDES];
+    /* FIXME split these up to their/ours tuple, or send over full sig in response? */
+    struct partial_sig update_psig;
+    struct nonce next_nonce;
 
 	/* BOLT #2:
 	 *
@@ -712,30 +710,22 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 	 *    `payment_basepoint`, or `delayed_payment_basepoint` are not valid
 	 *     secp256k1 pubkeys in compressed format.
 	 */
-    /* FIXME implement open_channel_eltoo message
-	if (!fromwire_open_channel(tmpctx, open_channel_msg, &chain_hash,
+	if (!fromwire_open_channel_eltoo(tmpctx, open_channel_msg, &chain_hash,
 			    &state->channel_id,
 			    &state->funding_sats,
 			    &state->push_msat,
 			    &state->remoteconf.dust_limit,
 			    &state->remoteconf.max_htlc_value_in_flight,
-			    &state->remoteconf.channel_reserve,
 			    &state->remoteconf.htlc_minimum,
-			    &state->feerate_per_kw,
-			    &state->remoteconf.to_self_delay,
+			    &state->remoteconf.shared_delay,
 			    &state->remoteconf.max_accepted_htlcs,
 			    &their_funding_pubkey,
-			    &theirs.revocation,
-			    &theirs.payment,
-			    &theirs.delayed_payment,
-			    &theirs.htlc,
-			    &state->first_per_commitment_point[REMOTE],
+			    &their_settlement_pubkey,
 			    &channel_flags,
 			    &open_tlvs))
 		    peer_failed_err(state->pps,
 				    &state->channel_id,
 				    "Parsing open_channel %s", tal_hex(tmpctx, open_channel_msg));
-    */
 	set_remote_upfront_shutdown(state, open_tlvs->upfront_shutdown_script);
 
 	/* BOLT #2:
@@ -837,7 +827,7 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 						     state->their_features);
 
 	/* OK, we accept! */
-	accept_tlvs = tlv_accept_channel_tlvs_new(tmpctx);
+	accept_tlvs = tlv_accept_channel_eltoo_tlvs_new(tmpctx);
 	accept_tlvs->upfront_shutdown_script
 		= state->upfront_shutdown_script[LOCAL];
 	/* BOLT #2:
@@ -846,23 +836,16 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 	 */
 	accept_tlvs->channel_type = state->channel_type->features;
 
-    /* FIXME implement eltoo channel msgs
 	msg = towire_accept_channel_eltoo(NULL, &state->channel_id,
 				    state->localconf.dust_limit,
 				    state->localconf.max_htlc_value_in_flight,
-				    state->localconf.channel_reserve,
 				    state->localconf.htlc_minimum,
 				    state->minimum_depth,
-				    state->localconf.to_self_delay,
+				    state->localconf.shared_delay,
 				    state->localconf.max_accepted_htlcs,
 				    &state->our_funding_pubkey,
-				    &state->our_points.revocation,
-				    &state->our_points.payment,
-				    &state->our_points.delayed_payment,
-				    &state->our_points.htlc,
-				    &state->first_per_commitment_point[LOCAL],
+				    &state->our_settlement_pubkey,
 				    accept_tlvs);
-    */
 	peer_write(state->pps, take(msg));
 
 	peer_billboard(false,
@@ -875,15 +858,14 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 
 	/* The message should be "funding_created" which tells us what funding
 	 * tx they generated; the sighash type is implied, so we set it here. */
-    /* FIXME implement funding_created message
-	theirsig.sighash_type = SIGHASH_ALL;
-	if (!fromwire_funding_created(msg, &id_in,
+	// FIXME ? theirsig.sighash_type = SIGHASH_ALL;
+	if (!fromwire_funding_created_eltoo(msg, &id_in,
 				      &state->funding.txid,
 				      &funding_txout,
-				      &theirsig.s))
+				      &update_psig,
+                      &next_nonce))
 		peer_failed_err(state->pps, &state->channel_id,
 			    "Parsing funding_created");
-    */
 	/* We only allow 16 bits for this on the wire. */
 	state->funding.n = funding_txout;
 
@@ -1016,17 +998,15 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 						   (const struct simple_htlc **) htlcs);
 	wire_sync_write(HSM_FD, take(msg));
 	msg = wire_sync_read(tmpctx, HSM_FD);
-	if (!fromwire_hsmd_sign_update_tx_reply(msg, &sig))
+	if (!fromwire_hsmd_sign_update_tx_reply(msg, &update_psig, &next_nonce))
 		status_failed(STATUS_FAIL_HSM_IO,
 			      "Bad sign_tx_reply %s", tal_hex(tmpctx, msg));
 
 	/* We don't send this ourselves: channeld does, because master needs
 	 * to save state to disk before doing so. */
-    /* FIXME funding_signed logic
-	assert(sig.sighash_type == SIGHASH_ALL);
-	msg = towire_funding_signed(state, &state->channel_id, &sig.s);
+	// FIXME ? assert(sig.sighash_type == SIGHASH_ALL);
+	msg = towire_funding_signed_eltoo(state, &state->channel_id, &update_psig, &next_nonce);
 
-    */
 	return towire_openingd_eltoo_fundee(state,
 				     &state->remoteconf,
 				     update_tx,

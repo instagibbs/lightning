@@ -362,20 +362,17 @@ void validate_initial_update_signature(int hsm_fd,
 					   struct bip340sig *sig)
 {
 	struct existing_htlc **htlcs;
-	struct bitcoin_signature *htlc_sigs;
 	u64 update_num;
 	const u8 *msg;
 
 	/* Validate the counterparty's signature. */
 	htlcs = tal_arr(NULL, struct existing_htlc *, 0);
-	htlc_sigs = tal_arr(NULL, struct bitcoin_signature, 0);
 	update_num = 0;
 	msg = towire_hsmd_validate_update_tx(NULL,
 						 update_tx,
 						 (const struct simple_htlc **) htlcs,
 						 update_num,
 						 sig);
-	tal_free(htlc_sigs);
 	tal_free(htlcs);
 	wire_sync_write(hsm_fd, take(msg));
 	msg = wire_sync_read(tmpctx, hsm_fd);
