@@ -1,8 +1,26 @@
+#include <bitcoin/block.h>
+#include <bitcoin/pubkey.h>
+#include <common/amount.h>
+#include <common/channel_id.h>
+
 msgtype,open_channel_eltoo,32768
-tlvtype,open_channel_tlvs,upfront_shutdown_script,0
-tlvdata,open_channel_tlvs,upfront_shutdown_script,shutdown_scriptpubkey,byte,...
-tlvtype,open_channel_tlvs,channel_type,1
-tlvdata,open_channel_tlvs,channel_type,type,byte,...
+msgdata,open_channel_eltoo,chain_hash,chain_hash,
+msgdata,open_channel_eltoo,temporary_channel_id,byte,32
+msgdata,open_channel_eltoo,funding_satoshis,u64,
+msgdata,open_channel_eltoo,push_msat,u64,
+msgdata,open_channel_eltoo,dust_limit_satoshis,u64,
+msgdata,open_channel_eltoo,max_htlc_value_in_flight_msat,u64,
+msgdata,open_channel_eltoo,htlc_minimum_msat,u64,
+msgdata,open_channel_eltoo,shared_delay,u16,
+msgdata,open_channel_eltoo,max_accepted_htlcs,u16,
+msgdata,open_channel_eltoo,funding_pubkey,point,
+msgdata,open_channel_eltoo,settlement_pubkey,point,
+msgdata,open_channel_eltoo,channel_flags,byte,
+msgdata,open_channel_eltoo,tlvs,open_channel_eltoo_tlvs,
+tlvtype,open_channel_eltoo_tlvs,upfront_shutdown_script,0
+tlvdata,open_channel_eltoo_tlvs,upfront_shutdown_script,shutdown_scriptpubkey,byte,...
+tlvtype,open_channel_eltoo_tlvs,channel_type,1
+tlvdata,open_channel_eltoo_tlvs,channel_type,type,byte,...
 msgtype,accept_channel_eltoo,32769
 msgdata,accept_channel_eltoo,temporary_channel_id,byte,32
 msgdata,accept_channel_eltoo,dust_limit_satoshis,u64,
@@ -13,11 +31,11 @@ msgdata,accept_channel_eltoo,shared_delay,u16,
 msgdata,accept_channel_eltoo,max_accepted_htlcs,u16,
 msgdata,accept_channel_eltoo,funding_pubkey,point,
 msgdata,accept_channel_eltoo,settlement_pubkey,point,
-msgdata,accept_channel_eltoo,tlvs,accept_channel_tlvs,
-tlvtype,accept_channel_tlvs,upfront_shutdown_script,0
-tlvdata,accept_channel_tlvs,upfront_shutdown_script,shutdown_scriptpubkey,byte,...
-tlvtype,accept_channel_tlvs,channel_type,1
-tlvdata,accept_channel_tlvs,channel_type,type,byte,...
+msgdata,accept_channel_eltoo,tlvs,accept_channel_eltoo_tlvs,
+tlvtype,accept_channel_eltoo_tlvs,upfront_shutdown_script,0
+tlvdata,accept_channel_eltoo_tlvs,upfront_shutdown_script,shutdown_scriptpubkey,byte,...
+tlvtype,accept_channel_eltoo_tlvs,channel_type,1
+tlvdata,accept_channel_eltoo_tlvs,channel_type,type,byte,...
 msgtype,funding_created_eltoo,32770
 msgdata,funding_created_eltoo,temporary_channel_id,byte,32
 msgdata,funding_created_eltoo,funding_txid,sha256,
@@ -53,7 +71,7 @@ msgtype,update_signed_ack,32773
 msgdata,update_signed_ack,channel_id,channel_id,
 msgdata,update_signed_ack,update_psig,partial_sig,
 msgdata,update_signed_ack,next_nonce,nonce,
-msgtype,channel_reestablish_eltoo,32773
+msgtype,channel_reestablish_eltoo,32774
 msgdata,channel_reestablish_eltoo,channel_id,channel_id,
 msgdata,channel_reestablish_eltoo,last_update_number,u64,
 msgdata,channel_reestablish_eltoo,update_psig,partial_sig,

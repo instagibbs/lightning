@@ -32,6 +32,7 @@
 #include <hsmd/hsmd_eltoo_wiregen.h>
 #include <openingd/common.h>
 #include <openingd/eltoo_openingd_wiregen.h>
+#include <wire/eltoo_wiregen.h>
 #include <wire/peer_wire.h>
 #include <wire/wire_sync.h>
 
@@ -286,8 +287,8 @@ static u8 *funder_channel_start(struct eltoo_state *state, u8 channel_flags)
 	u8 *msg = NULL; /* FIXME make sure initialized otherwise */
 	u8 *funding_output_script;
 	struct channel_id id_in;
-	struct tlv_open_channel_tlvs *open_tlvs = NULL; /* FIXME make sure initialized otherwise */
-	struct tlv_accept_channel_tlvs *accept_tlvs = NULL; /* FIXME make sure initialized otherwise */
+	struct tlv_open_channel_eltoo_tlvs *open_tlvs = NULL; /* FIXME make sure initialized otherwise */
+	struct tlv_accept_channel_eltoo_tlvs *accept_tlvs = NULL; /* FIXME make sure initialized otherwise */
     char *err_reason;
 
 	status_debug("funder_channel_start");
@@ -304,7 +305,7 @@ static u8 *funder_channel_start(struct eltoo_state *state, u8 channel_flags)
 						   state->our_features,
 						   state->their_features);
 
-	open_tlvs = tlv_open_channel_tlvs_new(tmpctx);
+	open_tlvs = tlv_open_channel_eltoo_tlvs_new(tmpctx);
 	open_tlvs->upfront_shutdown_script
 		= state->upfront_shutdown_script[LOCAL];
 
@@ -318,7 +319,6 @@ static u8 *funder_channel_start(struct eltoo_state *state, u8 channel_flags)
 	 */
 	open_tlvs->channel_type = state->channel_type->features;
 
-    /* FIXME generate BOLT message for open_channel_eltoo
 	msg = towire_open_channel_eltoo(NULL,
 				  &chainparams->genesis_blockhash,
 				  &state->channel_id,
@@ -326,19 +326,13 @@ static u8 *funder_channel_start(struct eltoo_state *state, u8 channel_flags)
 				  state->push_msat,
 				  state->localconf.dust_limit,
 				  state->localconf.max_htlc_value_in_flight,
-				  state->localconf.channel_reserve,
 				  state->localconf.htlc_minimum,
 				  state->localconf.shared_delay,
 				  state->localconf.max_accepted_htlcs,
 				  &state->our_funding_pubkey,
-				  &state->our_points.revocation,
-				  &state->our_points.payment,
-				  &state->our_points.delayed_payment,
-				  &state->our_points.htlc,
-				  &state->first_per_commitment_point[LOCAL],
+				  &state->our_settlement_pubkey,
 				  channel_flags,
 				  open_tlvs);
-    */
 	peer_write(state->pps, take(msg));
 
 	/* This is usually a very transient state... */
@@ -707,7 +701,7 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 	u16 funding_txout = 0; /* FIXME actually initialize this */
 	char* err_reason;
 	struct tlv_accept_channel_tlvs *accept_tlvs;
-	struct tlv_open_channel_tlvs *open_tlvs = NULL; /* FIXME get this initialized */
+	struct tlv_open_channel_eltoo_tlvs *open_tlvs = NULL; /* FIXME get this initialized */
 	struct wally_tx_output *direct_outputs[NUM_SIDES];
 
 	/* BOLT #2:
