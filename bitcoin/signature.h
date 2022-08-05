@@ -149,13 +149,12 @@ void bipmusig_finalize_keys(struct pubkey *agg_pk,
 
 /**
  * bipmusig_gen_nonce - Generates session id, private
- * and public nonce pair, assuming we already have
- * a private and aggregated key.
+ * and public nonce pair
  * @secnonce: secret nonce to be generated. MUST NEVER BE MANUALLY COPIED OR PERSISTED!!!
  * @pubnonce: public nonce to be generated
- * @privkey: privkey for this signing session
- * @keyagg_cache: aggregated key cache
- * @msg32: Optional 32 byte message for misuse resistance
+ * @privkey: privkey for this signing session (can be NULL)
+ * @keyagg_cache: aggregated key cache (can be NULL)
+ * @msg32: Optional 32 byte message for misuse resistance (can be NULL)
  */
 void bipmusig_gen_nonce(secp256k1_musig_secnonce *secnonce,
            secp256k1_musig_pubnonce *pubnonce,

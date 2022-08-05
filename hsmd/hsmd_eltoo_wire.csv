@@ -1,6 +1,8 @@
 #include <bitcoin/signature.h>
 #include <bitcoin/tx.h>
+#include <common/channel_id.h>
 #include <common/channel_type.h>
+
 # Provide channel parameters.
 msgtype,hsmd_ready_eltoo_channel,81
 msgdata,hsmd_ready_eltoo_channel,is_outbound,bool,
@@ -22,18 +24,30 @@ msgdata,hsmd_ready_eltoo_channel,channel_type,channel_type,
 msgtype,hsmd_ready_eltoo_channel_reply,181
 
 # Reply for all the above requests.
-msgtype,hsmd_sign_update_tx_reply,162
-msgdata,hsmd_sign_update_tx_reply,p_sig,partial_sig,
-msgdata,hsmd_sign_update_tx_reply,nonce,nonce,
+msgtype,hsmd_psign_update_tx_reply,162
+msgdata,hsmd_psign_update_tx_reply,p_sig,partial_sig,
+msgdata,hsmd_psign_update_tx_reply,nonce,nonce,
 
 # Openingd/channeld asks HSM to sign the shared update tx.
 #include <common/htlc_wire.h>
-msgtype,hsmd_sign_update_tx,69
-msgdata,hsmd_sign_update_tx,update_tx,bitcoin_tx,
-msgdata,hsmd_sign_update_tx,remote_funding_key,pubkey,
-msgdata,hsmd_sign_update_tx,update_num,u64,
-msgdata,hsmd_sign_update_tx,num_htlcs,u16,
-msgdata,hsmd_sign_update_tx,htlcs,simple_htlc,num_htlcs
+msgtype,hsmd_psign_update_tx,69
+# sus: we don't know channel id for opening?
+msgdata,hsmd_psign_update_tx,channel_id,channel_id,
+msgdata,hsmd_psign_update_tx,update_tx,bitcoin_tx,
+msgdata,hsmd_psign_update_tx,settlement_tx,bitcoin_tx,
+msgdata,hsmd_psign_update_tx,remote_funding_key,pubkey,
+msgdata,hsmd_psign_update_tx,num_htlcs,u16,
+msgdata,hsmd_psign_update_tx,htlcs,simple_htlc,num_htlcs
+
+msgtype,hsmd_combine_psig,92
+# sus: we don't know channel id for opening?
+msgdata,hsmd_combine_psig,channel_id,channel_id,
+msgdata,hsmd_combine_psig,p_sig_1,partial_sig,
+msgdata,hsmd_combine_psig,p_sig_2,partial_sig,
+msgdata,hsmd_combine_psig,update_tx,bitcoin_tx,
+
+msgtype,hsmd_combine_psig_reply,192
+msgdata,hsmd_combine_psig_reply,sig,bip340sig,
 
 msgtype,hsmd_validate_update_tx,95
 msgdata,hsmd_validate_update_tx,tx,bitcoin_tx,
@@ -43,3 +57,11 @@ msgdata,hsmd_validate_update_tx,update_num,u64,
 msgdata,hsmd_validate_update_tx,p_sig,partial_sig,
 
 msgtype,hsmd_validate_update_tx_reply,195
+
+# Get musig public nonce for channel... FIXME channel_id completely
+# ignored for now until storage model is figured
+msgtype,hsmd_get_nonce,96
+msgdata,hsmd_get_nonce,channel_id,channel_id,
+
+msgtype,hsmd_get_nonce_reply,196
+msgdata,hsmd_get_nonce_reply,pubnonce,nonce,

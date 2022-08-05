@@ -18,6 +18,7 @@
 #include <hsmd/permissions.h>
 #include <inttypes.h>
 #include <secp256k1_ecdh.h>
+#include <secp256k1_musig.h>
 #include <secp256k1_schnorrsig.h>
 #include <sodium/utils.h>
 #include <stddef.h>
@@ -41,6 +42,15 @@ struct {
 	struct ext_key bip32;
 	struct secret bolt12;
 	struct secret derived_secret;
+    /*
+     * FIXME HACK: We only support on eltoo channel, to avoid unbounded state.
+     * What's the best architecture to support unbounded numbers of channels?
+     * We're just going to blindly assume this is the nonce for the eltoo channel
+     * signature operation....
+     */
+    struct channel_id musig_channel;
+    secp256k1_musig_secnonce sec_nonce;
+    secp256k1_musig_session session;
 } secretstuff;
 
 /* Have we initialized the secretstuff? */

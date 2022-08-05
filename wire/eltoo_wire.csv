@@ -17,6 +17,7 @@ msgdata,open_channel_eltoo,max_accepted_htlcs,u16,
 msgdata,open_channel_eltoo,funding_pubkey,point,
 msgdata,open_channel_eltoo,settlement_pubkey,point,
 msgdata,open_channel_eltoo,channel_flags,byte,
+msgdata,open_channel_eltoo,next_nonce,nonce,
 msgdata,open_channel_eltoo,tlvs,open_channel_eltoo_tlvs,
 tlvtype,open_channel_eltoo_tlvs,upfront_shutdown_script,0
 tlvdata,open_channel_eltoo_tlvs,upfront_shutdown_script,shutdown_scriptpubkey,byte,...
@@ -32,6 +33,7 @@ msgdata,accept_channel_eltoo,shared_delay,u16,
 msgdata,accept_channel_eltoo,max_accepted_htlcs,u16,
 msgdata,accept_channel_eltoo,funding_pubkey,point,
 msgdata,accept_channel_eltoo,settlement_pubkey,point,
+msgdata,accept_channel_eltoo,next_nonce,nonce,
 msgdata,accept_channel_eltoo,tlvs,accept_channel_eltoo_tlvs,
 tlvtype,accept_channel_eltoo_tlvs,upfront_shutdown_script,0
 tlvdata,accept_channel_eltoo_tlvs,upfront_shutdown_script,shutdown_scriptpubkey,byte,...
