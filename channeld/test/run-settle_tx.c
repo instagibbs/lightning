@@ -128,7 +128,7 @@ static u8 *musig_sign(struct bitcoin_tx *update_tx, u8 *annex, struct privkey *a
                &secnonce[i],
                pubnonce_ptrs,
                2,
-               msg_out.sha.u.u8, /* FIXME harmonize this to sha256_double */
+               &msg_out,
                &keyagg_cache[i],
                &session[i],
                &p_sigs[i]);

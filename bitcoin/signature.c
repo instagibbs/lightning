@@ -269,7 +269,7 @@ void bipmusig_partial_sign(const struct privkey *privkey,
            secp256k1_musig_secnonce *secnonce,
            const secp256k1_musig_pubnonce * const *pubnonces,
            size_t num_signers,
-           unsigned char *msg32,
+           struct sha256_double *msg32,
            secp256k1_musig_keyagg_cache *cache,
            secp256k1_musig_session *session,
 	       secp256k1_musig_partial_sig *p_sig)
@@ -283,7 +283,7 @@ void bipmusig_partial_sign(const struct privkey *privkey,
 
     assert(ok);
 
-    ok = secp256k1_musig_nonce_process(secp256k1_ctx, session, &agg_pubnonce, msg32, cache, NULL);
+    ok = secp256k1_musig_nonce_process(secp256k1_ctx, session, &agg_pubnonce, msg32->sha.u.u8, cache, NULL);
 
     assert(ok);
 

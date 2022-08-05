@@ -698,7 +698,6 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 	struct tlv_accept_channel_eltoo_tlvs *accept_tlvs;
 	struct tlv_open_channel_eltoo_tlvs *open_tlvs;
 	struct wally_tx_output *direct_outputs[NUM_SIDES];
-    /* FIXME split these up to their/ours tuple, or send over full sig in response? */
     struct partial_sig our_update_psig, their_update_psig;
     struct nonce our_next_nonce, their_next_nonce;
 
@@ -949,7 +948,7 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 		return NULL;
 	}
 
-    /* FIXME bind update tx to funding output, then check partial sig */
+    /* FIXME Sign and bind update tx */
 
 	validate_initial_update_signature(HSM_FD, update_tx, &their_update_psig);
     /* FIXME check psig?
