@@ -442,7 +442,7 @@ static u8 *funder_channel_start(struct eltoo_state *state, u8 channel_flags)
 
 static bool funder_finalize_channel_setup(struct eltoo_state *state,
 					  struct amount_msat local_msat,
-					  struct bip340sig *sig,
+					  struct bip340sig *update_sig,
 					  struct bitcoin_tx **update_tx)
 {
 	u8 *msg;
@@ -635,22 +635,22 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
 	// validate_initial_update_signature(HSM_FD, *update_tx, &their_update_psig, &our_update_psig);
 
     /* Combine psigs and validate here */
+    /* Now that it's signed by both sides, we check if it's valid signature, get full sig back */
+    msg = towire_hsmd_combine_psig(NULL,
+                            &state->channel_id,
+                            &our_update_psig,
+                            &their_update_psig,
+                            *update_tx);
+    wire_sync_write(HSM_FD, take(msg));
+    msg = wire_sync_read(tmpctx, HSM_FD);
+    if (!fromwire_hsmd_combine_psig_reply(msg, update_sig)) {
+        status_failed(STATUS_FAIL_HSM_IO,
+                  "Bad combine_psig_reply_reply %s", tal_hex(tmpctx, msg));
+    }
 
-    /* FIXME check psig
-	if (!check_tx_sig(*tx, 0, NULL, wscript, &state->their_funding_pubkey, sig)) {
-		peer_failed_err(state->pps, &state->channel_id,
-				"Bad signature %s on tx %s using key %s (channel_type=%s)",
-				type_to_string(tmpctx, struct bitcoin_signature,
-					       sig),
-				type_to_string(tmpctx, struct bitcoin_tx, *tx),
-				type_to_string(tmpctx, struct pubkey,
-					       &state->their_funding_pubkey),
-				fmt_featurebits(tmpctx,
-						state->channel->type->features));
-	}*/
-
-	/* We save their sig to our first commitment tx */
-    /* FIXME as a partial sig... how is this stored?
+	/* We save their sig to our first update tx */
+    /* FIXME Store as taproot signature in PSBT once updated
+        or should we just sneak it in same way for now?
 	if (!psbt_input_set_signature((*update_tx)->psbt, 0,
 				      &state->their_funding_pubkey,
 				      sig))
@@ -706,7 +706,7 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
     /* FIXME Can't these just be read into eltoo_keyset? */
 	struct pubkey their_funding_pubkey;
     struct pubkey their_settlement_pubkey;
-	struct bip340sig theirsig;
+	struct bip340sig update_sig;
 	struct bitcoin_tx *settle_tx, *update_tx;
 	struct bitcoin_blkid chain_hash;
 	u8 *msg;
@@ -970,21 +970,6 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 		return NULL;
 	}
 
-    /* FIXME Sign and bind update tx */
-
-	validate_initial_update_signature(HSM_FD, update_tx, &their_update_psig);
-    /* FIXME check psig?
-	if (!check_tx_sig(update_tx, 0, NULL, wscript, &their_funding_pubkey,
-			  &theirsig)) {
-		peer_failed_err(state->pps, &state->channel_id,
-				"Bad signature %s on tx %s using key %s",
-				type_to_string(tmpctx, struct bitcoin_signature,
-					       &theirsig),
-				type_to_string(tmpctx, struct bitcoin_tx, update_tx),
-				type_to_string(tmpctx, struct pubkey,
-					       &their_funding_pubkey));
-	}
-    */
 	/* BOLT #2:
 	 *
 	 * This message introduces the `channel_id` to identify the
@@ -1024,6 +1009,19 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 		status_failed(STATUS_FAIL_HSM_IO,
 			      "Bad sign_tx_reply %s", tal_hex(tmpctx, msg));
 
+    /* Now that it's signed by both sides, we check if it's valid signature, get full sig back */
+    msg = towire_hsmd_combine_psig(NULL,
+                            &state->channel_id,
+                            &our_update_psig,
+                            &their_update_psig,
+                            update_tx);
+	wire_sync_write(HSM_FD, take(msg));
+	msg = wire_sync_read(tmpctx, HSM_FD);
+    if (!fromwire_hsmd_combine_psig_reply(msg, &update_sig)) {
+		status_failed(STATUS_FAIL_HSM_IO,
+			      "Bad combine_psig_reply_reply %s", tal_hex(tmpctx, msg));
+    }
+
 	/* We don't send this ourselves: channeld does, because master needs
 	 * to save state to disk before doing so. */
 	// FIXME ? assert(sig.sighash_type == SIGHASH_ALL);
@@ -1032,7 +1030,7 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 	return towire_openingd_eltoo_fundee(state,
 				     &state->remoteconf,
 				     update_tx,
-				     &theirsig,
+				     &update_sig,
 				     &their_funding_pubkey,
 				     &state->funding,
 				     state->funding_sats,
