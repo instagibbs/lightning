@@ -23,25 +23,21 @@ msgdata,hsmd_ready_eltoo_channel,channel_type,channel_type,
 # No value returned.
 msgtype,hsmd_ready_eltoo_channel_reply,181
 
-# Reply for all the above requests.
-msgtype,hsmd_psign_update_tx_reply,162
-msgdata,hsmd_psign_update_tx_reply,p_sig,partial_sig,
-msgdata,hsmd_psign_update_tx_reply,nonce,nonce,
-
-# Openingd/channeld asks HSM to sign the shared update tx.
 #include <common/htlc_wire.h>
+# Dumb blind signer protocol for now, only send what's required
+# to sign
 msgtype,hsmd_psign_update_tx,69
-# sus: we don't know channel id for opening?
-msgdata,hsmd_psign_update_tx,channel_id,channel_id,
+msgdata,hsmd_psign_update_tx,temp_channel_id,channel_id,
 msgdata,hsmd_psign_update_tx,update_tx,bitcoin_tx,
-msgdata,hsmd_psign_update_tx,settlement_tx,bitcoin_tx,
 msgdata,hsmd_psign_update_tx,remote_funding_key,pubkey,
-msgdata,hsmd_psign_update_tx,num_htlcs,u16,
-msgdata,hsmd_psign_update_tx,htlcs,simple_htlc,num_htlcs
 
+msgtype,hsmd_psign_update_tx_reply,162
+msgdata,hsmd_psign_update_tx_reply,update_psig,partial_sig,
+msgdata,hsmd_psign_update_tx_reply,next_nonce,nonce,
+
+# hsmd holds all signing state, send incomplete sig stuff
 msgtype,hsmd_combine_psig,92
-# sus: we don't know channel id for opening?
-msgdata,hsmd_combine_psig,channel_id,channel_id,
+msgdata,hsmd_combine_psig,temp_channel_id,channel_id,
 msgdata,hsmd_combine_psig,p_sig_1,partial_sig,
 msgdata,hsmd_combine_psig,p_sig_2,partial_sig,
 msgdata,hsmd_combine_psig,update_tx,bitcoin_tx,

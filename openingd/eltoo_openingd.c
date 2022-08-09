@@ -535,13 +535,10 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
 	/* We ask the HSM to sign the update transaction for us: it knows
 	 * our funding key, it just needs the remote funding key to create the
 	 * tapscripts. */
-	struct simple_htlc **htlcs = tal_arr(tmpctx, struct simple_htlc *, 0);
 	msg = towire_hsmd_psign_update_tx(NULL,
                            &state->channel_id,
 						   *update_tx,
-                           settle_tx,
-						   &state->channel->eltoo_keyset.other_funding_key,
-						    (const struct simple_htlc **) htlcs);
+						   &state->channel->eltoo_keyset.other_funding_key);
 	wire_sync_write(HSM_FD, take(msg));
 	msg = wire_sync_read(tmpctx, HSM_FD);
 	if (!fromwire_hsmd_psign_update_tx_reply(msg, &our_update_psig, &state->our_next_nonce))
@@ -996,13 +993,10 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 	 */
 
 	/* Make HSM sign it */
-	struct simple_htlc **htlcs = tal_arr(tmpctx, struct simple_htlc *, 0);
 	msg = towire_hsmd_psign_update_tx(NULL,
                            &state->channel_id,
 						   update_tx,
-                           settle_tx,
-						   &state->channel->eltoo_keyset.other_funding_key,
-						   (const struct simple_htlc **) htlcs);
+						   &state->channel->eltoo_keyset.other_funding_key);
 	wire_sync_write(HSM_FD, take(msg));
 	msg = wire_sync_read(tmpctx, HSM_FD);
 	if (!fromwire_hsmd_psign_update_tx_reply(msg, &our_update_psig, &state->our_next_nonce))
