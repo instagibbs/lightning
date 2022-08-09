@@ -263,6 +263,18 @@ static void handle_recv_gossip(struct daemon *daemon, const u8 *outermsg)
 	case WIRE_PEER_STORAGE_RETRIEVAL:
     case WIRE_UPDATE_NOOP:
     case WIRE_YIELD:
+    /* Eltoo stuff */
+    case WIRE_OPEN_CHANNEL_ELTOO:
+    case WIRE_ACCEPT_CHANNEL_ELTOO:
+    case WIRE_FUNDING_CREATED_ELTOO:
+    case WIRE_FUNDING_LOCKED_ELTOO:
+    case WIRE_FUNDING_SIGNED_ELTOO:
+    case WIRE_UPDATE_SIGNED:
+    case WIRE_UPDATE_SIGNED_ACK:
+    case WIRE_CHANNEL_REESTABLISH_ELTOO:
+    case WIRE_SHUTDOWN_ELTOO:
+    case WIRE_CLOSING_SIGNED_ELTOO:
+    /* Eltoo stuff ends */
 	case WIRE_STFU:
 	case WIRE_SPLICE:
 	case WIRE_SPLICE_ACK:

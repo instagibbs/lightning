@@ -52,7 +52,7 @@ extract-bolt12-csv: wire/bolt12_wire.csv.raw
 	@set -e; T=wire/bolt12_wire.csv; trap "rm -f $$T.$$$$" 0; cp $< $$T.$$$$; for p in $(BOLT12_PATCHES); do echo APPLY $$p; patch $$T.$$$$ $$p; done; mv $$T.$$$$ $$T
 
 extract-eltoo-csv: wire/eltoo_wire.csv.raw
-	@set -e; T=wire/eltoo_wire.csv; trap "rm -f $$T.$$$$" 0; cp $< $$T.$$$$; for p in $(ELTOO_PATCHES); do echo APPLY $$p; patch $$T.$$$$ $$p; done; mv $$T.$$$$ $$T
+	@set -e; T=wire/eltoo_wire.csv; trap "rm -f $$T.$$$$" 0; cp $< $$T.$$$$; for p in $(ELTOO_PATCHES); do echo APPLY $$p; patch $$T.$$$$ $$p; done; mv $$T.$$$$ $$T; cat wire/eltoo_wire.csv >> wire/peer_wire.csv
 
 wire/peer_wire.csv.raw: bolt-precheck
 	@$(BOLT_EXTRACT) $(LOCAL_BOLTDIR)/0[127]*.md > $@

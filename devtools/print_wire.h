@@ -28,6 +28,8 @@ bool printwire_utf8_array(const char *fieldname, const u8 **cursor, size_t *plen
 bool printwire_tlvs(const char *tlv_name, const u8 **cursor, size_t *plen,
 		    const struct tlv_print_record_type types[], size_t num_types);
 
+bool printwire_partial_sig(const char *fieldname, const u8 **cursor, size_t *plen);
+bool printwire_nonce(const char *fieldname, const u8 **cursor, size_t *plen);
 bool printwire_bip340sig(const char *fieldname, const u8 **cursor, size_t *plen);
 bool printwire_bitcoin_blkid(const char *fieldname, const u8 **cursor, size_t *plen);
 bool printwire_wireaddr(const char *fieldname, const u8 **cursor, size_t *plen);

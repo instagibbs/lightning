@@ -1,10 +1,4 @@
-#include <bitcoin/block.h>
-#include <bitcoin/pubkey.h>
-#include <bitcoin/tx.h>
-#include <common/amount.h>
-#include <common/channel_id.h>
-
-msgtype,open_channel_eltoo,32768
+msgtype,open_channel_eltoo,32778
 msgdata,open_channel_eltoo,chain_hash,chain_hash,
 msgdata,open_channel_eltoo,temporary_channel_id,byte,32
 msgdata,open_channel_eltoo,funding_satoshis,u64,
@@ -49,14 +43,14 @@ msgtype,funding_signed_eltoo,32771
 msgdata,funding_signed_eltoo,channel_id,channel_id,
 msgdata,funding_signed_eltoo,update_psig,partial_sig,
 msgdata,funding_signed_eltoo,next_nonce,nonce,
-msgtype,funding_locked_eltoo,36
+msgtype,funding_locked_eltoo,32772
 msgdata,funding_locked_eltoo,channel_id,channel_id,
-msgtype,shutdown_eltoo,38
+msgtype,shutdown_eltoo,32773
 msgdata,shutdown_eltoo,channel_id,channel_id,
 msgdata,shutdown_eltoo,len,u16,
 msgdata,shutdown_eltoo,scriptpubkey,byte,len
 msgdata,shutdown_eltoo,nonce,nonce,
-msgtype,closing_signed_eltoo,39
+msgtype,closing_signed_eltoo,32774
 msgdata,closing_signed_eltoo,channel_id,channel_id,
 msgdata,closing_signed_eltoo,fee_satoshis,u64,
 msgdata,closing_signed_eltoo,tlvs,closing_signed_eltoo_tlvs,
@@ -67,15 +61,15 @@ tlvtype,closing_signed_eltoo_tlvs,nonces,2
 tlvdata,closing_signed_eltoo_tlvs,nonces,nonce,nonce,
 tlvtype,closing_signed_eltoo_tlvs,partial_sig,3
 tlvdata,closing_signed_eltoo_tlvs,partial_sig,partial_sig,partial_sig,
-msgtype,update_signed,32772
+msgtype,update_signed,32775
 msgdata,update_signed,channel_id,channel_id,
 msgdata,update_signed,update_psig,partial_sig,
 msgdata,update_signed,next_nonce,nonce,
-msgtype,update_signed_ack,32773
+msgtype,update_signed_ack,32776
 msgdata,update_signed_ack,channel_id,channel_id,
 msgdata,update_signed_ack,update_psig,partial_sig,
 msgdata,update_signed_ack,next_nonce,nonce,
-msgtype,channel_reestablish_eltoo,32774
+msgtype,channel_reestablish_eltoo,32777
 msgdata,channel_reestablish_eltoo,channel_id,channel_id,
 msgdata,channel_reestablish_eltoo,last_update_number,u64,
 msgdata,channel_reestablish_eltoo,update_psig,partial_sig,

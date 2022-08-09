@@ -5112,6 +5112,18 @@ static void peer_in(struct peer *peer, const u8 *msg)
 	case WIRE_ONION_MESSAGE:
 	case WIRE_PEER_STORAGE:
 	case WIRE_PEER_STORAGE_RETRIEVAL:
+    /* Eltoo stuff */
+    case WIRE_OPEN_CHANNEL_ELTOO:
+    case WIRE_ACCEPT_CHANNEL_ELTOO:
+    case WIRE_FUNDING_CREATED_ELTOO:
+    case WIRE_FUNDING_LOCKED_ELTOO:
+    case WIRE_FUNDING_SIGNED_ELTOO:
+    case WIRE_UPDATE_SIGNED:
+    case WIRE_UPDATE_SIGNED_ACK:
+    case WIRE_CHANNEL_REESTABLISH_ELTOO:
+    case WIRE_SHUTDOWN_ELTOO:
+    case WIRE_CLOSING_SIGNED_ELTOO:
+    /* Eltoo stuff ends */
 		abort();
 	}
 

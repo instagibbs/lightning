@@ -55,6 +55,18 @@ static bool unknown_type(enum peer_wire t)
 	case WIRE_ACCEPT_CHANNEL2:
     case WIRE_UPDATE_NOOP:
     case WIRE_YIELD:
+    /* Eltoo stuff */
+    case WIRE_OPEN_CHANNEL_ELTOO:
+    case WIRE_ACCEPT_CHANNEL_ELTOO:
+    case WIRE_FUNDING_CREATED_ELTOO:
+    case WIRE_FUNDING_LOCKED_ELTOO:
+    case WIRE_FUNDING_SIGNED_ELTOO:
+    case WIRE_UPDATE_SIGNED:
+    case WIRE_UPDATE_SIGNED_ACK:
+    case WIRE_CHANNEL_REESTABLISH_ELTOO:
+    case WIRE_SHUTDOWN_ELTOO:
+    case WIRE_CLOSING_SIGNED_ELTOO:
+    /* Eltoo stuff ends */
 	case WIRE_STFU:
 	case WIRE_SPLICE:
 	case WIRE_SPLICE_ACK:
@@ -118,6 +130,18 @@ bool is_msg_for_gossipd(const u8 *cursor)
 	case WIRE_PEER_STORAGE_RETRIEVAL:
     case WIRE_UPDATE_NOOP:
     case WIRE_YIELD:
+    /* Eltoo stuff */
+    case WIRE_OPEN_CHANNEL_ELTOO:
+    case WIRE_ACCEPT_CHANNEL_ELTOO:
+    case WIRE_FUNDING_CREATED_ELTOO:
+    case WIRE_FUNDING_LOCKED_ELTOO:
+    case WIRE_FUNDING_SIGNED_ELTOO:
+    case WIRE_UPDATE_SIGNED:
+    case WIRE_UPDATE_SIGNED_ACK:
+    case WIRE_CHANNEL_REESTABLISH_ELTOO:
+    case WIRE_SHUTDOWN_ELTOO:
+    case WIRE_CLOSING_SIGNED_ELTOO:
+    /* Eltoo stuff ends */
 	case WIRE_STFU:
 	case WIRE_SPLICE:
 	case WIRE_SPLICE_ACK:
@@ -399,6 +423,18 @@ bool extract_channel_id(const u8 *in_pkt, struct channel_id *channel_id)
         /* FIXME add BOLT text here */
     case WIRE_YIELD:
         /* FIXME add BOLT text here */
+    /* Eltoo stuff */
+    case WIRE_OPEN_CHANNEL_ELTOO:
+    case WIRE_ACCEPT_CHANNEL_ELTOO:
+    case WIRE_FUNDING_CREATED_ELTOO:
+    case WIRE_FUNDING_LOCKED_ELTOO:
+    case WIRE_FUNDING_SIGNED_ELTOO:
+    case WIRE_UPDATE_SIGNED:
+    case WIRE_UPDATE_SIGNED_ACK:
+    case WIRE_CHANNEL_REESTABLISH_ELTOO:
+    case WIRE_SHUTDOWN_ELTOO:
+    case WIRE_CLOSING_SIGNED_ELTOO:
+    /* Eltoo stuff ends */
 	case WIRE_STFU:
 		/* BOLT #2:
 		 * 1. type: 2 (`stfu`)

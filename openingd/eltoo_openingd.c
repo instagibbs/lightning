@@ -32,7 +32,6 @@
 #include <hsmd/hsmd_wiregen.h>
 #include <openingd/common.h>
 #include <openingd/eltoo_openingd_wiregen.h>
-#include <wire/eltoo_wiregen.h>
 #include <wire/peer_wire.h>
 #include <wire/wire_sync.h>
 
