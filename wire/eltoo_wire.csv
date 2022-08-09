@@ -55,6 +55,7 @@ msgtype,shutdown_eltoo,38
 msgdata,shutdown_eltoo,channel_id,channel_id,
 msgdata,shutdown_eltoo,len,u16,
 msgdata,shutdown_eltoo,scriptpubkey,byte,len
+msgdata,shutdown_eltoo,nonce,nonce,
 msgtype,closing_signed_eltoo,39
 msgdata,closing_signed_eltoo,channel_id,channel_id,
 msgdata,closing_signed_eltoo,fee_satoshis,u64,

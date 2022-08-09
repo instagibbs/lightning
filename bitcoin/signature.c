@@ -255,6 +255,7 @@ void bipmusig_gen_nonce(secp256k1_musig_secnonce *secnonce,
            const unsigned char *msg32)
 {
     /* MUST be unique for each signing attempt or SFYL */
+    /* FIXME Does it help at all to get 32 more bytes of randomness? */
     unsigned char session_id[32];
     int ok;
 
@@ -283,7 +284,7 @@ void bipmusig_partial_sign(const struct privkey *privkey,
 
     assert(ok);
 
-    ok = secp256k1_musig_nonce_process(secp256k1_ctx, session, &agg_pubnonce, msg32->sha.u.u8, cache, NULL);
+    ok = secp256k1_musig_nonce_process(secp256k1_ctx, session, &agg_pubnonce, msg32->sha.u.u8, cache, /* adaptor */ NULL);
 
     assert(ok);
 
