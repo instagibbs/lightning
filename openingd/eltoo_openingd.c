@@ -1053,7 +1053,7 @@ static u8 *handle_peer_in(struct eltoo_state *state)
 	struct channel_id channel_id;
 	bool extracted;
 
-	if (t == WIRE_OPEN_CHANNEL)
+	if (t == WIRE_OPEN_CHANNEL_ELTOO)
 		return fundee_channel(state, msg);
 
 	/* Handles error cases. */
