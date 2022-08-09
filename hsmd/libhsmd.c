@@ -13,6 +13,7 @@
 #include <common/lease_rates.h>
 #include <common/memleak.h>
 #include <common/status.h>
+#include <common/update_tx.h>
 #include <common/utils.h>
 #include <hsmd/libhsmd.h>
 #include <hsmd/permissions.h>
@@ -50,6 +51,7 @@ struct {
      */
     struct channel_id musig_channel;
     secp256k1_musig_secnonce sec_nonce;
+    struct nonce pub_nonce;
     secp256k1_musig_session session;
 } secretstuff;
 
@@ -1919,6 +1921,94 @@ static u8 *handle_sign_htlc_tx_mingle(struct hsmd_client *c, const u8 *msg_in)
 	return towire_hsmd_sign_htlc_tx_mingle_reply(NULL, psbt);
 }
 
+/*~ This is another lightningd-only interface; signing a update transaction.
+ *   We sign every single update transaction, so there's no danger here
+ *   aside from signing bad state.
+ */
+static u8 *handle_psign_update_tx(struct hsmd_client *c, const u8 *msg_in)
+{
+	struct pubkey remote_funding_pubkey, local_funding_pubkey;
+	struct node_id peer_id;
+	u64 dbid;
+	struct secret channel_seed;
+	struct bitcoin_tx *update_tx, *settle_tx;
+	struct partial_sig p_sig;
+	struct secrets secrets;
+	struct nonce remote_nonce;
+	struct channel_id channel_id;
+
+	/* MuSig stuff */
+	secp256k1_xonly_pubkey xo_inner_pubkey;
+	secp256k1_musig_keyagg_cache keyagg_cache;
+	const struct pubkey *pubkey_ptrs[2];
+	const secp256k1_musig_pubnonce *pubnonce_ptrs[2];
+	u8 *annex;
+	struct sha256_double hash_out;
+
+	if (!fromwire_hsmd_psign_update_tx(tmpctx, msg_in,
+					   &channel_id,
+					   &peer_id, &dbid,
+					   &update_tx,
+					   &settle_tx,
+					   &remote_funding_pubkey,
+					   &remote_nonce))
+		return hsmd_status_malformed_request(c, msg_in);
+
+	update_tx->chainparams = c->chainparams;
+	settle_tx->chainparams = c->chainparams;
+
+	/* Basic sanity checks. */
+	if (update_tx->wtx->num_inputs != 1)
+		return hsmd_status_bad_request(c, msg_in,
+					       "update tx must have 1 input");
+
+	if (update_tx->wtx->num_outputs != 1)
+		return hsmd_status_bad_request_fmt(c, msg_in,
+						   "update tx must have 1 output");
+
+	get_channel_seed(&peer_id, dbid, &channel_seed);
+	derive_basepoints(&channel_seed,
+			  &local_funding_pubkey, NULL, &secrets, NULL);
+
+	/* Now that we have both public keys, we can derive the MuSig session */
+
+	annex = make_eltoo_annex(tmpctx, settle_tx);
+	pubkey_ptrs[0] = &remote_funding_pubkey;
+	pubkey_ptrs[1] = &local_funding_pubkey;
+	bipmusig_inner_pubkey(&xo_inner_pubkey,
+			      &keyagg_cache,
+			      pubkey_ptrs,
+			      /* n_pubkeys */ 2);
+
+	bitcoin_tx_taproot_hash_for_sig(update_tx, /* input_index */ 0,
+					SIGHASH_ANYPREVOUTANYSCRIPT|SIGHASH_SINGLE,
+					/* non-NULL script signals bip342... */ annex,
+					annex, &hash_out);
+
+	pubnonce_ptrs[0] = &remote_nonce.nonce;
+	pubnonce_ptrs[1] = &secretstuff.pub_nonce.nonce;
+
+	/* FIXME assert we have secnonce already... though if we don't this call will already crash... */
+
+	bipmusig_partial_sign(&secrets.funding_privkey,
+			      &secretstuff.sec_nonce,
+			      pubnonce_ptrs,
+			      /* num_signers */ 2,
+			      &hash_out,
+			      &keyagg_cache,
+			      &secretstuff.session,
+			      &p_sig.p_sig);
+
+	/* Refill and return own next_nonce, using RNG+extra stuff for more security */
+	bipmusig_gen_nonce(&secretstuff.sec_nonce,
+			   &secretstuff.pub_nonce.nonce,
+			   &secrets.funding_privkey,
+			   &keyagg_cache,
+			   hash_out.sha.u.u8);
+
+	return towire_hsmd_psign_update_tx_reply(NULL, &p_sig, &secretstuff.pub_nonce);
+}
+
 /*~ This is another lightningd-only interface; signing a commit transaction.
  * This is dangerous, since if we sign a revoked commitment tx we'll lose
  * funds, thus it's only available to lightningd.
@@ -2395,6 +2485,7 @@ u8 *hsmd_handle_client_message(const tal_t *ctx, struct hsmd_client *client,
     case WIRE_HSMD_READY_ELTOO_CHANNEL:
         return handle_ready_eltoo_channel(client, msg);
     case WIRE_HSMD_PSIGN_UPDATE_TX:
+        return handle_psign_update_tx(client, msg);
     case WIRE_HSMD_COMBINE_PSIG:
     case WIRE_HSMD_VALIDATE_UPDATE_TX_PSIG:
     case WIRE_HSMD_GET_NONCE:

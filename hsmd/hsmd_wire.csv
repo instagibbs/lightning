@@ -553,8 +553,12 @@ msgtype,hsmd_ready_eltoo_channel_reply,181
 # to sign
 msgtype,hsmd_psign_update_tx,69
 msgdata,hsmd_psign_update_tx,channel_id,channel_id,
+msgdata,hsmd_psign_update_tx,id,node_id,
+msgdata,hsmd_psign_update_tx,dbid,u64,
 msgdata,hsmd_psign_update_tx,update_tx,bitcoin_tx,
+msgdata,hsmd_psign_update_tx,settle_tx,bitcoin_tx,
 msgdata,hsmd_psign_update_tx,remote_funding_key,pubkey,
+msgdata,hsmd_psign_update_tx,remote_nonce,nonce,
 
 msgtype,hsmd_psign_update_tx_reply,162
 msgdata,hsmd_psign_update_tx_reply,update_psig,partial_sig,
