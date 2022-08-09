@@ -475,6 +475,46 @@ static u8 *handle_lock_outpoint(struct hsmd_client *c, const u8 *msg_in)
 	return towire_hsmd_lock_outpoint_reply(NULL);
 }
 
+/* ~This stub implementation is overriden by fully validating signers
+ * that need the unchanging channel parameters. */
+static u8 *handle_ready_eltoo_channel(struct hsmd_client *c, const u8 *msg_in)
+{
+	bool is_outbound;
+	struct amount_sat channel_value;
+	struct amount_msat push_value;
+	struct bitcoin_txid funding_txid;
+	u16 funding_txout;
+	u16 shared_delay;
+	u8 *local_shutdown_script;
+	u32 *local_shutdown_wallet_index;
+	struct pubkey remote_funding_pubkey, remote_settle_pubkey;
+	u8 *remote_shutdown_script;
+	struct amount_msat value_msat;
+	struct channel_type *channel_type;
+
+	if (!fromwire_hsmd_ready_eltoo_channel(tmpctx, msg_in, &is_outbound,
+					&channel_value, &push_value, &funding_txid,
+					&funding_txout, &shared_delay,
+					&local_shutdown_script,
+					&local_shutdown_wallet_index,
+					&remote_funding_pubkey,
+					&remote_settle_pubkey,
+					&remote_shutdown_script,
+					&channel_type))
+		return hsmd_status_malformed_request(c, msg_in);
+
+	/* Stub implementation */
+
+	/* Fail fast if any values are uninitialized or obviously wrong. */
+	assert(amount_sat_greater(channel_value, AMOUNT_SAT(0)));
+	assert(amount_sat_to_msat(&value_msat, channel_value));
+	assert(amount_msat_less_eq(push_value, value_msat));
+	assert(!mem_is_zero(&funding_txid, sizeof(funding_txid)));
+	assert(shared_delay > 0);
+
+	return towire_hsmd_ready_eltoo_channel_reply(NULL);
+}
+
 /*~ For almost every wallet tx we use the BIP32 seed, but not for onchain
  * unilateral closes from a peer: they (may) have an output to us using a
  * public key based on the channel basepoints.  It's a bit spammy to spend
@@ -2357,15 +2397,11 @@ u8 *hsmd_handle_client_message(const tal_t *ctx, struct hsmd_client *client,
 		return handle_sign_htlc_tx_mingle(client, msg);
     /* Eltoo stuff here FIXME enable reacting to the messages*/
     case WIRE_HSMD_READY_ELTOO_CHANNEL:
+        return handle_ready_eltoo_channel(client, msg);
     case WIRE_HSMD_PSIGN_UPDATE_TX:
     case WIRE_HSMD_COMBINE_PSIG:
     case WIRE_HSMD_VALIDATE_UPDATE_TX_PSIG:
     case WIRE_HSMD_GET_NONCE:
-    case WIRE_HSMD_READY_ELTOO_CHANNEL_REPLY:
-    case WIRE_HSMD_PSIGN_UPDATE_TX_REPLY:
-    case WIRE_HSMD_COMBINE_PSIG_REPLY:
-    case WIRE_HSMD_VALIDATE_UPDATE_TX_PSIG_REPLY:
-    case WIRE_HSMD_GET_NONCE_REPLY:
         break;
     /* Eltoo stuff ends */
 
@@ -2410,6 +2446,11 @@ u8 *hsmd_handle_client_message(const tal_t *ctx, struct hsmd_client *client,
 	case WIRE_HSMD_SIGN_ANCHORSPEND_REPLY:
 	case WIRE_HSMD_SIGN_HTLC_TX_MINGLE_REPLY:
 	case WIRE_HSMD_SIGN_ANY_CANNOUNCEMENT_REPLY:
+	case WIRE_HSMD_READY_ELTOO_CHANNEL_REPLY:
+	case WIRE_HSMD_PSIGN_UPDATE_TX_REPLY:
+	case WIRE_HSMD_COMBINE_PSIG_REPLY:
+	case WIRE_HSMD_VALIDATE_UPDATE_TX_PSIG_REPLY:
+	case WIRE_HSMD_GET_NONCE_REPLY:
 		break;
 	}
 	return hsmd_status_bad_request(client, msg, "Unknown request");
