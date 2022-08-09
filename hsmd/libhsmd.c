@@ -184,11 +184,13 @@ bool hsmd_check_client_capabilities(struct hsmd_client *client,
     case WIRE_HSMD_PSIGN_UPDATE_TX:
     case WIRE_HSMD_COMBINE_PSIG:
     case WIRE_HSMD_VALIDATE_UPDATE_TX_PSIG:
+    case WIRE_HSMD_GET_NONCE:
 
     case WIRE_HSMD_READY_ELTOO_CHANNEL_REPLY:
     case WIRE_HSMD_PSIGN_UPDATE_TX_REPLY:
     case WIRE_HSMD_COMBINE_PSIG_REPLY:
     case WIRE_HSMD_VALIDATE_UPDATE_TX_PSIG_REPLY:
+    case WIRE_HSMD_GET_NONCE_REPLY:
         break;
     /* Eltoo stuff ends */
 
@@ -2358,10 +2360,12 @@ u8 *hsmd_handle_client_message(const tal_t *ctx, struct hsmd_client *client,
     case WIRE_HSMD_PSIGN_UPDATE_TX:
     case WIRE_HSMD_COMBINE_PSIG:
     case WIRE_HSMD_VALIDATE_UPDATE_TX_PSIG:
+    case WIRE_HSMD_GET_NONCE:
     case WIRE_HSMD_READY_ELTOO_CHANNEL_REPLY:
     case WIRE_HSMD_PSIGN_UPDATE_TX_REPLY:
     case WIRE_HSMD_COMBINE_PSIG_REPLY:
     case WIRE_HSMD_VALIDATE_UPDATE_TX_PSIG_REPLY:
+    case WIRE_HSMD_GET_NONCE_REPLY:
         break;
     /* Eltoo stuff ends */
 
