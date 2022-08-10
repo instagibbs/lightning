@@ -1044,7 +1044,7 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 	msg = wire_sync_read(tmpctx, HSM_FD);
     if (!fromwire_hsmd_combine_psig_reply(msg, &update_sig)) {
 		status_failed(STATUS_FAIL_HSM_IO,
-			      "Bad combine_psig_reply_reply %s", tal_hex(tmpctx, msg));
+			      "Bad combine_psig_reply %s", tal_hex(tmpctx, msg));
     }
 
 	/* We don't send this ourselves: channeld does, because master needs
