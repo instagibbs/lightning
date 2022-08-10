@@ -564,13 +564,11 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
 
 	/* You can tell this has been a problem before, since there's a debug
 	 * message here: */
-    /* FIXME stringify partial sigs
 	status_debug("signature %s on tx %s using key %s",
-		     type_to_string(tmpctx, struct partial_sig, sig),
+		     type_to_string(tmpctx, struct partial_sig, &our_update_psig),
 		     type_to_string(tmpctx, struct bitcoin_tx, *update_tx),
 		     type_to_string(tmpctx, struct pubkey,
 				    &state->our_funding_pubkey));
-    */
 
 	/* Now we give our peer the partial signature for the first update
 	 * transaction. */
