@@ -17,6 +17,8 @@ struct keyset {
 struct eltoo_keyset {
 	struct pubkey self_settle_key, other_settle_key;
     struct pubkey self_funding_key, other_funding_key;
+    /* MuSig2 key using funding keys as input */
+    struct pubkey inner_pubkey;
 };
 
 /* Self == owner of commitment tx, other == non-owner. */

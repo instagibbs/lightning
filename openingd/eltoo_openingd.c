@@ -60,16 +60,14 @@ struct eltoo_state {
 	u32 max_shared_delay;
 
 	/* These are the points lightningd told us to use when accepting or
-	 * opening a channel. */
+	 * opening a channel. Copied into channel.eltoo_keyset */
 	struct pubkey our_funding_pubkey;
     struct pubkey our_settlement_pubkey;
 
-	/* Information we need between funding_start and funding_complete */
+	/* Information we need between funding_start and funding_complete
+     * Copied into channel.eltoo_keyset */
 	struct pubkey their_funding_pubkey;
     struct pubkey their_settlement_pubkey;
-
-    /* Inner pubkey for lifetime of channel */
-    struct pubkey inner_pubkey;
 
 	/* Initially temporary, then final channel id. */
 	struct channel_id channel_id;
@@ -296,8 +294,6 @@ static u8 *funder_channel_start(struct eltoo_state *state, u8 channel_flags)
 	struct tlv_open_channel_eltoo_tlvs *open_tlvs;
 	struct tlv_accept_channel_eltoo_tlvs *accept_tlvs;
     char *err_reason;
-    const struct pubkey *pubkey_ptrs[2];
-    secp256k1_musig_keyagg_cache keyagg_cache;
 
 	status_debug("funder_channel_start");
 	if (!setup_channel_funder(state))
@@ -388,15 +384,6 @@ static u8 *funder_channel_start(struct eltoo_state *state, u8 channel_flags)
 				"Parsing accept_channel %s", tal_hex(msg, msg));
 	}
 	set_remote_upfront_shutdown(state, accept_tlvs->upfront_shutdown_script);
-
-    /* Both pubkeys should be initialized, generated Taproot inner pubkey */
-    pubkey_ptrs[0] = &state->our_funding_pubkey;
-    pubkey_ptrs[1] = &state->their_funding_pubkey;
-
-    bipmusig_inner_pubkey(&state->inner_pubkey,
-           &keyagg_cache,
-           pubkey_ptrs,
-           2 /* n_pubkeys */);
 
 	/* BOLT #2:
 	 * - if `channel_type` is set, and `channel_type` was set in
@@ -650,7 +637,7 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
                             &their_update_psig,
                             *update_tx,
                             settle_tx,
-                            &state->inner_pubkey);
+                            &state->channel->eltoo_keyset.inner_pubkey);
     wire_sync_write(HSM_FD, take(msg));
     msg = wire_sync_read(tmpctx, HSM_FD);
     if (!fromwire_hsmd_combine_psig_reply(msg, update_sig)) {
@@ -724,8 +711,6 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 	struct tlv_open_channel_eltoo_tlvs *open_tlvs;
 	struct wally_tx_output *direct_outputs[NUM_SIDES];
     struct partial_sig our_update_psig, their_update_psig;
-    const struct pubkey *pubkey_ptrs[2];
-    secp256k1_musig_keyagg_cache keyagg_cache;
 
 	/* BOLT #2:
 	 *
@@ -881,16 +866,6 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 	peer_billboard(false,
 		       "Incoming channel: accepted, now waiting for them to create funding tx");
 
-    /* Make Taproot inner key now that we have both keys in state */
-    pubkey_ptrs[0] = &state->our_funding_pubkey;
-    pubkey_ptrs[1] = &state->their_funding_pubkey;
-
-    bipmusig_inner_pubkey(&state->inner_pubkey,
-           &keyagg_cache,
-           pubkey_ptrs,
-           2 /* n_pubkeys */);
-
-
 	/* This is a loop which handles gossip until we get a non-gossip msg */
 	msg = opening_negotiate_msg(tmpctx, state, NULL);
 	if (!msg)
@@ -1035,7 +1010,7 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
                             &their_update_psig,
                             update_tx,
                             settle_tx,
-                            &state->inner_pubkey);
+                            &state->channel->eltoo_keyset.inner_pubkey);
 	wire_sync_write(HSM_FD, take(msg));
 	msg = wire_sync_read(tmpctx, HSM_FD);
     if (!fromwire_hsmd_combine_psig_reply(msg, &update_sig)) {

@@ -29,6 +29,8 @@ struct eltoo_channel *new_initial_eltoo_channel(const tal_t *ctx,
 {
 	struct eltoo_channel *channel = tal(ctx, struct eltoo_channel);
 	struct amount_msat remote_msatoshi;
+    const struct pubkey *pubkey_ptrs[2];
+    secp256k1_musig_keyagg_cache keyagg_cache;
 
 	channel->cid = *cid;
 	channel->funding = *funding;
@@ -46,6 +48,13 @@ struct eltoo_channel *new_initial_eltoo_channel(const tal_t *ctx,
 	channel->eltoo_keyset.self_settle_key = *local_settle_pubkey;
 	channel->eltoo_keyset.other_settle_key = *remote_settle_pubkey;
 	channel->htlcs = NULL;
+
+    pubkey_ptrs[0] = local_funding_pubkey;
+    pubkey_ptrs[1] = remote_funding_pubkey;
+    bipmusig_inner_pubkey(&channel->eltoo_keyset.inner_pubkey,
+           &keyagg_cache,
+           pubkey_ptrs,
+           2 /* n_pubkeys */);
 
 	channel->view[LOCAL].owed[LOCAL]
 		= channel->view[REMOTE].owed[LOCAL]
@@ -82,7 +91,6 @@ struct bitcoin_tx *initial_settle_channel_tx(const tal_t *ctx,
                     channel->config->dust_limit,
                     channel->view->owed[LOCAL],
                     channel->view->owed[REMOTE],
-                    channel->config->channel_reserve,
                     0 ^ channel->update_number_obscurer,
                     direct_outputs,
                     err_reason);
@@ -106,8 +114,8 @@ struct bitcoin_tx *initial_update_channel_tx(const tal_t *ctx,
     /* This should be gathered from settle_tx PSBT when stored there,
      * it's generated in initial_settlement_tx. This is unused otherwise.
      */
-    secp256k1_xonly_pubkey dummy_inner_pubkey;
-    memset(dummy_inner_pubkey.data, 0, sizeof(dummy_inner_pubkey.data));
+    struct pubkey dummy_inner_pubkey;
+    memset(dummy_inner_pubkey.pubkey.data, 0, sizeof(dummy_inner_pubkey.pubkey.data));
 
 	/* This assumes no HTLCs! */
 	assert(!channel->htlcs);
