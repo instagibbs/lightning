@@ -537,8 +537,6 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
 	 * tapscripts. */
 	msg = towire_hsmd_psign_update_tx(NULL,
                            &state->channel_id,
-                           NULL, // FIXME &state->channel->peer->id,
-                           0, // FIXME &state->channel->dbid,
 						   *update_tx,
                            settle_tx,
 						   &state->their_funding_pubkey,
@@ -999,8 +997,6 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 	/* Make HSM sign it */
 	msg = towire_hsmd_psign_update_tx(NULL,
                            &state->channel_id,
-                           NULL, // FIXME &state->channel->peer->id,
-                           0, // FIXME &state->channel->dbid,
 						   update_tx,
                            settle_tx,
 						   &state->their_funding_pubkey,

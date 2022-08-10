@@ -1997,8 +1997,6 @@ static u8 *handle_combine_psig(struct hsmd_client *c, const u8 *msg_in)
 static u8 *handle_psign_update_tx(struct hsmd_client *c, const u8 *msg_in)
 {
 	struct pubkey remote_funding_pubkey, local_funding_pubkey;
-	struct node_id peer_id;
-	u64 dbid;
 	struct secret channel_seed;
 	struct bitcoin_tx *update_tx, *settle_tx;
 	struct partial_sig p_sig;
@@ -2016,7 +2014,6 @@ static u8 *handle_psign_update_tx(struct hsmd_client *c, const u8 *msg_in)
 
 	if (!fromwire_hsmd_psign_update_tx(tmpctx, msg_in,
 					   &channel_id,
-					   &peer_id, &dbid,
 					   &update_tx,
 					   &settle_tx,
 					   &remote_funding_pubkey,
@@ -2035,7 +2032,7 @@ static u8 *handle_psign_update_tx(struct hsmd_client *c, const u8 *msg_in)
 		return hsmd_status_bad_request_fmt(c, msg_in,
 						   "update tx must have 1 output");
 
-	get_channel_seed(&peer_id, dbid, &channel_seed);
+	get_channel_seed(&c->id, c->dbid, &channel_seed);
 	derive_basepoints(&channel_seed,
 			  &local_funding_pubkey, NULL, &secrets, NULL);
 
