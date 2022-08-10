@@ -184,7 +184,7 @@ bool hsmd_check_client_capabilities(struct hsmd_client *client,
     case WIRE_HSMD_PSIGN_UPDATE_TX:
     case WIRE_HSMD_COMBINE_PSIG:
     case WIRE_HSMD_VALIDATE_UPDATE_TX_PSIG:
-    case WIRE_HSMD_GET_NONCE:
+    case WIRE_HSMD_GEN_NONCE:
 		return (client->capabilities & HSM_PERM_MASTER) != 0;
 
 	/*~ These are messages sent by the HSM so we should never receive them. */
@@ -234,7 +234,7 @@ bool hsmd_check_client_capabilities(struct hsmd_client *client,
 	case WIRE_HSMD_PSIGN_UPDATE_TX_REPLY:
 	case WIRE_HSMD_COMBINE_PSIG_REPLY:
 	case WIRE_HSMD_VALIDATE_UPDATE_TX_PSIG_REPLY:
-	case WIRE_HSMD_GET_NONCE_REPLY:
+	case WIRE_HSMD_GEN_NONCE_REPLY:
 		break;
 	}
 	return false;
@@ -1142,6 +1142,32 @@ static u8 *handle_get_channel_basepoints(struct hsmd_client *c,
 
 	return towire_hsmd_get_channel_basepoints_reply(NULL, &basepoints,
 							&funding_pubkey);
+}
+
+static u8 *handle_gen_nonce(struct hsmd_client *c,
+					 const u8 *msg_in)
+{
+    struct channel_id channel_id;
+    struct nonce nonce;
+	struct secret channel_seed;
+	struct secrets secrets;
+
+	if (!fromwire_hsmd_gen_nonce(msg_in, &channel_id))
+		return hsmd_status_malformed_request(c, msg_in);
+
+    /* Generate privkey for additional nonce entropy */
+	get_channel_seed(&c->id, c->dbid, &channel_seed);
+	derive_basepoints(&channel_seed,
+			  NULL, NULL, &secrets, NULL);
+
+    /* Fill and return own next_nonce FIXME add in more entropy */
+    bipmusig_gen_nonce(&secretstuff.sec_nonce,
+           &secretstuff.pub_nonce.nonce,
+           &secrets.funding_privkey,
+           NULL /* keyagg_cache */,
+           NULL /* msg32 */);
+
+	return towire_hsmd_gen_nonce_reply(NULL, &nonce);
 }
 
 /*~ The client has asked us to extract the shared secret from an EC Diffie
@@ -2532,10 +2558,12 @@ u8 *hsmd_handle_client_message(const tal_t *ctx, struct hsmd_client *client,
     case WIRE_HSMD_COMBINE_PSIG:
         return handle_combine_psig(client, msg);
     case WIRE_HSMD_VALIDATE_UPDATE_TX_PSIG:
-    case WIRE_HSMD_GET_NONCE:
+        /* We immediately sign ourselves and check via handle_combine_psig...
+           Unneeded? */
         break;
+    case WIRE_HSMD_GEN_NONCE:
+        return handle_gen_nonce(client, msg);
     /* Eltoo stuff ends */
-
 	case WIRE_HSMD_DEV_MEMLEAK:
 	case WIRE_HSMD_ECDH_RESP:
 	case WIRE_HSMD_DERIVE_SECRET_REPLY:
@@ -2581,7 +2609,7 @@ u8 *hsmd_handle_client_message(const tal_t *ctx, struct hsmd_client *client,
 	case WIRE_HSMD_PSIGN_UPDATE_TX_REPLY:
 	case WIRE_HSMD_COMBINE_PSIG_REPLY:
 	case WIRE_HSMD_VALIDATE_UPDATE_TX_PSIG_REPLY:
-	case WIRE_HSMD_GET_NONCE_REPLY:
+	case WIRE_HSMD_GEN_NONCE_REPLY:
 		break;
 	}
 	return hsmd_status_bad_request(client, msg, "Unknown request");

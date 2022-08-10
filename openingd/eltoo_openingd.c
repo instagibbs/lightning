@@ -324,11 +324,11 @@ static u8 *funder_channel_start(struct eltoo_state *state, u8 channel_flags)
 	open_tlvs->channel_type = state->channel_type->features;
 
     /* Fetch MuSig nonce */
-    msg = towire_hsmd_get_nonce(NULL, &state->channel_id);
+    msg = towire_hsmd_gen_nonce(NULL, &state->channel_id);
 	peer_write(state->pps, take(msg));
 
 	msg = wire_sync_read(tmpctx, HSM_FD);
-    if (!fromwire_hsmd_get_nonce_reply(msg, &state->our_next_nonce)) {
+    if (!fromwire_hsmd_gen_nonce_reply(msg, &state->our_next_nonce)) {
 		peer_failed_err(state->pps,
 				&state->channel_id,
 				"Failed to get nonce for channel: %s", tal_hex(msg, msg));
@@ -847,9 +847,17 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 	 */
 	accept_tlvs->channel_type = state->channel_type->features;
 
-    /* FIXME Fetch our first public nonce */
+    /* Fetch MuSig nonce for channel since we have none yet */
+    msg = towire_hsmd_gen_nonce(NULL, &state->channel_id);
+	peer_write(state->pps, take(msg));
 
-    /* FIXME we can't actually know channel_id ??? */
+	msg = wire_sync_read(tmpctx, HSM_FD);
+    if (!fromwire_hsmd_gen_nonce_reply(msg, &state->our_next_nonce)) {
+		peer_failed_err(state->pps,
+				&state->channel_id,
+				"Failed to get nonce for channel: %s", tal_hex(msg, msg));
+    }
+
 	msg = towire_accept_channel_eltoo(NULL, &state->channel_id,
 				    state->localconf.dust_limit,
 				    state->localconf.max_htlc_value_in_flight,

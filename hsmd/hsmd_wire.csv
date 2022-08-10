@@ -586,8 +586,8 @@ msgdata,hsmd_combine_psig_reply,sig,bip340sig,
 
 # Get musig public nonce for channel... FIXME channel_id completely
 # ignored for now until storage model is figured
-msgtype,hsmd_get_nonce,96
-msgdata,hsmd_get_nonce,channel_id,channel_id,
+msgtype,hsmd_gen_nonce,96
+msgdata,hsmd_gen_nonce,channel_id,channel_id,
 
-msgtype,hsmd_get_nonce_reply,196
-msgdata,hsmd_get_nonce_reply,pubnonce,nonce,
+msgtype,hsmd_gen_nonce_reply,196
+msgdata,hsmd_gen_nonce_reply,pubnonce,nonce,
