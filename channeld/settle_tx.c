@@ -115,6 +115,7 @@ struct bitcoin_tx *settle_tx(const tal_t *ctx,
 		*dummy_to_remote = (struct htlc *)0x02;
     struct pubkey inner_pubkey;
     const struct pubkey *pubkey_ptrs[2];
+    secp256k1_musig_keyagg_cache keyagg_cache;
     /* For non-initial settlement tx, we cannot safely
      * predict prevout, we will rebind this last second,
      * so just put something in to satisfy PSBT et al
@@ -129,7 +130,7 @@ struct bitcoin_tx *settle_tx(const tal_t *ctx,
 
     /* Channel-wide inner public key computed here */
     bipmusig_inner_pubkey(&inner_pubkey,
-           /* keyagg_cache */ NULL,
+           &keyagg_cache,
            pubkey_ptrs,
            /* n_pubkeys */ 2);
 

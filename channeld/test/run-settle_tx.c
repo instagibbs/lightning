@@ -811,7 +811,7 @@ static int test_htlc_output_creation(void)
 
     /* Calculate inner pubkey */
     bipmusig_inner_pubkey(&inner_pubkey,
-           /* keyagg_cache */ NULL,
+           &keyagg_cache,
            pubkey_ptrs,
            /* n_pubkeys */ 1);
 

@@ -135,6 +135,7 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
 	const void *output_order[NUM_SIDES + 1];
     const struct pubkey *pubkey_ptrs[2];
     struct pubkey inner_pubkey;
+    secp256k1_musig_keyagg_cache keyagg_cache;
 
    /* For MuSig aggregation for outputs */
     pubkey_ptrs[0] = &(eltoo_keyset->self_funding_key);
@@ -142,7 +143,7 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
 
     /* Channel-wide inner public key computed here */
     bipmusig_inner_pubkey(&inner_pubkey,
-           /* keyagg_cache */ NULL,
+           &keyagg_cache,
            pubkey_ptrs,
            /* n_pubkeys */ 2);
 
