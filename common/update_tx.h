@@ -19,7 +19,7 @@ u8 *make_eltoo_annex(const tal_t *ctx, const struct bitcoin_tx *settle_tx);
  * binding it to a particular outpoint or script */
 void tx_add_unbound_input(struct bitcoin_tx *update_tx,
                     struct amount_sat funding_sats,
-                    const secp256k1_xonly_pubkey *inner_pubkey);
+                    const struct pubkey *inner_pubkey);
 
 /* Used to bind the update transaction to the funding outpoint
  * of the eltoo contract. This is the expected (non-malicious)
@@ -35,7 +35,7 @@ void bind_update_tx_to_funding_outpoint(struct bitcoin_tx *update_tx,
                     const struct bitcoin_tx *settle_tx,
                     const struct bitcoin_outpoint *funding_outpoint,
                     const struct eltoo_keyset *eltoo_keyset,
-                    secp256k1_xonly_pubkey *psbt_inner_pubkey,
+                    const struct pubkey *psbt_inner_pubkey,
                     u8 *final_sig);
 
 /* Used to bind the update transaction to the non-funding outpoints
@@ -59,7 +59,7 @@ void bind_update_tx_to_update_outpoint(struct bitcoin_tx *update_tx,
                     const struct eltoo_keyset *eltoo_keyset,
                     const u8 *invalidated_annex_hint,
                     u32 invalidated_update_number,
-                    secp256k1_xonly_pubkey *psbt_inner_pubkey,
+                    struct pubkey *psbt_inner_pubkey,
                     u8 *final_sig);
 
 /**
@@ -75,7 +75,7 @@ void bind_update_tx_to_update_outpoint(struct bitcoin_tx *update_tx,
 struct bitcoin_tx *unbound_update_tx(const tal_t *ctx,
                      const struct bitcoin_tx *settle_tx,
 				     struct amount_sat funding_sats,
-                     const secp256k1_xonly_pubkey *inner_pubkey,
+                     const struct pubkey *inner_pubkey,
 				     char** err_reason);
 
 

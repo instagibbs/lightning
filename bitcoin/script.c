@@ -1124,11 +1124,20 @@ void compute_taptree_merkle_root_with_hint(struct sha256 *update_merkle_root, co
     assert(ok == WALLY_OK);
 }
 
-u8 *compute_control_block(const tal_t *ctx, const u8 *other_script, const u8 *annex_hint, const secp256k1_xonly_pubkey *inner_pubkey, int parity_bit)
+u8 *compute_control_block(const tal_t *ctx, const u8 *other_script, const u8 *annex_hint, const struct pubkey *inner_pubkey, int parity_bit)
 {
     int ok;
     u8 *control_block_cursor;
     u8 *control_block = tal_arr(ctx, u8, (other_script || annex_hint) ? 33 + 32 : 33);
+    secp256k1_xonly_pubkey xonly_inner_pubkey;
+
+    ok = secp256k1_xonly_pubkey_from_pubkey(
+        secp256k1_ctx,
+        &xonly_inner_pubkey,
+        NULL /* pk_parity (this is parity bit from inner key, do not want */,
+        &inner_pubkey->pubkey);
+
+    assert(ok);
 
     /* other_script and annex_hint are mutually exclusive args */
     assert(!(other_script && annex_hint));
@@ -1147,7 +1156,7 @@ u8 *compute_control_block(const tal_t *ctx, const u8 *other_script, const u8 *an
     ok = secp256k1_xonly_pubkey_serialize(
         secp256k1_ctx,
         control_block_cursor,
-        inner_pubkey);
+        &xonly_inner_pubkey);
     assert(ok);
     control_block_cursor += 32;
 

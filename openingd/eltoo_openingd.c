@@ -68,6 +68,9 @@ struct eltoo_state {
 	struct pubkey their_funding_pubkey;
     struct pubkey their_settlement_pubkey;
 
+    /* Inner pubkey for lifetime of channel */
+    struct pubkey inner_pubkey;
+
 	/* Initially temporary, then final channel id. */
 	struct channel_id channel_id;
 
@@ -293,6 +296,8 @@ static u8 *funder_channel_start(struct eltoo_state *state, u8 channel_flags)
 	struct tlv_open_channel_eltoo_tlvs *open_tlvs;
 	struct tlv_accept_channel_eltoo_tlvs *accept_tlvs;
     char *err_reason;
+    const struct pubkey *pubkey_ptrs[2];
+    secp256k1_musig_keyagg_cache keyagg_cache;
 
 	status_debug("funder_channel_start");
 	if (!setup_channel_funder(state))
@@ -383,6 +388,15 @@ static u8 *funder_channel_start(struct eltoo_state *state, u8 channel_flags)
 				"Parsing accept_channel %s", tal_hex(msg, msg));
 	}
 	set_remote_upfront_shutdown(state, accept_tlvs->upfront_shutdown_script);
+
+    /* Both pubkeys should be initialized, generated Taproot inner pubkey */
+    pubkey_ptrs[0] = &state->our_funding_pubkey;
+    pubkey_ptrs[1] = &state->their_funding_pubkey;
+
+    bipmusig_inner_pubkey(&state->inner_pubkey,
+           &keyagg_cache,
+           pubkey_ptrs,
+           2 /* n_pubkeys */);
 
 	/* BOLT #2:
 	 * - if `channel_type` is set, and `channel_type` was set in
@@ -586,7 +600,6 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
 	if (!msg)
 		return false;
 
-	// FIXME ? sig->sighash_type = SIGHASH_ALL;
 	if (!fromwire_funding_signed_eltoo(msg, &id_in, &their_update_psig, &state->their_next_nonce))
 		peer_failed_err(state->pps, &state->channel_id,
 				"Parsing funding_signed_eltoo: %s", tal_hex(msg, msg));
@@ -631,16 +644,15 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
 	/* So we create the initial update transaction, and check the
 	 * signature they sent against that. */
 
-    /* VLS type checks can go here... */
-	// validate_initial_update_signature(HSM_FD, *update_tx, &their_update_psig, &our_update_psig);
-
     /* Combine psigs and validate here */
     /* Now that it's signed by both sides, we check if it's valid signature, get full sig back */
     msg = towire_hsmd_combine_psig(NULL,
                             &state->channel_id,
                             &our_update_psig,
                             &their_update_psig,
-                            *update_tx);
+                            *update_tx,
+                            settle_tx,
+                            &state->inner_pubkey);
     wire_sync_write(HSM_FD, take(msg));
     msg = wire_sync_read(tmpctx, HSM_FD);
     if (!fromwire_hsmd_combine_psig_reply(msg, update_sig)) {
@@ -704,8 +716,6 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 {
 	struct channel_id id_in;
     /* FIXME Can't these just be read into eltoo_keyset? */
-	struct pubkey their_funding_pubkey;
-    struct pubkey their_settlement_pubkey;
 	struct bip340sig update_sig;
 	struct bitcoin_tx *settle_tx, *update_tx;
 	struct bitcoin_blkid chain_hash;
@@ -717,6 +727,8 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 	struct tlv_open_channel_eltoo_tlvs *open_tlvs;
 	struct wally_tx_output *direct_outputs[NUM_SIDES];
     struct partial_sig our_update_psig, their_update_psig;
+    const struct pubkey *pubkey_ptrs[2];
+    secp256k1_musig_keyagg_cache keyagg_cache;
 
 	/* BOLT #2:
 	 *
@@ -735,8 +747,8 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 			    &state->remoteconf.htlc_minimum,
 			    &state->remoteconf.shared_delay,
 			    &state->remoteconf.max_accepted_htlcs,
-			    &their_funding_pubkey,
-			    &their_settlement_pubkey,
+			    &state->their_funding_pubkey,
+			    &state->their_settlement_pubkey,
 			    &channel_flags,
                 &state->their_next_nonce,
 			    &open_tlvs))
@@ -872,6 +884,16 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 	peer_billboard(false,
 		       "Incoming channel: accepted, now waiting for them to create funding tx");
 
+    /* Make Taproot inner key now that we have both keys in state */
+    pubkey_ptrs[0] = &state->our_funding_pubkey;
+    pubkey_ptrs[1] = &state->their_funding_pubkey;
+
+    bipmusig_inner_pubkey(&state->inner_pubkey,
+           &keyagg_cache,
+           pubkey_ptrs,
+           2 /* n_pubkeys */);
+
+
 	/* This is a loop which handles gossip until we get a non-gossip msg */
 	msg = opening_negotiate_msg(tmpctx, state, NULL);
 	if (!msg)
@@ -912,8 +934,8 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 				       state->localconf.shared_delay,
 				       state->upfront_shutdown_script[LOCAL],
 				       state->local_upfront_shutdown_wallet_index,
-				       &their_funding_pubkey,
-                       &their_settlement_pubkey,
+				       &state->their_funding_pubkey,
+                       &state->their_settlement_pubkey,
 				       state->upfront_shutdown_script[REMOTE],
 				       state->channel_type);
 	wire_sync_write(HSM_FD, take(msg));
@@ -932,9 +954,9 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 					     &state->localconf,
 					     &state->remoteconf,
 					     &state->our_funding_pubkey,
-					     &their_funding_pubkey,
+					     &state->their_funding_pubkey,
 					     &state->our_settlement_pubkey,
-					     &their_settlement_pubkey,
+					     &state->their_settlement_pubkey,
 					     state->channel_type,
 					     feature_offered(state->their_features,
 							     OPT_LARGE_CHANNELS),
@@ -1015,7 +1037,9 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
                             &state->channel_id,
                             &our_update_psig,
                             &their_update_psig,
-                            update_tx);
+                            update_tx,
+                            settle_tx,
+                            &state->inner_pubkey);
 	wire_sync_write(HSM_FD, take(msg));
 	msg = wire_sync_read(tmpctx, HSM_FD);
     if (!fromwire_hsmd_combine_psig_reply(msg, &update_sig)) {
@@ -1032,7 +1056,7 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 				     &state->remoteconf,
 				     update_tx,
 				     &update_sig,
-				     &their_funding_pubkey,
+				     &state->their_funding_pubkey,
 				     &state->funding,
 				     state->funding_sats,
 				     state->push_msat,

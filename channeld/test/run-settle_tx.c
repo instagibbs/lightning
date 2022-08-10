@@ -97,7 +97,7 @@ static struct secret secret_from_hex(const char *hex)
 	return s;
 }
 
-static u8 *musig_sign(struct bitcoin_tx *update_tx, u8 *annex, struct privkey *alice_privkey, struct privkey *bob_privkey, secp256k1_xonly_pubkey *xo_inner_pubkey, secp256k1_musig_keyagg_cache *keyagg_cache)
+static u8 *musig_sign(struct bitcoin_tx *update_tx, u8 *annex, struct privkey *alice_privkey, struct privkey *bob_privkey, struct pubkey *inner_pubkey, secp256k1_musig_keyagg_cache *keyagg_cache)
 {
     u8 *final_sig;
     const secp256k1_musig_pubnonce *pubnonce_ptrs[2];
@@ -139,7 +139,7 @@ static u8 *musig_sign(struct bitcoin_tx *update_tx, u8 *annex, struct privkey *a
     for (i=0; i<2; ++i){
         ok = bipmusig_partial_sigs_combine_verify(p_sig_ptrs,
                2,
-               xo_inner_pubkey,
+               inner_pubkey,
                &session[i],
                &msg_out,
                &sig);
@@ -510,11 +510,11 @@ static int test_invalid_update_tx(void)
 
     /* Aggregation stuff */
     secp256k1_musig_keyagg_cache keyagg_cache[2];
+    struct pubkey inner_pubkey;
     const struct pubkey *pubkey_ptrs[2];
     int i;
 
     /* MuSig signing stuff */
-    secp256k1_xonly_pubkey xo_inner_pubkey;
     u8 *annex_0, *annex_1;
     u8 *final_sig;
 
@@ -572,7 +572,7 @@ static int test_invalid_update_tx(void)
 
     /* Calculate inner pubkey, caches reused at end for tapscript signing */
     for (i=0; i<2; ++i) {
-        bipmusig_inner_pubkey(&xo_inner_pubkey,
+        bipmusig_inner_pubkey(&inner_pubkey,
                &keyagg_cache[i],
                pubkey_ptrs,
                /* n_pubkeys */ 2);
@@ -582,19 +582,19 @@ static int test_invalid_update_tx(void)
     update_tx = unbound_update_tx(tmpctx,
                      tx,
                      update_output_sats,
-                     &xo_inner_pubkey,
+                     &inner_pubkey,
                      &err_reason);
 
     /* Signing happens next */
     annex_0 = make_eltoo_annex(tmpctx, tx);
-    final_sig = musig_sign(update_tx, annex_0, &alice_funding_privkey, &bob_funding_privkey, &xo_inner_pubkey, keyagg_cache);
+    final_sig = musig_sign(update_tx, annex_0, &alice_funding_privkey, &bob_funding_privkey, &inner_pubkey, keyagg_cache);
 
     /* Re-bind, add final script/tapscript info into PSBT */
     bind_update_tx_to_funding_outpoint(update_tx,
                     tx,
                     &update_output,
                     &eltoo_keyset,
-                    &xo_inner_pubkey,
+                    &inner_pubkey,
                     final_sig);
 
     psbt_b64 = psbt_to_b64(tmpctx, update_tx->psbt);
@@ -627,19 +627,19 @@ static int test_invalid_update_tx(void)
     update_tx_1_A = unbound_update_tx(tmpctx,
                      settle_tx_1,
                      update_output_sats,
-                     &xo_inner_pubkey,
+                     &inner_pubkey,
                      &err_reason);
 
     /* Authorize this next state update */
     annex_1 = make_eltoo_annex(tmpctx, settle_tx_1);
-    final_sig = musig_sign(update_tx_1_A, annex_1, &alice_funding_privkey, &bob_funding_privkey, &xo_inner_pubkey, keyagg_cache);
+    final_sig = musig_sign(update_tx_1_A, annex_1, &alice_funding_privkey, &bob_funding_privkey, &inner_pubkey, keyagg_cache);
 
     /* This can RBF the first update tx */
     bind_update_tx_to_funding_outpoint(update_tx_1_A,
                     settle_tx_1,
                     &update_output,
                     &eltoo_keyset,
-                    &xo_inner_pubkey,
+                    &inner_pubkey,
                     final_sig);
 
     psbt_b64 = psbt_to_b64(tmpctx, update_tx_1_A->psbt);
@@ -652,7 +652,7 @@ static int test_invalid_update_tx(void)
                     &eltoo_keyset,
                     annex_0, /* annex you see on chain */
                     obscured_update_number - 1, /* locktime you see on old update tx */
-                    &xo_inner_pubkey,
+                    &inner_pubkey,
                     final_sig);
 
     psbt_b64 = psbt_to_b64(tmpctx, update_tx_1_A->psbt);
@@ -685,7 +685,7 @@ static int test_initial_settlement_tx(void)
     int i;
 
     /* MuSig signing stuff */
-    secp256k1_xonly_pubkey xo_inner_pubkey;
+    struct pubkey inner_pubkey;
     u8 *annex;
     u8 *final_sig;
 
@@ -743,7 +743,7 @@ static int test_initial_settlement_tx(void)
 
     /* Calculate inner pubkey, caches reused at end for tapscript signing */
     for (i=0; i<2; ++i) {
-        bipmusig_inner_pubkey(&xo_inner_pubkey,
+        bipmusig_inner_pubkey(&inner_pubkey,
                &keyagg_cache[i],
                pubkey_ptrs,
                /* n_pubkeys */ 2);
@@ -753,7 +753,7 @@ static int test_initial_settlement_tx(void)
     update_tx = unbound_update_tx(tmpctx,
                      tx,
                      update_output_sats,
-                     &xo_inner_pubkey,
+                     &inner_pubkey,
                      &err_reason);
 
     psbt_b64 = psbt_to_b64(tmpctx, update_tx->psbt);
@@ -761,7 +761,7 @@ static int test_initial_settlement_tx(void)
 
     /* Signing happens next */
     annex = make_eltoo_annex(tmpctx, tx);
-    final_sig = musig_sign(update_tx, annex, &alice_funding_privkey, &bob_funding_privkey, &xo_inner_pubkey, keyagg_cache);
+    final_sig = musig_sign(update_tx, annex, &alice_funding_privkey, &bob_funding_privkey, &inner_pubkey, keyagg_cache);
 
     /* We want to close the channel without cooperation... time to rebind and finalize */
 
@@ -770,7 +770,7 @@ static int test_initial_settlement_tx(void)
                     tx,
                     &update_output,
                     &eltoo_keyset,
-                    &xo_inner_pubkey,
+                    &inner_pubkey,
                     final_sig);
 
     psbt_b64 = psbt_to_b64(tmpctx, update_tx->psbt);
@@ -791,7 +791,8 @@ static int test_htlc_output_creation(void)
     /* 0-value hash image */
     unsigned char *invoice_hash = tal_arr(tmpctx, u8, 20);
     struct sha256 tap_merkle_root;
-    secp256k1_xonly_pubkey inner_pubkey;
+    struct pubkey inner_pubkey;
+    secp256k1_xonly_pubkey xonly_inner_pubkey;
     unsigned char inner_pubkey_bytes[32];
     secp256k1_musig_keyagg_cache keyagg_cache;
     unsigned char tap_tweak_out[32];
@@ -814,7 +815,12 @@ static int test_htlc_output_creation(void)
            pubkey_ptrs,
            /* n_pubkeys */ 1);
 
-    ok = secp256k1_xonly_pubkey_serialize(secp256k1_ctx, inner_pubkey_bytes, &inner_pubkey);
+    ok = secp256k1_xonly_pubkey_from_pubkey(secp256k1_ctx,
+        &xonly_inner_pubkey,
+        NULL /* pk_parity */,
+        &inner_pubkey.pubkey);
+
+    ok = secp256k1_xonly_pubkey_serialize(secp256k1_ctx, inner_pubkey_bytes, &xonly_inner_pubkey);
     assert(ok);
 
     htlc_success_script = make_eltoo_htlc_success_script(tmpctx, &settlement_pubkey, invoice_hash);

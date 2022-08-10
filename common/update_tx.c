@@ -51,7 +51,7 @@ u8 *make_eltoo_annex(const tal_t *ctx, const struct bitcoin_tx *settle_tx)
     return annex;
 }
 
-void tx_add_unbound_input(struct bitcoin_tx *update_tx, struct amount_sat funding_sats, const secp256k1_xonly_pubkey *inner_pubkey)
+void tx_add_unbound_input(struct bitcoin_tx *update_tx, struct amount_sat funding_sats, const struct pubkey *inner_pubkey)
 {
     int input_num;
 
@@ -66,7 +66,7 @@ void bind_update_tx_to_funding_outpoint(struct bitcoin_tx *update_tx,
                     const struct bitcoin_tx *settle_tx,
                     const struct bitcoin_outpoint *funding_outpoint,
                     const struct eltoo_keyset *eltoo_keyset,
-                    secp256k1_xonly_pubkey *psbt_inner_pubkey,
+                    const struct pubkey *psbt_inner_pubkey,
                     u8 *final_sig)
 {
     const struct pubkey *pubkey_ptrs[2];
@@ -126,7 +126,7 @@ void bind_update_tx_to_update_outpoint(struct bitcoin_tx *update_tx,
                     const struct eltoo_keyset *eltoo_keyset,
                     const u8 *invalidated_annex_hint,
                     u32 invalidated_update_number,
-                    secp256k1_xonly_pubkey *psbt_inner_pubkey,
+                    struct pubkey *psbt_inner_pubkey,
                     u8 *final_sig)
 {
     const struct pubkey *pubkey_ptrs[2];
@@ -188,7 +188,7 @@ void bind_update_tx_to_update_outpoint(struct bitcoin_tx *update_tx,
 struct bitcoin_tx *unbound_update_tx(const tal_t *ctx,
                      const struct bitcoin_tx *settle_tx,
                      struct amount_sat funding_sats,
-                     const secp256k1_xonly_pubkey *inner_pubkey,
+                     const struct pubkey *inner_pubkey,
 				     char** err_reason)
 {
 	struct bitcoin_tx *update_tx;

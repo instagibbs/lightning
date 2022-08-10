@@ -1921,6 +1921,49 @@ static u8 *handle_sign_htlc_tx_mingle(struct hsmd_client *c, const u8 *msg_in)
 	return towire_hsmd_sign_htlc_tx_mingle_reply(NULL, psbt);
 }
 
+static u8 *handle_combine_psig(struct hsmd_client *c, const u8 *msg_in)
+{
+	struct channel_id channel_id;
+	struct bitcoin_tx *update_tx, *settle_tx;
+	struct partial_sig p_sig_1, p_sig_2;
+	struct sha256_double hash_out;
+	u8 *annex;
+	struct bip340sig sig;
+	struct pubkey inner_pubkey;
+	const secp256k1_musig_partial_sig *p_sig_ptrs[2];
+
+	if (!fromwire_hsmd_combine_psig(tmpctx, msg_in,
+					&channel_id,
+					&p_sig_1,
+					&p_sig_2,
+					&update_tx,
+					&settle_tx,
+					&inner_pubkey)) {
+		return hsmd_status_malformed_request(c, msg_in);
+	}
+
+	p_sig_ptrs[0] = &p_sig_1.p_sig;
+	p_sig_ptrs[1] = &p_sig_2.p_sig;
+
+	annex = make_eltoo_annex(tmpctx, settle_tx);
+	bitcoin_tx_taproot_hash_for_sig(update_tx, /* input_index */ 0,
+					SIGHASH_ANYPREVOUTANYSCRIPT|SIGHASH_SINGLE,
+					/* non-NULL script signals bip342... */ annex,
+					annex, &hash_out);
+
+	if (!bipmusig_partial_sigs_combine_verify(p_sig_ptrs,
+						  /* num_signers */ 2,
+						  &inner_pubkey,
+						  &secretstuff.session,
+						  &hash_out,
+						  &sig)) {
+		/* FIXME better complaint from hsmd */
+		return hsmd_status_malformed_request(c, msg_in);
+	}
+
+	return towire_hsmd_combine_psig_reply(NULL, &sig);
+}
+
 /*~ This is another lightningd-only interface; signing a update transaction.
  *   We sign every single update transaction, so there's no danger here
  *   aside from signing bad state.
@@ -1938,7 +1981,7 @@ static u8 *handle_psign_update_tx(struct hsmd_client *c, const u8 *msg_in)
 	struct channel_id channel_id;
 
 	/* MuSig stuff */
-	secp256k1_xonly_pubkey xo_inner_pubkey;
+	struct pubkey dummy_inner_pubkey; /* only cache needed for signing */
 	secp256k1_musig_keyagg_cache keyagg_cache;
 	const struct pubkey *pubkey_ptrs[2];
 	const secp256k1_musig_pubnonce *pubnonce_ptrs[2];
@@ -1975,7 +2018,7 @@ static u8 *handle_psign_update_tx(struct hsmd_client *c, const u8 *msg_in)
 	annex = make_eltoo_annex(tmpctx, settle_tx);
 	pubkey_ptrs[0] = &remote_funding_pubkey;
 	pubkey_ptrs[1] = &local_funding_pubkey;
-	bipmusig_inner_pubkey(&xo_inner_pubkey,
+	bipmusig_inner_pubkey(&dummy_inner_pubkey,
 			      &keyagg_cache,
 			      pubkey_ptrs,
 			      /* n_pubkeys */ 2);
@@ -2487,6 +2530,7 @@ u8 *hsmd_handle_client_message(const tal_t *ctx, struct hsmd_client *client,
     case WIRE_HSMD_PSIGN_UPDATE_TX:
         return handle_psign_update_tx(client, msg);
     case WIRE_HSMD_COMBINE_PSIG:
+        return handle_combine_psig(client, msg);
     case WIRE_HSMD_VALIDATE_UPDATE_TX_PSIG:
     case WIRE_HSMD_GET_NONCE:
         break;

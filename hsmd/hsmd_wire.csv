@@ -578,6 +578,8 @@ msgdata,hsmd_combine_psig,channel_id,channel_id,
 msgdata,hsmd_combine_psig,p_sig_1,partial_sig,
 msgdata,hsmd_combine_psig,p_sig_2,partial_sig,
 msgdata,hsmd_combine_psig,update_tx,bitcoin_tx,
+msgdata,hsmd_combine_psig,settle_tx,bitcoin_tx,
+msgdata,hsmd_combine_psig,inner_pubkey,pubkey,
 
 msgtype,hsmd_combine_psig_reply,192
 msgdata,hsmd_combine_psig_reply,sig,bip340sig,

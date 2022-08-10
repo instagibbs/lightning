@@ -155,7 +155,7 @@ void bip340_sign_hash(const struct privkey *privkey,
     assert(secp256k1_schnorrsig_verify(secp256k1_ctx, sig->u8, hash->sha.u.u8, sizeof(hash->sha.u.u8), &pubkey));
 }
 
-void bipmusig_inner_pubkey(secp256k1_xonly_pubkey *inner_pubkey,
+void bipmusig_inner_pubkey(struct pubkey *inner_pubkey,
            secp256k1_musig_keyagg_cache *keyagg_cache,
            const struct pubkey * const* pubkeys,
            size_t n_pubkeys)
@@ -182,10 +182,16 @@ void bipmusig_inner_pubkey(secp256k1_xonly_pubkey *inner_pubkey,
 
     ok = secp256k1_musig_pubkey_agg(secp256k1_ctx,
         NULL /* scratch */,
-        inner_pubkey,
+        NULL /* agg_pk */,
         keyagg_cache,
         x_keys_ptr,
         n_pubkeys); 
+
+    assert(ok);
+
+    ok = secp256k1_musig_pubkey_get(secp256k1_ctx,
+        &inner_pubkey->pubkey,
+        keyagg_cache);
 
     assert(ok);
 }
@@ -301,12 +307,22 @@ void bipmusig_partial_sign(const struct privkey *privkey,
 
 bool bipmusig_partial_sigs_combine_verify(const secp256k1_musig_partial_sig * const *p_sigs,
            size_t num_signers,
-           const secp256k1_xonly_pubkey *agg_pk,
+           const struct pubkey *agg_pk,
            secp256k1_musig_session *session,
            const struct sha256_double *hash,
            struct bip340sig *sig)
 {
     int ret;
+    secp256k1_xonly_pubkey xonly_inner_pubkey;
+
+    ret = secp256k1_xonly_pubkey_from_pubkey(secp256k1_ctx,
+        &xonly_inner_pubkey,
+        NULL /* pk_parity */,
+        &agg_pk->pubkey);
+
+    if (!ret) {
+        return false;
+    }
 
     ret = secp256k1_musig_partial_sig_agg(secp256k1_ctx, sig->u8, session, p_sigs, num_signers);
 
@@ -314,7 +330,7 @@ bool bipmusig_partial_sigs_combine_verify(const secp256k1_musig_partial_sig * co
         return false;
     }
 
-   return secp256k1_schnorrsig_verify(secp256k1_ctx, sig->u8, hash->sha.u.u8, sizeof(hash->sha.u.u8), agg_pk);
+   return secp256k1_schnorrsig_verify(secp256k1_ctx, sig->u8, hash->sha.u.u8, sizeof(hash->sha.u.u8), &xonly_inner_pubkey);
 }
 
 void bitcoin_tx_hash_for_sig(const struct bitcoin_tx *tx, unsigned int in,

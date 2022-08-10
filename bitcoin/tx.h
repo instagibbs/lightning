@@ -148,7 +148,7 @@ void bitcoin_tx_set_locktime(struct bitcoin_tx *tx, u32 locktime);
 int bitcoin_tx_add_unbound_input(struct bitcoin_tx *tx,
              u32 sequence,
              struct amount_sat amount,
-             const secp256k1_xonly_pubkey *inner_pubkey);
+             const struct pubkey *inner_pubkey);
 
 /* Add a new input to a bitcoin tx.
  *
@@ -161,7 +161,7 @@ int bitcoin_tx_add_input(struct bitcoin_tx *tx,
 			 const struct bitcoin_outpoint *outpoint,
 			 u32 sequence, const u8 *scriptSig,
 			 struct amount_sat amount, const u8 *scriptPubkey,
-			 const u8 *input_wscript, const  secp256k1_xonly_pubkey *inner_pubkey, const u8 * tap_tree);
+			 const u8 *input_wscript, const struct pubkey *inner_pubkey, const u8 * tap_tree);
 
 /* Removes specified input from bitcoin tx */
 void bitcoin_tx_remove_input(struct bitcoin_tx *tx,

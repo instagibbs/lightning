@@ -50,7 +50,7 @@ void tx_add_ephemeral_anchor_output(struct bitcoin_tx *tx)
 }
 
 void add_settlement_input(struct bitcoin_tx *tx, const struct bitcoin_outpoint *update_outpoint,
-    struct amount_sat update_outpoint_sats, u32 shared_delay, secp256k1_xonly_pubkey *inner_pubkey, u32 obscured_update_number, const struct pubkey *pubkey_ptrs[2])
+    struct amount_sat update_outpoint_sats, u32 shared_delay, const struct pubkey *inner_pubkey, u32 obscured_update_number, const struct pubkey *pubkey_ptrs[2])
 {
     u8 *dummy_script;
     int input_num;
@@ -134,7 +134,7 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
 	/* There is a direct output and possibly a shared anchor output */
 	const void *output_order[NUM_SIDES + 1];
     const struct pubkey *pubkey_ptrs[2];
-    secp256k1_xonly_pubkey inner_pubkey;
+    struct pubkey inner_pubkey;
 
    /* For MuSig aggregation for outputs */
     pubkey_ptrs[0] = &(eltoo_keyset->self_funding_key);

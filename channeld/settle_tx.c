@@ -113,7 +113,7 @@ struct bitcoin_tx *settle_tx(const tal_t *ctx,
 	bool to_local, to_remote;
 	struct htlc *dummy_to_local = (struct htlc *)0x01,
 		*dummy_to_remote = (struct htlc *)0x02;
-    secp256k1_xonly_pubkey inner_pubkey;
+    struct pubkey inner_pubkey;
     const struct pubkey *pubkey_ptrs[2];
     /* For non-initial settlement tx, we cannot safely
      * predict prevout, we will rebind this last second,

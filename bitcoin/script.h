@@ -209,7 +209,7 @@ void compute_taptree_merkle_root_with_hint(struct sha256 *update_merkle_root, co
  * @inner_pubkey: Inner pubkey for taproot control block
  * @parity_bit: Parity of outer taproot pubkey
  */
-u8 *compute_control_block(const tal_t *ctx, const u8 *other_script, const u8 *annex_hint, const secp256k1_xonly_pubkey *inner_pubkey, int parity_bit);
+u8 *compute_control_block(const tal_t *ctx, const u8 *other_script, const u8 *annex_hint, const struct pubkey *inner_pubkey, int parity_bit);
 
 /* Creates tapscript that makes a sig-in-script ANYPREVOUTANYSCRIPT covenant
  * which commits to the tx argument:
