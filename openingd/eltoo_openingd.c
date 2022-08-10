@@ -554,7 +554,7 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
                            0, // FIXME &state->channel->dbid,
 						   *update_tx,
                            settle_tx,
-						   &state->channel->eltoo_keyset.other_funding_key,
+						   &state->their_funding_pubkey,
                            &state->their_next_nonce);
 	wire_sync_write(HSM_FD, take(msg));
 	msg = wire_sync_read(tmpctx, HSM_FD);
@@ -713,7 +713,6 @@ static u8 *funder_channel_complete(struct eltoo_state *state)
 static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 {
 	struct channel_id id_in;
-    /* FIXME Can't these just be read into eltoo_keyset? */
 	struct bip340sig update_sig;
 	struct bitcoin_tx *settle_tx, *update_tx;
 	struct bitcoin_blkid chain_hash;
@@ -899,7 +898,6 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 
 	/* The message should be "funding_created" which tells us what funding
 	 * tx they generated; the sighash type is implied, so we set it here. */
-	// FIXME ? theirsig.sighash_type = SIGHASH_ALL;
 	if (!fromwire_funding_created_eltoo(msg, &id_in,
 				      &state->funding.txid,
 				      &funding_txout,
@@ -1022,7 +1020,7 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
                            0, // FIXME &state->channel->dbid,
 						   update_tx,
                            settle_tx,
-						   &state->channel->eltoo_keyset.other_funding_key,
+						   &state->their_funding_pubkey,
                            &state->their_next_nonce);
 	wire_sync_write(HSM_FD, take(msg));
 	msg = wire_sync_read(tmpctx, HSM_FD);
@@ -1047,7 +1045,6 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 
 	/* We don't send this ourselves: channeld does, because master needs
 	 * to save state to disk before doing so. */
-	// FIXME ? assert(sig.sighash_type == SIGHASH_ALL);
 	msg = towire_funding_signed_eltoo(state, &state->channel_id, &our_update_psig, &state->our_next_nonce);
 
 	return towire_openingd_eltoo_fundee(state,
