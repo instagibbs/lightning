@@ -19,6 +19,7 @@ struct eltoo_keyset {
     struct pubkey self_funding_key, other_funding_key;
     /* MuSig2 key using funding keys as input */
     struct pubkey inner_pubkey;
+    struct nonce self_next_nonce, other_next_nonce;
 };
 
 /* Self == owner of commitment tx, other == non-owner. */
