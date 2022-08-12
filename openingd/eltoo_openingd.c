@@ -99,10 +99,6 @@ struct eltoo_state {
 	struct channel_type *channel_type;
 
 	struct feature_set *our_features;
-
-    /* Nonces used for the next signing operation */
-    struct nonce our_next_nonce;
-    struct nonce their_next_nonce;
 };
 
 /*~ If we can't agree on parameters, we fail to open the channel.
@@ -328,7 +324,7 @@ static u8 *funder_channel_start(struct eltoo_state *state, u8 channel_flags)
 	peer_write(state->pps, take(msg));
 
 	msg = wire_sync_read(tmpctx, HSM_FD);
-    if (!fromwire_hsmd_gen_nonce_reply(msg, &state->our_next_nonce)) {
+    if (!fromwire_hsmd_gen_nonce_reply(msg, &state->channel->eltoo_keyset.self_next_nonce)) {
 		peer_failed_err(state->pps,
 				&state->channel_id,
 				"Failed to get nonce for channel: %s", tal_hex(msg, msg));
@@ -347,7 +343,7 @@ static u8 *funder_channel_start(struct eltoo_state *state, u8 channel_flags)
 				  &state->our_funding_pubkey,
 				  &state->our_settlement_pubkey,
 				  channel_flags,
-                  &state->our_next_nonce,
+                  &state->channel->eltoo_keyset.self_next_nonce,
 				  open_tlvs);
 	peer_write(state->pps, take(msg));
 
@@ -377,7 +373,7 @@ static u8 *funder_channel_start(struct eltoo_state *state, u8 channel_flags)
 				     &state->remoteconf.max_accepted_htlcs,
 				     &state->their_funding_pubkey,
 				     &state->their_settlement_pubkey,
-                     &state->their_next_nonce,
+                     &state->channel->eltoo_keyset.other_next_nonce,
 				     &accept_tlvs)) {
 		peer_failed_err(state->pps,
 				&state->channel_id,
@@ -540,10 +536,10 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
 						   *update_tx,
                            settle_tx,
 						   &state->their_funding_pubkey,
-                           &state->their_next_nonce);
+                           &state->channel->eltoo_keyset.other_next_nonce);
 	wire_sync_write(HSM_FD, take(msg));
 	msg = wire_sync_read(tmpctx, HSM_FD);
-	if (!fromwire_hsmd_psign_update_tx_reply(msg, &our_update_psig, &state->our_next_nonce))
+	if (!fromwire_hsmd_psign_update_tx_reply(msg, &our_update_psig, &state->channel->eltoo_keyset.self_next_nonce))
 		status_failed(STATUS_FAIL_HSM_IO, "Bad sign_tx_reply %s",
 			      tal_hex(tmpctx, msg));
 
@@ -561,7 +557,7 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
 				     &state->funding.txid,
 				     state->funding.n,
 				     &our_update_psig,
-                     &state->our_next_nonce);
+                     &state->channel->eltoo_keyset.self_next_nonce);
 	peer_write(state->pps, msg);
 
 	/* BOLT #2:
@@ -583,7 +579,7 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
 	if (!msg)
 		return false;
 
-	if (!fromwire_funding_signed_eltoo(msg, &id_in, &their_update_psig, &state->their_next_nonce))
+	if (!fromwire_funding_signed_eltoo(msg, &id_in, &their_update_psig, &state->channel->eltoo_keyset.other_next_nonce))
 		peer_failed_err(state->pps, &state->channel_id,
 				"Parsing funding_signed_eltoo: %s", tal_hex(msg, msg));
 	/* BOLT #2:
@@ -730,7 +726,7 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 			    &state->their_funding_pubkey,
 			    &state->their_settlement_pubkey,
 			    &channel_flags,
-                &state->their_next_nonce,
+                &state->channel->eltoo_keyset.other_next_nonce,
 			    &open_tlvs))
 		    peer_failed_err(state->pps,
 				    &state->channel_id,
@@ -850,7 +846,7 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 	peer_write(state->pps, take(msg));
 
 	msg = wire_sync_read(tmpctx, HSM_FD);
-    if (!fromwire_hsmd_gen_nonce_reply(msg, &state->our_next_nonce)) {
+    if (!fromwire_hsmd_gen_nonce_reply(msg, &state->channel->eltoo_keyset.self_next_nonce)) {
 		peer_failed_err(state->pps,
 				&state->channel_id,
 				"Failed to get nonce for channel: %s", tal_hex(msg, msg));
@@ -865,7 +861,7 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 				    state->localconf.max_accepted_htlcs,
 				    &state->our_funding_pubkey,
 				    &state->our_settlement_pubkey,
-                    &state->our_next_nonce,
+                    &state->channel->eltoo_keyset.self_next_nonce,
 				    accept_tlvs);
 	peer_write(state->pps, take(msg));
 
@@ -883,7 +879,7 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 				      &state->funding.txid,
 				      &funding_txout,
 				      &their_update_psig,
-                      &state->their_next_nonce))
+                      &state->channel->eltoo_keyset.other_next_nonce))
 		peer_failed_err(state->pps, &state->channel_id,
 			    "Parsing funding_created");
 	/* We only allow 16 bits for this on the wire. */
@@ -1000,10 +996,10 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 						   update_tx,
                            settle_tx,
 						   &state->their_funding_pubkey,
-                           &state->their_next_nonce);
+                           &state->channel->eltoo_keyset.other_next_nonce);
 	wire_sync_write(HSM_FD, take(msg));
 	msg = wire_sync_read(tmpctx, HSM_FD);
-	if (!fromwire_hsmd_psign_update_tx_reply(msg, &our_update_psig, &state->our_next_nonce))
+	if (!fromwire_hsmd_psign_update_tx_reply(msg, &our_update_psig, &state->channel->eltoo_keyset.self_next_nonce))
 		status_failed(STATUS_FAIL_HSM_IO,
 			      "Bad sign_tx_reply %s", tal_hex(tmpctx, msg));
 
@@ -1024,7 +1020,7 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 
 	/* We don't send this ourselves: channeld does, because master needs
 	 * to save state to disk before doing so. */
-	msg = towire_funding_signed_eltoo(state, &state->channel_id, &our_update_psig, &state->our_next_nonce);
+	msg = towire_funding_signed_eltoo(state, &state->channel_id, &our_update_psig, &state->channel->eltoo_keyset.self_next_nonce);
 
 	return towire_openingd_eltoo_fundee(state,
 				     &state->remoteconf,
