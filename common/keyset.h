@@ -2,6 +2,7 @@
 #define LIGHTNING_COMMON_KEYSET_H
 #include "config.h"
 #include <bitcoin/pubkey.h>
+#include <bitcoin/signature.h>
 
 struct basepoints;
 
@@ -17,9 +18,11 @@ struct keyset {
 struct eltoo_keyset {
 	struct pubkey self_settle_key, other_settle_key;
     struct pubkey self_funding_key, other_funding_key;
-    /* MuSig2 key using funding keys as input */
+    /* MuSig2 key using funding keys as input, session
+     non-empty once partial sig created locally! */
     struct pubkey inner_pubkey;
     struct nonce self_next_nonce, other_next_nonce;
+    struct musig_session session;
 };
 
 /* Self == owner of commitment tx, other == non-owner. */

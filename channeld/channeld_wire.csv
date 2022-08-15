@@ -372,3 +372,9 @@ msgdata,channeld_dev_peer_shachain,seed,sha256,
 
 # When we receive funding_locked.
 msgtype,channeld_got_funding_locked_eltoo,1079
+
+# When we have a update_signed message, tell master to remember.
+msgtype,channeld_got_updatesig,1081
+msgdata,channeld_got_updatesig,update_num,u32,
+msgdata,channeld_got_updatesig,update_sig,bip340sig,
+

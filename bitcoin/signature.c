@@ -682,7 +682,9 @@ void fromwire_bip340sig(const u8 **cursor, size_t *max,
 
 void towire_partial_sig(u8 **pptr, const struct partial_sig *p_sig)
 {
-    secp256k1_musig_partial_sig_serialize(secp256k1_ctx, *pptr, &p_sig->p_sig);
+    u8 bip340sig_arr[32];
+    secp256k1_musig_partial_sig_serialize(secp256k1_ctx, bip340sig_arr, &p_sig->p_sig);
+	towire_u8_array(pptr, bip340sig_arr, sizeof(bip340sig_arr));
 }
 
 void fromwire_partial_sig(const u8 **cursor, size_t *max,
@@ -698,6 +700,19 @@ void fromwire_partial_sig(const u8 **cursor, size_t *max,
         SUPERVERBOSE("not a valid musig partial sig");
         fromwire_fail(cursor, max);
     }
+}
+
+void towire_musig_session(u8 **pptr, const struct musig_session *session)
+{
+    /* No proper serialization/parsing supplied, we're just copying bytes */
+    towire_u8_array(pptr, session->session.data, 133);
+}
+
+void fromwire_musig_session(const u8 **cursor, size_t *max,
+            struct musig_session *session){
+    /* No proper serialization/parsing supplied, we're just copying bytes */
+    if (!fromwire(cursor, max, session->session.data, 133))
+        return;
 }
 
 char *fmt_bip340sig(const tal_t *ctx, const struct bip340sig *bip340sig)

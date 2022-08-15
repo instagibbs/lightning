@@ -539,7 +539,7 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
                            &state->channel->eltoo_keyset.other_next_nonce);
 	wire_sync_write(HSM_FD, take(msg));
 	msg = wire_sync_read(tmpctx, HSM_FD);
-	if (!fromwire_hsmd_psign_update_tx_reply(msg, &our_update_psig, &state->channel->eltoo_keyset.self_next_nonce))
+	if (!fromwire_hsmd_psign_update_tx_reply(msg, &our_update_psig, &state->channel->eltoo_keyset.session, &state->channel->eltoo_keyset.self_next_nonce))
 		status_failed(STATUS_FAIL_HSM_IO, "Bad sign_tx_reply %s",
 			      tal_hex(tmpctx, msg));
 
@@ -629,6 +629,7 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
                             &state->channel_id,
                             &our_update_psig,
                             &their_update_psig,
+                            &state->channel->eltoo_keyset.session,
                             *update_tx,
                             settle_tx,
                             &state->channel->eltoo_keyset.inner_pubkey);
@@ -999,7 +1000,7 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
                            &state->channel->eltoo_keyset.other_next_nonce);
 	wire_sync_write(HSM_FD, take(msg));
 	msg = wire_sync_read(tmpctx, HSM_FD);
-	if (!fromwire_hsmd_psign_update_tx_reply(msg, &our_update_psig, &state->channel->eltoo_keyset.self_next_nonce))
+	if (!fromwire_hsmd_psign_update_tx_reply(msg, &our_update_psig, &state->channel->eltoo_keyset.session, &state->channel->eltoo_keyset.self_next_nonce))
 		status_failed(STATUS_FAIL_HSM_IO,
 			      "Bad sign_tx_reply %s", tal_hex(tmpctx, msg));
 
@@ -1008,6 +1009,7 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
                             &state->channel_id,
                             &our_update_psig,
                             &their_update_psig,
+                            &state->channel->eltoo_keyset.session,
                             update_tx,
                             settle_tx,
                             &state->channel->eltoo_keyset.inner_pubkey);

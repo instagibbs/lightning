@@ -1615,6 +1615,9 @@ static unsigned channel_msg(struct subd *sd, const u8 *msg, const int *fds)
 	case WIRE_CHANNELD_GOT_FUNDING_LOCKED_ELTOO:
 		/* FIXME Handle this */
 		break;
+	case WIRE_CHANNELD_GOT_UPDATESIG:
+		/* FIXME handle this */
+		break;
 	case WIRE_CHANNELD_UPGRADED:
 		handle_channel_upgrade(sd->channel, msg);
 		break;

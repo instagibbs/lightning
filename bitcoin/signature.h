@@ -34,6 +34,11 @@ struct partial_sig {
     secp256k1_musig_partial_sig p_sig;
 };
 
+/* State required(along with pubkey) to bring partial_sig's together */
+struct musig_session {
+    secp256k1_musig_session session;
+};
+
 #define SIGHASH_MASK 0x7F
 
 static inline bool sighash_single(enum sighash_type sighash_type)
@@ -320,6 +325,10 @@ void fromwire_bip340sig(const u8 **cursor, size_t *max,
 void towire_partial_sig(u8 **pptr, const struct partial_sig *p_sig);
 void fromwire_partial_sig(const u8 **cursor, size_t *max,
 			struct partial_sig *p_sig);
+
+void towire_musig_session(u8 **pptr, const struct musig_session *session);
+void fromwire_musig_session(const u8 **cursor, size_t *max,
+			struct musig_session *session);
 
 /* Get a hex string sig */
 char *fmt_secp256k1_ecdsa_signature(const tal_t *ctx,

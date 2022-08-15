@@ -560,6 +560,7 @@ msgdata,hsmd_psign_update_tx,remote_nonce,nonce,
 
 msgtype,hsmd_psign_update_tx_reply,162
 msgdata,hsmd_psign_update_tx_reply,update_psig,partial_sig,
+msgdata,hsmd_psign_update_tx_reply,session,musig_session,
 msgdata,hsmd_psign_update_tx_reply,next_nonce,nonce,
 
 msgtype,hsmd_validate_update_tx_psig,163
@@ -575,6 +576,7 @@ msgtype,hsmd_combine_psig,92
 msgdata,hsmd_combine_psig,channel_id,channel_id,
 msgdata,hsmd_combine_psig,p_sig_1,partial_sig,
 msgdata,hsmd_combine_psig,p_sig_2,partial_sig,
+msgdata,hsmd_combine_psig,session,musig_session,
 msgdata,hsmd_combine_psig,update_tx,bitcoin_tx,
 msgdata,hsmd_combine_psig,settle_tx,bitcoin_tx,
 msgdata,hsmd_combine_psig,inner_pubkey,pubkey,
