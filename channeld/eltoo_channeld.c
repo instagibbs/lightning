@@ -53,7 +53,7 @@
 struct eltoo_peer {
 	struct per_peer_state *pps;
 	bool funding_locked[NUM_SIDES];
-	u64 next_index[NUM_SIDES];
+	u64 next_index;
 
 	/* Features peer supports. */
 	u8 *their_features;
@@ -143,6 +143,10 @@ struct eltoo_peer {
 	u64 revocations_received;
 	u8 channel_flags;
     */
+
+    /* Number of update_signed(_ack) messages received by peer */
+	u64 updates_received;
+
 
 	bool announce_depth_reached;
 	bool channel_local_active;
@@ -1123,7 +1127,7 @@ static void send_commit(struct peer *peer)
 	start_commit_timer(peer);
 }
 
-static void start_commit_timer(struct peer *peer)
+static void start_commit_timer(struct eltoo_peer *peer)
 {
 	/* Already armed? */
 	if (peer->commit_timer)
@@ -1196,9 +1200,12 @@ static void marshall_htlc_info(const tal_t *ctx,
 }
 
 static void send_update_sign_ack(struct peer *peer,
+                const struct htlc **changed_htlcs,
 			    const struct partial_sig *our_update_psig,
-                const struct bip340sit *update_sig,
+			    const struct partial_sig *their_update_psig,
+                const struct musig_session *session,
 			    const struct bitcoin_tx *update_tx,
+			    const struct bitcoin_tx *settle_tx,
                 const struct nonce *our_next_nonce)
 {
 	struct changed_htlc *changed;
@@ -1230,20 +1237,21 @@ static void send_update_sign_ack(struct peer *peer,
 	} */
 
 	/* Tell master daemon about update_sig (and by implication, that we're
-	 * sending revoke_and_ack), then wait for it to ack. */
-	/* We had to do this after channel_sending_revoke_and_ack, since we
-	 * want it to save the fee_states produced there. */
+	 * sending update_sig_ack), then wait for it to ack. */
 	msg_for_master
 		= towire_channeld_got_updatesig(NULL,
 					       peer->next_index[LOCAL] - 1,
-					       update_sig, htlc_sigs,
+					       our_update_psig,
+                           their_update_psig,
+                           session,
 					       added,
 					       fulfilled,
 					       failed,
 					       changed,
-					       committx);
+					       update_tx,
+                           settle_tx);
 	master_wait_sync_reply(tmpctx, peer, take(msg_for_master),
-			       WIRE_CHANNELD_GOT_COMMITSIG_REPLY);
+			       WIRE_CHANNELD_GOT_UPDATESIG_REPLY);
 
 	/* Now we can finally send revoke_and_ack to peer */
 	peer_write(peer->pps, take(msg));
@@ -1270,7 +1278,8 @@ static void handle_peer_update_sig(struct eltoo_peer *peer, const u8 *msg)
 	const u8 * msg2;
 
 	changed_htlcs = tal_arr(msg, const struct htlc *, 0);
-	if (!channel_rcvd_commit(peer->channel, &changed_htlcs)) {
+    /* Does our counterparty offer any changes? */
+	if (!channel_rcvd_update(peer->channel, &changed_htlcs)) {
 		/* BOLT #2:
 		 *
 		 * A sending node:
@@ -1308,7 +1317,7 @@ static void handle_peer_update_sig(struct eltoo_peer *peer, const u8 *msg)
                            &peer->channel->eltoo_keyset.other_next_nonce);
     wire_sync_write(HSM_FD, take(msg));
     msg = wire_sync_read(tmpctx, HSM_FD);
-    if (!fromwire_hsmd_psign_update_tx_reply(msg, &our_update_psig, &peer->channel->eltoo_keyset.self_next_nonce))
+    if (!fromwire_hsmd_psign_update_tx_reply(msg, &our_update_psig, &peer->channel->eltoo_keyset.session, &peer->channel->eltoo_keyset.self_next_nonce))
         status_failed(STATUS_FAIL_HSM_IO, "Bad sign_tx_reply %s",
                   tal_hex(tmpctx, msg));
 
@@ -1317,6 +1326,7 @@ static void handle_peer_update_sig(struct eltoo_peer *peer, const u8 *msg)
                             &peer->channel_id,
                             &our_update_psig,
                             &their_update_psig,
+                            &peer->channel->eltoo_keyset.session
                             update_and_settle_txs[0],
                             update_and_settle_txs[1],
                             &peer->channel->eltoo_keyset.inner_pubkey);
@@ -1328,9 +1338,12 @@ static void handle_peer_update_sig(struct eltoo_peer *peer, const u8 *msg)
     }
 
 	send_update_sign_ack(peer,
-        &our_update_psig,
         changed_htlcs,
-        txs[0],
+        &our_update_psig,
+        &their_update_psig,
+        &peer->channel->eltoo_keyset.session,
+        update_and_settle_txs[0],
+        update_and_settle_txs[1],
         &peer->channel->eltoo_keyset.self_next_nonce);
 
 	/* We may now be quiescent on our side. */
@@ -1338,15 +1351,11 @@ static void handle_peer_update_sig(struct eltoo_peer *peer, const u8 *msg)
 
 }
 
-static u8 *got_revoke_msg(struct peer *peer, u64 revoke_num,
-			  const struct secret *per_commitment_secret,
-			  const struct pubkey *next_per_commit_point,
-			  const struct htlc **changed_htlcs,
-			  const struct fee_states *fee_states,
-			  const struct height_states *blockheight_states)
+static u8 *got_ack_msg(struct peer *peer,
+              u64 update_num,
+			  const struct htlc **changed_htlcs)
 {
 	u8 *msg;
-	struct penalty_base *pbase;
 	struct changed_htlc *changed = tal_arr(tmpctx, struct changed_htlc, 0);
 	const struct bitcoin_tx *ptx = NULL;
 
@@ -1363,104 +1372,58 @@ static u8 *got_revoke_msg(struct peer *peer, u64 revoke_num,
 		tal_arr_expand(&changed, c);
 	}
 
-	pbase = penalty_base_by_commitnum(tmpctx, peer, revoke_num);
+	msg = towire_channeld_got_ack(peer, update_num,
+					changed);
 
-	if (pbase) {
-		ptx = penalty_tx_create(
-		    NULL, peer->channel, peer->feerate_penalty,
-		    peer->final_index, peer->final_ext_key,
-		    peer->final_scriptpubkey, per_commitment_secret,
-		    &pbase->txid, pbase->outnum, pbase->amount,
-		    HSM_FD);
-	}
-
-	msg = towire_channeld_got_revoke(peer, revoke_num, per_commitment_secret,
-					next_per_commit_point, fee_states,
-					blockheight_states, changed,
-					pbase, ptx);
-	tal_free(ptx);
 	return msg;
 }
 
-static void handle_peer_revoke_and_ack(struct peer *peer, const u8 *msg)
+static void handle_peer_update_sig_ack(struct eltoo_peer *peer, const u8 *msg)
 {
-	struct secret old_commit_secret;
-	struct privkey privkey;
 	struct channel_id channel_id;
-	const u8 *revocation_msg;
-	struct pubkey per_commit_point, next_per_commit;
+	const u8 *comb_msg;
+    struct bip340sig update_sig;
 	const struct htlc **changed_htlcs = tal_arr(msg, const struct htlc *, 0);
 
-	if (!fromwire_revoke_and_ack(msg, &channel_id, &old_commit_secret,
-				     &next_per_commit)) {
+	if (!fromwire_update_signed_ack(msg, &channel_id, &peer->channel->eltoo_keyset.other_psig,
+				     &peer->channel->eltoo_keyset.other_next_nonce)) {
 		peer_failed_warn(peer->pps, &peer->channel_id,
-				 "Bad revoke_and_ack %s", tal_hex(msg, msg));
+				 "Bad update_signed_ack %s", tal_hex(msg, msg));
 	}
 
-	if (peer->revocations_received != peer->next_index[REMOTE] - 2) {
-		peer_failed_warn(peer->pps, &peer->channel_id,
-				 "Unexpected revoke_and_ack");
-	}
+    comb_msg = towire_hsmd_combine_psig(tmpctx,
+                            &channel_id,
+                            &peer->channel->eltoo_keyset.self_psig,
+                            &peer->channel->eltoo_keyset.other_psig,
+                            &peer->channel->eltoo_keyset.session,
+                            /* FIXME where should these proposed txns live? vs state */
+                            &peer->channel->proposed_update_tx,
+                            &peer->channel->proposed_settle_tx,
+                            &peer->channel->eltoo_keyset.inner_pubkey);
+                           
 
-	/* Submit the old revocation secret to the signer so it can
-	 * independently verify that the latest state is commited. It
-	 * is also validated in this routine after the signer returns.
-	 */
-	revocation_msg = towire_hsmd_validate_revocation(tmpctx,
-							 peer->next_index[REMOTE] - 2,
-							 &old_commit_secret);
-	revocation_msg = hsm_req(tmpctx, take(revocation_msg));
-	if (!fromwire_hsmd_validate_revocation_reply(revocation_msg))
+	if (!fromwire_hsmd_combine_psig_reply(comb_msg, &update_sig))
 		status_failed(STATUS_FAIL_HSM_IO,
-			      "Bad hsmd_validate_revocation_reply: %s",
-			      tal_hex(tmpctx, revocation_msg));
-
-	/* BOLT #2:
-	 *
-	 * A receiving node:
-	 *  - if `per_commitment_secret` is not a valid secret key or does not
-	 *    generate the previous `per_commitment_point`:
-	 *     - MUST send an `error` and fail the channel.
-	 */
-	memcpy(&privkey, &old_commit_secret, sizeof(privkey));
-	if (!pubkey_from_privkey(&privkey, &per_commit_point)) {
-		peer_failed_err(peer->pps, &peer->channel_id,
-				"Bad privkey %s",
-				type_to_string(msg, struct privkey, &privkey));
-	}
-	if (!pubkey_eq(&per_commit_point, &peer->old_remote_per_commit)) {
-		peer_failed_err(peer->pps, &peer->channel_id,
-				"Wrong privkey %s for %"PRIu64" %s",
-				type_to_string(msg, struct privkey, &privkey),
-				peer->next_index[LOCAL]-2,
-				type_to_string(msg, struct pubkey,
-					       &peer->old_remote_per_commit));
-	}
+			      "Bad hsmd_combine_psig_reply: %s",
+			      tal_hex(tmpctx, comb_msg));
 
 	/* We start timer even if this returns false: we might have delayed
 	 * commit because we were waiting for this! */
-	if (channel_rcvd_revoke_and_ack(peer->channel, &changed_htlcs))
-		status_debug("Commits outstanding after recv revoke_and_ack");
-	else
-		status_debug("No commits outstanding after recv revoke_and_ack");
+	if (channel_rcvd_update_sign_ack(peer->channel, &changed_htlcs)) {
+        /* FIXME I don't think this is possible? */
+		status_debug("Commits outstanding after recv update_sign_ack");
+	} else {
+		status_debug("No commits outstanding after recv update_sign_ack");
+    }
 
 	/* Tell master about things this locks in, wait for response */
-	msg = got_revoke_msg(peer, peer->revocations_received++,
-			     &old_commit_secret, &next_per_commit,
-			     changed_htlcs,
-			     peer->channel->fee_states,
-			     peer->channel->blockheight_states);
+	msg = got_ack_msg(peer, peer->next_index++,
+			     changed_htlcs);
 	master_wait_sync_reply(tmpctx, peer, take(msg),
-			       WIRE_CHANNELD_GOT_REVOKE_REPLY);
+			       WIRE_CHANNELD_GOT_ACK_REPLY);
 
-	peer->old_remote_per_commit = peer->remote_per_commit;
-	peer->remote_per_commit = next_per_commit;
-	status_debug("revoke_and_ack %s: remote_per_commit = %s, old_remote_per_commit = %s",
-		     side_to_str(peer->channel->opener),
-		     type_to_string(tmpctx, struct pubkey,
-				    &peer->remote_per_commit),
-		     type_to_string(tmpctx, struct pubkey,
-				    &peer->old_remote_per_commit));
+	status_debug("update_signed_ack %s: update = %d",
+		     side_to_str(peer->channel->opener), peer->next_index - 1);
 
 	/* We may now be quiescent on our side. */
 	maybe_send_stfu(peer);
@@ -1468,7 +1431,7 @@ static void handle_peer_revoke_and_ack(struct peer *peer, const u8 *msg)
 	start_commit_timer(peer);
 }
 
-static void handle_peer_fulfill_htlc(struct peer *peer, const u8 *msg)
+static void handle_peer_fulfill_htlc(struct eltoo_peer *peer, const u8 *msg)
 {
 	struct channel_id channel_id;
 	u64 id;
@@ -1819,24 +1782,27 @@ static void peer_in(struct peer *elto_peer, const u8 *msg)
 		handle_peer_add_htlc(peer, msg);
 		return;
    	case WIRE_COMMITMENT_SIGNED:
-        /* FIXME How should we handle ilegal messages in general? */
+        /* FIXME How should we handle illegal messages in general? */
 		return;
 	case WIRE_UPDATE_FEE:
 		handle_peer_feechange(peer, msg);
 		return;
-    /* FIXME below */
     case WIRE_UPDATE_SIGNED:
         handle_peer_update_sig(peer, msg);
         return;
 	case WIRE_UPDATE_BLOCKHEIGHT:
-		handle_peer_blockheight_change(peer, msg);
+        /* FIXME How should we handle illegal messages in general? */
 		return;
 	case WIRE_REVOKE_AND_ACK:
-		handle_peer_revoke_and_ack(peer, msg);
+        /* FIXME How should we handle illegal messages in general? */
+		return;
+	case WIRE_UPDATE_SIGNED_ACK:
+		handle_peer_update_sig_ack(peer, msg);
 		return;
 	case WIRE_UPDATE_FULFILL_HTLC:
 		handle_peer_fulfill_htlc(peer, msg);
 		return;
+    /* FIXME below */
 	case WIRE_UPDATE_FAIL_HTLC:
 		handle_peer_fail_htlc(peer, msg);
 		return;

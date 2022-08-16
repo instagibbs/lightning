@@ -128,24 +128,25 @@ static void htlc_arr_append(const struct htlc ***arr, const struct htlc *htlc)
 
 static void dump_htlc(const struct htlc *htlc, const char *prefix)
 {
-	enum htlc_state remote_state;
+	enum eltoo_htlc_state remote_state;
+    enum eltoo_htlc_state state = htlc->eltoo_state;
 
-	if (htlc->state <= RCVD_REMOVE_ACK_REVOCATION)
-		remote_state = htlc->state + 10;
+	if (htlc->eltoo_state <= SENT_REMOVE_ACK)
+		remote_state = state + 6;
 	else
-		remote_state = htlc->state - 10;
+		remote_state = state - 6;
 
 	status_debug("%s: HTLC %s %"PRIu64" = %s/%s %s",
 		     prefix,
-		     htlc_owner(htlc) == LOCAL ? "LOCAL" : "REMOTE",
+		     eltoo_htlc_state_owner(state) == LOCAL ? "LOCAL" : "REMOTE",
 		     htlc->id,
-		     htlc_state_name(htlc->state),
-		     htlc_state_name(remote_state),
+		     eltoo_htlc_state_name(state),
+		     eltoo_htlc_state_name(remote_state),
 		     htlc->r ? "FULFILLED" : htlc->failed ? "FAILED"
 		     : "");
 }
 
-void dump_htlcs(const struct channel *channel, const char *prefix)
+void dump_htlcs(const struct eltoo_channel *channel, const char *prefix)
 {
 #ifdef SUPERVERBOSE
 	struct htlc_map_iter it;
@@ -348,7 +349,7 @@ static size_t num_untrimmed_htlcs(enum side side,
 }
 
 static enum channel_add_err add_htlc(struct eltoo_channel *channel,
-				     enum htlc_state state,
+				     enum eltoo_htlc_state state,
 				     u64 id,
 				     struct amount_msat amount,
 				     u32 cltv_expiry,
@@ -363,7 +364,7 @@ static enum channel_add_err add_htlc(struct eltoo_channel *channel,
 	struct htlc *htlc, *old;
 	struct amount_msat msat_in_htlcs, committed_msat,
 			   adding_msat, removing_msat, htlc_dust_amt;
-	enum side sender = htlc_state_owner(state), recipient = !sender;
+	enum side sender = eltoo_htlc_state_owner(state), recipient = !sender;
 	const struct htlc **committed, **adding, **removing;
 	const struct channel_view *view;
 	size_t htlc_count;
@@ -532,7 +533,7 @@ enum channel_add_err channel_add_htlc(struct eltoo_channel *channel,
 				      bool err_immediate_failures)
 {
     /* FIXME figure out HTLC state machine for eltoo */
-	enum htlc_state state;
+	enum eltoo_htlc_state state;
 
 	if (sender == LOCAL)
 		state = SENT_ADD_HTLC;
@@ -556,7 +557,7 @@ struct htlc *channel_get_htlc(struct channel *channel, enum side sender, u64 id)
 	return htlc_get(channel->htlcs, id, sender);
 }
 
-enum channel_remove_err channel_fulfill_htlc(struct channel *channel,
+enum channel_remove_err channel_fulfill_htlc(struct eltoo_channel *channel,
 					     enum side owner,
 					     u64 id,
 					     const struct preimage *preimage,
@@ -594,7 +595,7 @@ enum channel_remove_err channel_fulfill_htlc(struct channel *channel,
 	 */
 	if (!htlc_has(htlc, HTLC_FLAG(!htlc_owner(htlc), HTLC_F_COMMITTED))) {
 		status_unusual("channel_fulfill_htlc: %"PRIu64" in state %s",
-			     htlc->id, htlc_state_name(htlc->state));
+			     htlc->id, htlc_state_name(htlc->eltoo_state));
 		return CHANNEL_ERR_HTLC_UNCOMMITTED;
 	}
 
@@ -609,13 +610,13 @@ enum channel_remove_err channel_fulfill_htlc(struct channel *channel,
 	 *    - MUST NOT send an `update_fulfill_htlc`, `update_fail_htlc`, or
 	 *      `update_fail_malformed_htlc`.
 	 */
-	if (htlc->state == SENT_ADD_ACK_REVOCATION)
-		htlc->state = RCVD_REMOVE_HTLC;
-	else if (htlc->state == RCVD_ADD_ACK_REVOCATION)
-		htlc->state = SENT_REMOVE_HTLC;
+	if (htlc->eltoo_state == RCVD_ADD_ACK)
+		htlc->eltoo_state = RCVD_REMOVE_HTLC;
+	else if (htlc->eltoo_state == SENT_ADD_ACK)
+		htlc->eltoo_state = SENT_REMOVE_HTLC;
 	else {
 		status_unusual("channel_fulfill_htlc: %"PRIu64" in state %s",
-			     htlc->id, htlc_state_name(htlc->state));
+			     htlc->id, htlc_state_name(htlc->eltoo_state));
 		return CHANNEL_ERR_HTLC_NOT_IRREVOCABLE;
 	}
 
@@ -921,35 +922,32 @@ bool channel_sending_commit(struct channel *channel,
 	return true;
 }
 
-bool channel_rcvd_revoke_and_ack(struct channel *channel,
+bool channel_rcvd_update_sign_ack(struct channel *channel,
 				 const struct htlc ***htlcs)
 {
 	int change;
-	const enum htlc_state states[] = { SENT_ADD_COMMIT,
-					   SENT_REMOVE_ACK_COMMIT,
-					   SENT_ADD_ACK_COMMIT,
-					   SENT_REMOVE_COMMIT };
+	const enum htlc_state states[] = { SENT_ADD_UPDATE,
+					   SENT_REMOVE_UPDATE };
 
-	status_debug("Received revoke_and_ack");
+	status_debug("Received update_sign_ack");
 	change = change_htlcs(channel, LOCAL, states, ARRAY_SIZE(states),
-			      htlcs, "rcvd_revoke_and_ack");
+			      htlcs, "rcvd_update_sign_ack");
 
-	/* Their ack can queue changes on our side. */
+	/* FIXME what should this be? ... Their ack can queue changes on our side. */
 	return (change & HTLC_LOCAL_F_PENDING);
 }
 
-/* FIXME: We can actually merge these two... */
-bool channel_rcvd_commit(struct channel *channel, const struct htlc ***htlcs)
+bool channel_rcvd_update(struct channel *channel, const struct htlc ***htlcs)
 {
 	int change;
-	const enum htlc_state states[] = { RCVD_ADD_REVOCATION,
+	const enum eltoo_htlc_state states[] = { RCVD_ADD_UPDATE,
 					   RCVD_REMOVE_HTLC,
 					   RCVD_ADD_HTLC,
-					   RCVD_REMOVE_REVOCATION };
+					   RCVD_REMOVE_UPDATE };
 
-	status_debug("Received commit");
+	status_debug("Received Update");
 	change = change_htlcs(channel, LOCAL, states, ARRAY_SIZE(states),
-			      htlcs, "rcvd_commit");
+			      htlcs, "rcvd_update");
 	if (!change)
 		return false;
 	return true;

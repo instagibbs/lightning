@@ -9,6 +9,8 @@
 struct htlc {
 	/* What's the status. */
 	enum htlc_state state;
+    /* FIXME Can this live here? */
+    enum eltoo_htlc_state eltoo_state;
 	/* The unique ID for this peer and this direction (LOCAL or REMOTE) */
 	u64 id;
 	/* The amount in millisatoshi. */

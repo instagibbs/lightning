@@ -22,6 +22,7 @@ struct eltoo_keyset {
      non-empty once partial sig created locally! */
     struct pubkey inner_pubkey;
     struct nonce self_next_nonce, other_next_nonce;
+    struct partial_sig self_psig, other_psig;
     struct musig_session session;
 };
 

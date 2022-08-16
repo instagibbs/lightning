@@ -237,12 +237,12 @@ bool channel_rcvd_revoke_and_ack(struct channel *channel,
 				 const struct htlc ***htlcs);
 
 /**
- * channel_rcvd_commit: commit all local outstanding changes.
+ * channel_rcvd_update: commit all outstanding changes.
  * @channel: the channel
  * @htlcs: initially-empty tal_arr() for htlcs which changed state.
  *
  * This is where we commit to pending changes we've added; returns true if
- * anything changed for our local commitment (ie. we had pending changes).
+ * anything changed for our update (ie. we had pending changes added by other).
  */
 bool channel_rcvd_commit(struct channel *channel,
 			 const struct htlc ***htlcs);
