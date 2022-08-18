@@ -43,6 +43,7 @@ enum side {
 
 const char *htlc_state_name(enum htlc_state s);
 int htlc_state_flags(enum htlc_state state);
+int eltoo_htlc_state_flags(enum htlc_state state);
 
 static inline enum side htlc_state_owner(enum htlc_state state)
 {
@@ -53,21 +54,6 @@ static inline enum side htlc_state_owner(enum htlc_state state)
 		return LOCAL;
 	} else {
 		assert((htlc_state_flags(state)
-			& (HTLC_REMOTE_F_OWNER|HTLC_LOCAL_F_OWNER))
-		       == HTLC_REMOTE_F_OWNER);
-		return REMOTE;
-	}
-}
-
-static inline enum side eltoo_htlc_state_owner(enum eltoo_htlc_state state)
-{
-	if (state < RCVD_ADD_HTLC) {
-		assert((eltoo_htlc_state_flags(state)
-			& (HTLC_REMOTE_F_OWNER|HTLC_LOCAL_F_OWNER))
-		       == HTLC_LOCAL_F_OWNER);
-		return LOCAL;
-	} else {
-		assert((eltoo_htlc_state_flags(state)
 			& (HTLC_REMOTE_F_OWNER|HTLC_LOCAL_F_OWNER))
 		       == HTLC_REMOTE_F_OWNER);
 		return REMOTE;

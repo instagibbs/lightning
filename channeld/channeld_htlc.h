@@ -9,8 +9,6 @@
 struct htlc {
 	/* What's the status. */
 	enum htlc_state state;
-    /* FIXME Can this live here? */
-    enum eltoo_htlc_state eltoo_state;
 	/* The unique ID for this peer and this direction (LOCAL or REMOTE) */
 	u64 id;
 	/* The amount in millisatoshi. */
@@ -45,17 +43,12 @@ static inline bool htlc_has(const struct htlc *h, int flag)
 
 static inline bool eltoo_htlc_has(const struct htlc *h, int flag)
 {
-	return eltoo_htlc_state_flags(h->state) & flag;
+    return eltoo_htlc_state_flags(h->state) & flag;
 }
 
 static inline enum side htlc_owner(const struct htlc *h)
 {
 	return htlc_state_owner(h->state);
-}
-
-static inline enum side eltoo_htlc_owner(const struct htlc *h)
-{
-	return eltoo_htlc_state_owner(h->eltoo_state);
 }
 
 /* htlc_map: ID -> htlc mapping. */
@@ -90,17 +83,18 @@ static inline struct htlc *htlc_get(struct htlc_map *htlcs, u64 id, enum side ow
 
 static inline struct htlc *eltoo_htlc_get(struct htlc_map *htlcs, u64 id, enum side owner)
 {
-	struct htlc *h;
-	struct htlc_map_iter it;
+    struct htlc *h;
+    struct htlc_map_iter it;
 
-	for (h = htlc_map_getfirst(htlcs, id, &it);
-	     h;
-	     h = htlc_map_getnext(htlcs, id, &it)) {
-		if (h->id == id && eltoo_htlc_has(h, HTLC_FLAG(owner,HTLC_F_OWNER)))
-			return h;
-	}
-	return NULL;
+    for (h = htlc_map_getfirst(htlcs, id, &it);
+         h;
+         h = htlc_map_getnext(htlcs, id, &it)) {
+        if (h->id == id && eltoo_htlc_has(h, HTLC_FLAG(owner,HTLC_F_OWNER)))
+            return h;
+    }
+    return NULL;
 }
+
 /* FIXME: Move these out of the hash! */
 static inline bool htlc_is_dead(const struct htlc *htlc)
 {

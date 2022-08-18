@@ -1064,7 +1064,7 @@ static void marshall_htlc_info(const tal_t *ctx,
 
 	for (size_t i = 0; i < tal_count(changed_htlcs); i++) {
 		const struct htlc *htlc = changed_htlcs[i];
-		if (htlc->eltoo_state == RCVD_ADD_UPDATE) {
+		if (htlc->state == RCVD_ADD_UPDATE) {
 			struct added_htlc a;
 
 			a.id = htlc->id;
@@ -1081,7 +1081,7 @@ static void marshall_htlc_info(const tal_t *ctx,
 				a.blinding = NULL;
 			a.fail_immediate = htlc->fail_immediate;
 			tal_arr_expand(added, a);
-		} else if (htlc->eltoo_state == RCVD_REMOVE_UPDATE) {
+		} else if (htlc->state == RCVD_REMOVE_UPDATE) {
 			if (htlc->r) {
 				struct fulfilled_htlc f;
 				assert(!htlc->failed);
@@ -1094,11 +1094,11 @@ static void marshall_htlc_info(const tal_t *ctx,
 			}
 		} else {
 			struct changed_htlc c;
-			assert(htlc->eltoo_state == RCVD_REMOVE_ACK
-			       || htlc->eltoo_state == RCVD_ADD_ACK);
+			assert(htlc->state == RCVD_REMOVE_ACK
+			       || htlc->state == RCVD_ADD_ACK);
 
 			c.id = htlc->id;
-			c.eltoo_newstate = htlc->eltoo_state;
+			c.newstate = htlc->state;
 			tal_arr_expand(changed, c);
 		}
 	}
@@ -1271,7 +1271,7 @@ static u8 *got_signed_ack_msg(struct peer *peer,
 			     htlc_state_name(htlc->state));
 
 		c.id = changed_htlcs[i]->id;
-		c.eltoo_newstate = changed_htlcs[i]->eltoo_state;
+		c.newstate = changed_htlcs[i]->state;
 		tal_arr_expand(&changed, c);
 	}
 

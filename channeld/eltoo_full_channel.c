@@ -128,20 +128,20 @@ static void htlc_arr_append(const struct htlc ***arr, const struct htlc *htlc)
 
 static void dump_htlc(const struct htlc *htlc, const char *prefix)
 {
-	enum eltoo_htlc_state remote_state;
-    enum eltoo_htlc_state state = htlc->eltoo_state;
+	enum htlc_state remote_state;
+    enum htlc_state state = htlc->state;
 
-	if (htlc->eltoo_state <= SENT_REMOVE_ACK)
-		remote_state = state + 6;
+	if (htlc->state <= SENT_REMOVE_ACK)
+		remote_state = state + 10;
 	else
-		remote_state = state - 6;
+		remote_state = state - 10;
 
 	status_debug("%s: HTLC %s %"PRIu64" = %s/%s %s",
 		     prefix,
-		     eltoo_htlc_state_owner(state) == LOCAL ? "LOCAL" : "REMOTE",
+		     htlc_state_owner(state) == LOCAL ? "LOCAL" : "REMOTE",
 		     htlc->id,
-		     eltoo_htlc_state_name(state),
-		     eltoo_htlc_state_name(remote_state),
+		     htlc_state_name(state),
+		     htlc_state_name(remote_state),
 		     htlc->r ? "FULFILLED" : htlc->failed ? "FAILED"
 		     : "");
 }
@@ -349,7 +349,7 @@ static size_t num_untrimmed_htlcs(enum side side,
 }
 
 static enum channel_add_err add_htlc(struct eltoo_channel *channel,
-				     enum eltoo_htlc_state state,
+				     enum htlc_state state,
 				     u64 id,
 				     struct amount_msat amount,
 				     u32 cltv_expiry,
@@ -364,7 +364,7 @@ static enum channel_add_err add_htlc(struct eltoo_channel *channel,
 	struct htlc *htlc, *old;
 	struct amount_msat msat_in_htlcs, committed_msat,
 			   adding_msat, removing_msat, htlc_dust_amt;
-	enum side sender = eltoo_htlc_state_owner(state), recipient = !sender;
+	enum side sender = htlc_state_owner(state), recipient = !sender;
 	const struct htlc **committed, **adding, **removing;
 	const struct channel_view *view;
 	size_t htlc_count;
@@ -533,7 +533,7 @@ enum channel_add_err channel_add_htlc(struct eltoo_channel *channel,
 				      bool err_immediate_failures)
 {
     /* FIXME figure out HTLC state machine for eltoo */
-	enum eltoo_htlc_state state;
+	enum htlc_state state;
 
 	if (sender == LOCAL)
 		state = SENT_ADD_HTLC;
@@ -595,7 +595,7 @@ enum channel_remove_err channel_fulfill_htlc(struct eltoo_channel *channel,
 	 */
 	if (!eltoo_htlc_has(htlc, HTLC_FLAG(!htlc_owner(htlc), HTLC_F_COMMITTED))) {
 		status_unusual("channel_fulfill_htlc: %"PRIu64" in state %s",
-			     htlc->id, htlc_state_name(htlc->eltoo_state));
+			     htlc->id, htlc_state_name(htlc->state));
 		return CHANNEL_ERR_HTLC_UNCOMMITTED;
 	}
 
@@ -610,13 +610,13 @@ enum channel_remove_err channel_fulfill_htlc(struct eltoo_channel *channel,
 	 *    - MUST NOT send an `update_fulfill_htlc`, `update_fail_htlc`, or
 	 *      `update_fail_malformed_htlc`.
 	 */
-	if (htlc->eltoo_state == RCVD_ADD_ACK)
-		htlc->eltoo_state = RCVD_REMOVE_HTLC;
-	else if (htlc->eltoo_state == SENT_ADD_ACK)
-		htlc->eltoo_state = SENT_REMOVE_HTLC;
+	if (htlc->state == RCVD_ADD_ACK)
+		htlc->state = RCVD_REMOVE_HTLC;
+	else if (htlc->state == SENT_ADD_ACK)
+		htlc->state = SENT_REMOVE_HTLC;
 	else {
 		status_unusual("channel_fulfill_htlc: %"PRIu64" in state %s",
-			     htlc->id, htlc_state_name(htlc->eltoo_state));
+			     htlc->id, htlc_state_name(htlc->state));
 		return CHANNEL_ERR_HTLC_NOT_IRREVOCABLE;
 	}
 
@@ -648,19 +648,19 @@ enum channel_remove_err channel_fail_htlc(struct eltoo_channel *channel,
 	 */
 	if (!eltoo_htlc_has(htlc, HTLC_FLAG(!htlc_owner(htlc), HTLC_F_COMMITTED))) {
 		status_unusual("channel_fail_htlc: %"PRIu64" in state %s",
-			     htlc->id, eltoo_htlc_state_name(htlc->eltoo_state));
+			     htlc->id, htlc_state_name(htlc->state));
 		return CHANNEL_ERR_HTLC_UNCOMMITTED;
 	}
 
 	/* FIXME: Technically, they can fail this before we're committed to
 	 * it.  This implies a non-linear state machine. */
-	if (htlc->eltoo_state == SENT_ADD_ACK)
-		htlc->eltoo_state = SENT_REMOVE_HTLC;
-	else if (htlc->eltoo_state == RCVD_ADD_ACK)
-		htlc->eltoo_state = RCVD_REMOVE_HTLC;
+	if (htlc->state == SENT_ADD_ACK)
+		htlc->state = SENT_REMOVE_HTLC;
+	else if (htlc->state == RCVD_ADD_ACK)
+		htlc->state = RCVD_REMOVE_HTLC;
 	else {
 		status_unusual("channel_fail_htlc: %"PRIu64" in state %s",
-			     htlc->id, eltoo_htlc_state_name(htlc->eltoo_state));
+			     htlc->id, htlc_state_name(htlc->state));
 		return CHANNEL_ERR_HTLC_NOT_IRREVOCABLE;
 	}
 
@@ -679,16 +679,16 @@ static void htlc_incstate(struct eltoo_channel *channel,
 	const int committed_f = HTLC_FLAG(sidechanged, HTLC_F_COMMITTED);
 
 	status_debug("htlc %"PRIu64": %s->%s", htlc->id,
-		     eltoo_htlc_state_name(htlc->eltoo_state),
-		     eltoo_htlc_state_name(htlc->eltoo_state+1));
+		     htlc_state_name(htlc->state),
+		     htlc_state_name(htlc->state+1));
 
-	preflags = eltoo_htlc_state_flags(htlc->eltoo_state);
-	postflags = eltoo_htlc_state_flags(htlc->eltoo_state + 1);
+	preflags = eltoo_htlc_state_flags(htlc->state);
+	postflags = eltoo_htlc_state_flags(htlc->state + 1);
 	/* You can't change sides. */
 	assert((preflags & (HTLC_LOCAL_F_OWNER|HTLC_REMOTE_F_OWNER))
 	       == (postflags & (HTLC_LOCAL_F_OWNER|HTLC_REMOTE_F_OWNER)));
 
-	htlc->eltoo_state++;
+	htlc->state++;
 
 	/* If we've added or removed, adjust balances. */
 	if (!(preflags & committed_f) && (postflags & committed_f)) {
@@ -713,7 +713,7 @@ static void htlc_incstate(struct eltoo_channel *channel,
 /* Returns flags which were changed. */
 static int change_htlcs(struct eltoo_channel *channel,
 			enum side sidechanged,
-			const enum eltoo_htlc_state *htlc_states,
+			const enum htlc_state *htlc_states,
 			size_t n_hstates,
 			const struct htlc ***htlcs,
 			const char *prefix)
@@ -731,12 +731,12 @@ static int change_htlcs(struct eltoo_channel *channel,
 	     h;
 	     h = htlc_map_next(channel->htlcs, &it)) {
 		for (i = 0; i < n_hstates; i++) {
-			if (h->eltoo_state == htlc_states[i]) {
+			if (h->state == htlc_states[i]) {
 				htlc_incstate(channel, h, sidechanged, owed);
 				dump_htlc(h, prefix);
 				htlc_arr_append(htlcs, h);
 				cflags |= (eltoo_htlc_state_flags(htlc_states[i])
-					   ^ eltoo_htlc_state_flags(h->eltoo_state));
+					   ^ eltoo_htlc_state_flags(h->state));
 			}
 		}
 	}
@@ -839,7 +839,7 @@ bool channel_sending_update(struct eltoo_channel *channel,
 			    const struct htlc ***htlcs)
 {
 	int change;
-	const enum eltoo_htlc_state states[] = { SENT_ADD_HTLC,
+	const enum htlc_state states[] = { SENT_ADD_HTLC,
 					   SENT_REMOVE_HTLC };
 	status_debug("Trying update");
 
@@ -869,7 +869,7 @@ bool channel_rcvd_update_sign_ack(struct channel *channel,
 bool channel_rcvd_update(struct channel *channel, const struct htlc ***htlcs)
 {
 	int change;
-	const enum eltoo_htlc_state states[] = { RCVD_ADD_UPDATE,
+	const enum htlc_state states[] = { RCVD_ADD_UPDATE,
 					   RCVD_REMOVE_HTLC,
 					   RCVD_ADD_HTLC,
 					   RCVD_REMOVE_UPDATE };
@@ -935,7 +935,7 @@ static bool adjust_balance(struct balance view_owed[NUM_SIDES][NUM_SIDES],
 		if (!htlc->failed && !htlc->r) {
 			status_broken("%s HTLC %"PRIu64
 				      " %s neither fail nor fulfill?",
-				      eltoo_htlc_state_owner(htlc->eltoo_state) == LOCAL
+				      htlc_state_owner(htlc->state) == LOCAL
 				      ? "out" : "in",
 				      htlc->id,
 				      htlc_state_name(htlc->state));
@@ -959,7 +959,7 @@ bool pending_updates(const struct eltoo_channel *channel,
 	for (htlc = htlc_map_first(channel->htlcs, &it);
 	     htlc;
 	     htlc = htlc_map_next(channel->htlcs, &it)) {
-		int flags = htlc_state_flags(htlc->state);
+		int flags = eltoo_htlc_state_flags(htlc->state);
 
 		/* If it's still being added, its owner added it. */
 		if (flags & HTLC_ADDING) {
@@ -970,7 +970,7 @@ bool pending_updates(const struct eltoo_channel *channel,
 			if (htlc_owner(htlc) == side)
 				return true;
 		/* If it's being removed, non-owner removed it */
-		} else if (htlc_state_flags(htlc->state) & HTLC_REMOVING) {
+		} else if (eltoo_htlc_state_flags(htlc->state) & HTLC_REMOVING) {
 			/* It might be OK if it's removed, but not committed */
 			if (uncommitted_ok
 			    && (flags & HTLC_FLAG(!side, HTLC_F_PENDING)))
@@ -1025,7 +1025,7 @@ bool channel_force_htlcs(struct eltoo_channel *channel,
 			     &htlc, false, NULL, false);
 		if (e != CHANNEL_ERR_ADD_OK) {
 			status_broken("%s HTLC %"PRIu64" failed error %u",
-				     eltoo_htlc_state_owner(htlcs[i]->eltoo_state) == LOCAL
+				     htlc_state_owner(htlcs[i]->state) == LOCAL
 				     ? "out" : "in", htlcs[i]->id, e);
 			return false;
 		}

@@ -38,28 +38,24 @@ enum htlc_state {
 	HTLC_STATE_INVALID
 };
 
-enum eltoo_htlc_state {
-	/* When _we_ add a new htlc, it goes in this order. */
-	SENT_ADD_HTLC, /* --update_add_htlc--> */
-	SENT_ADD_UPDATE, /* --update_signed--> */
-	RCVD_ADD_ACK, /* <--update_signed_ack-- */
+/* Eltoo: Only first three states in htlc_state are used */
 
-	/* ... then when _they_ remove the HTLC: */
-	RCVD_REMOVE_HTLC, /* <--update_{fulfill,fail,fail_malformed}_htlc-- */
-	RCVD_REMOVE_UPDATE, /* rest of messages same as "add", in reverse direction */
-	SENT_REMOVE_ACK,
+/* SENT_ADD_HTLC is same*/
+#define SENT_ADD_UPDATE (SENT_ADD_COMMIT)
+#define RCVD_ADD_ACK (RCVD_ADD_REVOCATION)
 
-	/* When _they_ add a new htlc, it goes in this order. */
-	RCVD_ADD_HTLC, 
-	RCVD_ADD_UPDATE,
-	SENT_ADD_ACK,
+/* SENT_REMOVE_HTLC is same */
+#define SENT_REMOVE_UPDATE (SENT_REMOVE_COMMIT)
+#define RCVD_REMOVE_ACK (RCVD_REMOVE_REVOCATION)
 
-	/* ... then when _we_ remove the HTLC: */
-	SENT_REMOVE_HTLC,
-	SENT_REMOVE_UPDATE,
-	RCVD_REMOVE_ACK,
+/* RCVD_ADD_HTLC is same*/
+#define RCVD_ADD_UPDATE (RCVD_ADD_COMMIT)
+#define SENT_ADD_ACK (SENT_ADD_REVOCATION)
 
-	HTLC_STATE_INVALID
-};
+/* RCVD_REMOVE_HTLC is same */
+#define RCVD_REMOVE_UPDATE (RCVD_REMOVE_COMMIT)
+#define SENT_REMOVE_ACK (SENT_REMOVE_REVOCATION)
+
+/* HTLC_STATE_INVALID is same */
 
 #endif /* LIGHTNING_COMMON_HTLC_STATE_H */

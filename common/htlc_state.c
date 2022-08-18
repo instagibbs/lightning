@@ -139,16 +139,6 @@ int htlc_state_flags(enum htlc_state state)
 	return per_state_bits[state];
 }
 
-const char *eltoo_htlc_state_name(enum eltoo_htlc_state s)
-{
-	size_t i;
-
-	for (i = 0; enum_eltoo_htlc_state_names[i].name; i++)
-		if (enum_eltoo_htlc_state_names[i].v == s)
-			return enum_eltoo_htlc_state_names[i].name;
-	return "unknown";
-}
-
 /* This is the flags for each state. */
 /* FIXME someone how knows this has to look at it ... */
 static const int eltoo_per_state_bits[] = {
@@ -217,10 +207,9 @@ static const int eltoo_per_state_bits[] = {
 	+ HTLC_REMOTE_F_WAS_COMMITTED,
 };
 
-int eltoo_htlc_state_flags(enum eltoo_htlc_state state)
+int eltoo_htlc_state_flags(enum htlc_state state)
 {
 	assert(state < ARRAY_SIZE(eltoo_per_state_bits));
 	assert(eltoo_per_state_bits[state]);
 	return eltoo_per_state_bits[state];
 }
-
