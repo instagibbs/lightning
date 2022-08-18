@@ -7,7 +7,7 @@
 #include <common/initial_channel.h>
 #include <common/sphinx.h>
 
-struct eltoo_channel_id;
+struct channel_id;
 struct existing_htlc;
 
 /**
@@ -33,22 +33,17 @@ struct existing_htlc;
  *
  * Returns state, or NULL if malformed.
  */
-struct eltoo_channel *new_full_channel(const tal_t *ctx,
-				 const struct eltoo_channel_id *cid,
+struct eltoo_channel *new_full_eltoo_channel(const tal_t *ctx,
+				 const struct channel_id *cid,
 				 const struct bitcoin_outpoint *funding,
 				 u32 minimum_depth,
-				 const struct height_states *blockheight_states,
-				 u32 lease_expiry,
 				 struct amount_sat funding_sats,
 				 struct amount_msat local_msat,
-				 const struct fee_states *fee_states TAKES,
-				 const struct eltoo_channel_config *local,
-				 const struct eltoo_channel_config *remote,
-				 const struct basepoints *local_basepoints,
-				 const struct basepoints *remote_basepoints,
+				 const struct channel_config *local,
+				 const struct channel_config *remote,
 				 const struct pubkey *local_funding_pubkey,
 				 const struct pubkey *remote_funding_pubkey,
-				 const struct eltoo_channel_type *type TAKES,
+				 const struct channel_type *type TAKES,
 				 bool option_wumbo,
 				 enum side opener);
 

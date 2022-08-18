@@ -141,8 +141,8 @@ struct eltoo_peer {
 	bool last_was_revoke;
 	struct changed_htlc *last_sent_commit;
 	u64 revocations_received;
-	u8 channel_flags;
     */
+	u8 channel_flags;
 
     /* Number of update_signed(_ack) messages received by peer */
 	u64 updates_received;
@@ -283,35 +283,6 @@ static bool handle_master_request_later(struct eltoo_peer *peer, const u8 *msg)
 	return false;
 }
 
-/* Compare, with false if either is NULL */
-static bool match_type(const u8 *t1, const u8 *t2)
-{
-	/* Missing fields are possible. */
-	if (!t1 || !t2)
-		return false;
-
-	return featurebits_eq(t1, t2);
-}
-
-static void set_channel_type(struct eltoo_channel *channel, const u8 *type)
-{
-	const struct channel_type *cur = channel->type;
-
-	if (featurebits_eq(cur->features, type))
-		return;
-
-	/* We only allow one upgrade at the moment, so that's it. */
-	assert(!channel_has(channel, OPT_STATIC_REMOTEKEY));
-	assert(feature_offered(type, OPT_STATIC_REMOTEKEY));
-
-	/* Do upgrade, tell master. */
-	tal_free(channel->type);
-	channel->type = channel_type_from(channel, type);
-	status_unusual("Upgraded channel to [%s]",
-		       fmt_featurebits(tmpctx, type));
-	wire_sync_write(MASTER_FD,
-			take(towire_channeld_upgraded(NULL, channel->type)));
-}
 #else /* !EXPERIMENTAL_FEATURES */
 static bool handle_master_request_later(struct peer *peer, const u8 *msg)
 {
@@ -703,13 +674,14 @@ static u8 *sending_updatesig_msg(const tal_t *ctx,
 	return msg;
 }
 
-static bool shutdown_complete(const struct peer *peer)
+static bool shutdown_complete(const struct eltoo_peer *peer)
 {
+    /* FIXME last line is very wrong */
 	return peer->shutdown_sent[LOCAL]
 		&& peer->shutdown_sent[REMOTE]
 		&& num_channel_htlcs(peer->channel) == 0
 		/* We could be awaiting revoke-and-ack for a feechange */
-		&& peer->revocations_received == peer->next_index - 1;
+		&& peer->updates_received == peer->next_index - 1;
 
 }
 
@@ -751,7 +723,7 @@ static void maybe_send_shutdown(struct eltoo_peer *peer)
 	billboard_update(peer);
 }
 
-static void send_shutdown_complete(struct peer *peer)
+static void send_shutdown_complete(struct eltoo_peer *peer)
 {
 	/* Now we can tell master shutdown is complete. */
 	wire_sync_write(MASTER_FD,
@@ -796,127 +768,6 @@ static u8 *master_wait_sync_reply(const tal_t *ctx,
 	}
 
 	return reply;
-}
-
-/* Collect the htlcs for call to hsmd. */
-static struct simple_htlc **collect_htlcs(const tal_t *ctx, const struct htlc **htlc_map)
-{
-	struct simple_htlc **htlcs;
-
-	htlcs = tal_arr(ctx, struct simple_htlc *, 0);
-	size_t num_entries = tal_count(htlc_map);
-	for (size_t ndx = 0; ndx < num_entries; ++ndx) {
-		struct htlc const *hh = htlc_map[ndx];
-		if (hh) {
-			struct simple_htlc *simple =
-				new_simple_htlc(htlcs,
-						htlc_state_owner(hh->state),
-						hh->amount,
-						&hh->rhash,
-						hh->expiry.locktime);
-			tal_arr_expand(&htlcs, simple);
-		}
-	}
-	return htlcs;
-}
-
-/* Returns HTLC sigs, sets commit_sig */
-static struct bitcoin_signature *calc_commitsigs(const tal_t *ctx,
-						  const struct peer *peer,
-						  struct bitcoin_tx **txs,
-						  const u8 *funding_wscript,
-						  const struct htlc **htlc_map,
-						  u64 commit_index,
-						  struct bitcoin_signature *commit_sig)
-{
-	struct simple_htlc **htlcs;
-	size_t i;
-	struct pubkey local_htlckey;
-	const u8 *msg;
-	struct bitcoin_signature *htlc_sigs;
-
-	htlcs = collect_htlcs(tmpctx, htlc_map);
-	msg = towire_hsmd_sign_remote_commitment_tx(NULL, txs[0],
-						   &peer->channel->funding_pubkey[REMOTE],
-						   &peer->remote_per_commit,
-						    channel_has(peer->channel,
-								OPT_STATIC_REMOTEKEY),
-						    commit_index,
-						    (const struct simple_htlc **) htlcs,
-						    channel_feerate(peer->channel, REMOTE));
-
-	msg = hsm_req(tmpctx, take(msg));
-	if (!fromwire_hsmd_sign_tx_reply(msg, commit_sig))
-		status_failed(STATUS_FAIL_HSM_IO,
-			      "Reading sign_remote_commitment_tx reply: %s",
-			      tal_hex(tmpctx, msg));
-
-	status_debug("Creating commit_sig signature %"PRIu64" %s for tx %s wscript %s key %s",
-		     commit_index,
-		     type_to_string(tmpctx, struct bitcoin_signature,
-				    commit_sig),
-		     type_to_string(tmpctx, struct bitcoin_tx, txs[0]),
-		     tal_hex(tmpctx, funding_wscript),
-		     type_to_string(tmpctx, struct pubkey,
-				    &peer->channel->funding_pubkey[LOCAL]));
-	dump_htlcs(peer->channel, "Sending commit_sig");
-
-	if (!derive_simple_key(&peer->channel->basepoints[LOCAL].htlc,
-			       &peer->remote_per_commit,
-			       &local_htlckey))
-		status_failed(STATUS_FAIL_INTERNAL_ERROR,
-			      "Deriving local_htlckey");
-
-	/* BOLT #2:
-	 *
-	 * A sending node:
-	 *...
-	 *  - MUST include one `htlc_signature` for every HTLC transaction
-	 *    corresponding to the ordering of the commitment transaction
-	 */
-	htlc_sigs = tal_arr(ctx, struct bitcoin_signature, tal_count(txs) - 1);
-
-	for (i = 0; i < tal_count(htlc_sigs); i++) {
-		u8 *wscript;
-
-		wscript = bitcoin_tx_output_get_witscript(tmpctx, txs[0],
-							  txs[i+1]->wtx->inputs[0].index);
-		msg = towire_hsmd_sign_remote_htlc_tx(NULL, txs[i + 1], wscript,
-						     &peer->remote_per_commit,
-						      channel_has(peer->channel,
-								  OPT_ANCHOR_OUTPUTS));
-
-		msg = hsm_req(tmpctx, take(msg));
-		if (!fromwire_hsmd_sign_tx_reply(msg, &htlc_sigs[i]))
-			status_failed(STATUS_FAIL_HSM_IO,
-				      "Bad sign_remote_htlc_tx reply: %s",
-				      tal_hex(tmpctx, msg));
-
-		status_debug("Creating HTLC signature %s for tx %s wscript %s key %s",
-			     type_to_string(tmpctx, struct bitcoin_signature,
-					    &htlc_sigs[i]),
-			     type_to_string(tmpctx, struct bitcoin_tx, txs[1+i]),
-			     tal_hex(tmpctx, wscript),
-			     type_to_string(tmpctx, struct pubkey,
-					    &local_htlckey));
-		assert(check_tx_sig(txs[1+i], 0, NULL, wscript,
-				    &local_htlckey,
-				    &htlc_sigs[i]));
-	}
-
-	return htlc_sigs;
-}
-
-/* Peer protocol doesn't want sighash flags. */
-static secp256k1_ecdsa_signature *raw_sigs(const tal_t *ctx,
-					   const struct bitcoin_signature *sigs)
-{
-	secp256k1_ecdsa_signature *raw;
-
-	raw = tal_arr(ctx, secp256k1_ecdsa_signature, tal_count(sigs));
-	for (size_t i = 0; i < tal_count(sigs); i++)
-		raw[i] = sigs[i].s;
-	return raw;
 }
 
 static void send_update(struct eltoo_peer *peer)
@@ -1044,7 +895,7 @@ static void start_update_timer(struct eltoo_peer *peer)
 					  send_update, peer);
 }
 
-static u8 *make_update_signed_ack_msg(const struct peer *peer)
+static u8 *make_update_signed_ack_msg(const struct eltoo_peer *peer)
 {
     return towire_update_signed_ack(peer, &peer->channel_id, &peer->channel->eltoo_keyset.self_psig, &peer->channel->eltoo_keyset.self_next_nonce);
 }
@@ -1631,7 +1482,7 @@ static void handle_unexpected_reestablish(struct peer *peer, const u8 *msg)
 				       &channel_id));
 }
 
-static void peer_in(struct peer *elto_peer, const u8 *msg)
+static void peer_in(struct eltoo_peer *peer, const u8 *msg)
 {
 	enum peer_wire type = fromwire_peektype(msg);
 
@@ -1789,59 +1640,8 @@ static void send_fail_or_fulfill(struct eltoo_peer *peer, const struct htlc *h)
 	peer_write(peer->pps, take(msg));
 }
 
-static int cmp_changed_htlc_id(const struct changed_htlc *a,
-			       const struct changed_htlc *b,
-			       void *unused)
-{
-	/* ids can be the same (sender and receiver are indep) but in
-	 * that case we don't care about order. */
-	if (a->id > b->id)
-		return 1;
-	else if (a->id < b->id)
-		return -1;
-	return 0;
-}
-
-/* Older LND sometimes sends funding_locked before reestablish! */
-/* ... or announcement_signatures.  Sigh, let's handle whatever they send. */
-static bool capture_premature_msg(const u8 ***shit_lnd_says, const u8 *msg)
-{
-	if (fromwire_peektype(msg) == WIRE_CHANNEL_REESTABLISH)
-		return false;
-
-	/* Don't allow infinite memory consumption. */
-	if (tal_count(*shit_lnd_says) > 10)
-		return false;
-
-	status_debug("Stashing early %s msg!",
-		     peer_wire_name(fromwire_peektype(msg)));
-
-	tal_arr_expand(shit_lnd_says, tal_steal(*shit_lnd_says, msg));
-	return true;
-}
-
-#if EXPERIMENTAL_FEATURES
-/* Unwrap a channel_type into a raw byte array for the wire: can be NULL */
-static u8 *to_bytearr(const tal_t *ctx,
-		      const struct channel_type *channel_type TAKES)
-{
-	u8 *ret;
-	bool steal;
-
-	steal = taken(channel_type);
-	if (!channel_type)
-		return NULL;
-
-	if (steal) {
-		ret = tal_steal(ctx, channel_type->features);
-		tal_free(channel_type);
-	} else
-		ret = tal_dup_talarr(ctx, u8, channel_type->features);
-	return ret;
-}
-
 /* FIXME Reconnect fun! Let's compile first. :) */
-static void peer_reconnect(struct peer *peer,
+static void peer_reconnect(struct eltoo_peer *peer,
 			   bool reestablish_only)
 {
 }
@@ -2282,6 +2082,16 @@ static void req_in(struct eltoo_peer *peer, const u8 *msg)
 	case WIRE_CHANNELD_LOCAL_CHANNEL_UPDATE:
 	case WIRE_CHANNELD_LOCAL_CHANNEL_ANNOUNCEMENT:
 	case WIRE_CHANNELD_LOCAL_PRIVATE_CHANNEL:
+    /* FIXME deal with these? */
+    case WIRE_CHANNELD_GOT_FUNDING_LOCKED_ELTOO:
+    case WIRE_CHANNELD_GOT_UPDATESIG:
+    case WIRE_CHANNELD_GOT_UPDATESIG_REPLY:
+    case WIRE_CHANNELD_GOT_ACK:
+    case WIRE_CHANNELD_GOT_ACK_REPLY:
+    case WIRE_CHANNELD_GOT_SHUTDOWN_ELTOO:
+    case WIRE_CHANNELD_SENDING_UPDATESIG:
+    case WIRE_CHANNELD_SENDING_UPDATESIG_REPLY:
+    case WIRE_CHANNELD_INIT_ELTOO:
 		break;
 	}
 	master_badmsg(-1, msg);
@@ -2316,14 +2126,13 @@ static void init_channel(struct eltoo_peer *peer)
 	assert(!(fcntl(MASTER_FD, F_GETFL) & O_NONBLOCK));
 
 	msg = wire_sync_read(tmpctx, MASTER_FD);
-	if (!fromwire_channeld_init(peer, msg,
+	if (!fromwire_channeld_init_eltoo(peer, msg,
 				    &chainparams,
 				    &peer->our_features,
 				    &peer->channel_id,
 				    &funding,
 				    &funding_sats,
 				    &minimum_depth,
-				    &peer->our_blockheight,
 				    &conf[LOCAL], &conf[REMOTE],
 				    &peer->feerate_min,
 				    &peer->feerate_max,
@@ -2386,7 +2195,7 @@ static void init_channel(struct eltoo_peer *peer)
 	status_debug("init %s: "
 		     " next_idx = %"PRIu64
 		     " updates_received = %"PRIu64
-             " feerates %s range %u-%u"
+             " feerates %s range %u-%u",
 		     side_to_str(opener),
 		     peer->next_index, peer->next_index,
 		     peer->updates_received,
@@ -2435,10 +2244,6 @@ static void init_channel(struct eltoo_peer *peer)
 	peer->channel_direction = node_id_idx(&peer->node_ids[LOCAL],
 					      &peer->node_ids[REMOTE]);
 
-	/* Default desired feerate is the feerate we set for them last. */
-	if (peer->channel->opener == LOCAL)
-		peer->desired_feerate = channel_feerate(peer->channel, REMOTE);
-
 	/* from now we need keep watch over WIRE_CHANNELD_FUNDING_DEPTH */
 	peer->depth_togo = minimum_depth;
 
@@ -2464,13 +2269,13 @@ int main(int argc, char *argv[])
 
 	int i, nfds;
 	fd_set fds_in, fds_out;
-	struct peer *peer;
+	struct eltoo_peer *peer;
 
 	subdaemon_setup(argc, argv);
 
 	status_setup_sync(MASTER_FD);
 
-	peer = tal(NULL, struct peer);
+	peer = tal(NULL, struct eltoo_peer);
 	timers_init(&peer->timers, time_mono());
 	peer->commit_timer = NULL;
 	peer->have_sigs[LOCAL] = peer->have_sigs[REMOTE] = false;
