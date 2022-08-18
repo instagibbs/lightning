@@ -7,7 +7,7 @@
 #include <common/initial_channel.h>
 #include <common/sphinx.h>
 
-struct channel_id;
+struct eltoo_channel_id;
 struct existing_htlc;
 
 /**
@@ -33,8 +33,8 @@ struct existing_htlc;
  *
  * Returns state, or NULL if malformed.
  */
-struct channel *new_full_channel(const tal_t *ctx,
-				 const struct channel_id *cid,
+struct eltoo_channel *new_full_channel(const tal_t *ctx,
+				 const struct eltoo_channel_id *cid,
 				 const struct bitcoin_outpoint *funding,
 				 u32 minimum_depth,
 				 const struct height_states *blockheight_states,
@@ -42,13 +42,13 @@ struct channel *new_full_channel(const tal_t *ctx,
 				 struct amount_sat funding_sats,
 				 struct amount_msat local_msat,
 				 const struct fee_states *fee_states TAKES,
-				 const struct channel_config *local,
-				 const struct channel_config *remote,
+				 const struct eltoo_channel_config *local,
+				 const struct eltoo_channel_config *remote,
 				 const struct basepoints *local_basepoints,
 				 const struct basepoints *remote_basepoints,
 				 const struct pubkey *local_funding_pubkey,
 				 const struct pubkey *remote_funding_pubkey,
-				 const struct channel_type *type TAKES,
+				 const struct eltoo_channel_type *type TAKES,
 				 bool option_wumbo,
 				 enum side opener);
 
@@ -71,7 +71,7 @@ struct bitcoin_tx **channel_txs(const tal_t *ctx,
 				const struct htlc ***htlcmap,
 				struct wally_tx_output *direct_outputs[NUM_SIDES],
 				const u8 **funding_wscript,
-				const struct channel *channel,
+				const struct eltoo_channel *channel,
 				const struct pubkey *per_commitment_point,
 				u64 commitment_number,
 				enum side side);
@@ -89,7 +89,7 @@ struct bitcoin_tx **channel_txs(const tal_t *ctx,
  * This is the fee rate we actually care about, if we're going to check
  * whether it's actually too low.
  */
-u32 actual_feerate(const struct channel *channel,
+u32 actual_feerate(const struct eltoo_channel *channel,
 		   const struct signature *theirsig);
 
 /**
@@ -112,7 +112,7 @@ u32 actual_feerate(const struct channel *channel,
  * the output amounts adjusted accordingly.  Otherwise nothing
  * is changed.
  */
-enum channel_add_err channel_add_htlc(struct channel *channel,
+enum channel_add_err channel_add_htlc(struct eltoo_channel *channel,
 				      enum side sender,
 				      u64 id,
 				      struct amount_msat msatoshi,
@@ -130,7 +130,7 @@ enum channel_add_err channel_add_htlc(struct channel *channel,
  * @offerer: the side offering the HTLC.
  * @id: unique HTLC id.
  */
-struct htlc *channel_get_htlc(struct channel *channel, enum side sender, u64 id);
+struct htlc *channel_get_htlc(struct eltoo_channel *channel, enum side sender, u64 id);
 
 /**
  * channel_fail_htlc: remove an HTLC, funds to the side which offered it.
@@ -142,7 +142,7 @@ struct htlc *channel_get_htlc(struct channel *channel, enum side sender, u64 id)
  * This will remove the htlc and credit the value of the HTLC (back)
  * to its offerer.
  */
-enum channel_remove_err channel_fail_htlc(struct channel *channel,
+enum channel_remove_err channel_fail_htlc(struct eltoo_channel *channel,
 					  enum side owner, u64 id,
 					  struct htlc **htlcp);
 
@@ -158,7 +158,7 @@ enum channel_remove_err channel_fail_htlc(struct channel *channel,
  * remove the htlc and give the value of the HTLC to its recipient,
  * and return CHANNEL_ERR_FULFILL_OK.  Otherwise, it will return another error.
  */
-enum channel_remove_err channel_fulfill_htlc(struct channel *channel,
+enum channel_remove_err channel_fulfill_htlc(struct eltoo_channel *channel,
 					     enum side owner,
 					     u64 id,
 					     const struct preimage *preimage,
@@ -171,14 +171,14 @@ enum channel_remove_err channel_fulfill_htlc(struct channel *channel,
  * This is not exact!  To check if their offer is valid, try
  * channel_update_feerate.
  */
-u32 approx_max_feerate(const struct channel *channel);
+u32 approx_max_feerate(const struct eltoo_channel *channel);
 
 /**
  * can_opener_afford_feerate: could the opener pay the fee?
  * @channel: The channel state
  * @feerate: The feerate in satoshi per 1000 bytes.
  */
-bool can_opener_afford_feerate(const struct channel *channel, u32 feerate);
+bool can_opener_afford_feerate(const struct eltoo_channel *channel, u32 feerate);
 
 /**
  * htlc_dust_ok: will this feerate keep our dusted htlc's beneath
@@ -188,7 +188,7 @@ bool can_opener_afford_feerate(const struct channel *channel, u32 feerate);
  * @feerate_per_kw: new feerate to test ok'ness for
  * @side: which side's htlcs to verify
  */
-bool htlc_dust_ok(const struct channel *channel,
+bool htlc_dust_ok(const struct eltoo_channel *channel,
 		  u32 feerate_per_kw,
 		  enum side side);
 
@@ -199,21 +199,21 @@ bool htlc_dust_ok(const struct channel *channel,
  *
  * Returns true if it's affordable, otherwise does nothing.
  */
-bool channel_update_feerate(struct channel *channel, u32 feerate_per_kw);
+bool channel_update_feerate(struct eltoo_channel *channel, u32 feerate_per_kw);
 
 /*
  * channel_update_blockheight: Change blockheight on non-opener side.
  * @channel: The channel
  * @blockheight: current blockheight
  */
-void channel_update_blockheight(struct channel *channel, u32 blockheight);
+void channel_update_blockheight(struct eltoo_channel *channel, u32 blockheight);
 
 /**
  * channel_feerate: Get fee rate for this side of channel.
  * @channel: The channel
  * @side: the side
  */
-u32 channel_feerate(const struct channel *channel, enum side side);
+u32 channel_feerate(const struct eltoo_channel *channel, enum side side);
 
 /**
  * channel_sending_commit: commit all remote outstanding changes.
@@ -222,7 +222,7 @@ u32 channel_feerate(const struct channel *channel, enum side side);
  *
  * This is where we commit to pending changes we've added; returns true if
  * anything changed for the remote side (if not, don't send!) */
-bool channel_sending_commit(struct channel *channel,
+bool channel_sending_commit(struct eltoo_channel *channel,
 			    const struct htlc ***htlcs);
 
 /**
@@ -233,7 +233,7 @@ bool channel_sending_commit(struct channel *channel,
  * This is where we commit to pending changes we've added; returns true if
  * anything changed for our local commitment (ie. we have pending changes).
  */
-bool channel_rcvd_revoke_and_ack(struct channel *channel,
+bool channel_rcvd_revoke_and_ack(struct eltoo_channel *channel,
 				 const struct htlc ***htlcs);
 
 /**
@@ -244,7 +244,7 @@ bool channel_rcvd_revoke_and_ack(struct channel *channel,
  * This is where we commit to pending changes we've added; returns true if
  * anything changed for our update (ie. we had pending changes added by other).
  */
-bool channel_rcvd_commit(struct channel *channel,
+bool channel_rcvd_commit(struct eltoo_channel *channel,
 			 const struct htlc ***htlcs);
 
 /**
@@ -253,13 +253,13 @@ bool channel_rcvd_commit(struct channel *channel,
  *
  * This is where we commit to pending changes we've added. Returns true if
  * anything changed for the remote commitment (ie. send a new commit).*/
-bool channel_sending_revoke_and_ack(struct channel *channel);
+bool channel_sending_revoke_and_ack(struct eltoo_channel *channel);
 
 /**
  * num_channel_htlcs: how many (live) HTLCs at all in channel?
  * @channel: the channel
  */
-size_t num_channel_htlcs(const struct channel *channel);
+size_t num_channel_htlcs(const struct eltoo_channel *channel);
 
 /**
  * channel_force_htlcs: force these htlcs into the (new) channel
@@ -268,7 +268,7 @@ size_t num_channel_htlcs(const struct channel *channel);
  *
  * This is used for restoring a channel state.
  */
-bool channel_force_htlcs(struct channel *channel,
+bool channel_force_htlcs(struct eltoo_channel *channel,
 			 const struct existing_htlc **htlcs);
 
 /**
@@ -278,7 +278,7 @@ bool channel_force_htlcs(struct channel *channel,
  *
  * Uses status_debug() on every HTLC.
  */
-void dump_htlcs(const struct channel *channel, const char *prefix);
+void dump_htlcs(const struct eltoo_channel *channel, const char *prefix);
 
 /**
  * pending_updates: does this side have updates pending in channel?
@@ -286,7 +286,7 @@ void dump_htlcs(const struct channel *channel, const char *prefix);
  * @side: the side who is offering or failing/fulfilling HTLC, or feechange
  * @uncommitted_ok: don't count uncommitted changes.
  */
-bool pending_updates(const struct channel *channel, enum side side,
+bool pending_updates(const struct eltoo_channel *channel, enum side side,
 		     bool uncommitted_ok);
 
 const char *channel_add_err_name(enum channel_add_err e);

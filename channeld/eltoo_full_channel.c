@@ -45,7 +45,7 @@ static void balance_add_htlc(struct balance *balance,
 			     const struct htlc *htlc,
 			     enum side side)
 {
-	if (htlc_owner(htlc) == side)
+	if (eltoo_htlc_owner(htlc) == side)
 		balance->msat -= htlc->amount.millisatoshis; /* Raw: balance */
 }
 
@@ -58,9 +58,9 @@ static void balance_remove_htlc(struct balance *balance,
 
 	/* Fulfilled HTLCs are paid to recipient, otherwise returns to owner */
 	if (htlc->r)
-		paid_to = !htlc_owner(htlc);
+		paid_to = !eltoo_htlc_owner(htlc);
 	else
-		paid_to = htlc_owner(htlc);
+		paid_to = eltoo_htlc_owner(htlc);
 
 	if (side == paid_to)
 		balance->msat += htlc->amount.millisatoshis; /* Raw: balance */
@@ -192,19 +192,19 @@ static size_t gather_htlcs(const tal_t *ctx,
 	for (htlc = htlc_map_first(channel->htlcs, &it);
 	     htlc;
 	     htlc = htlc_map_next(channel->htlcs, &it)) {
-		if (htlc_has(htlc, committed_flag)) {
+		if (eltoo_htlc_has(htlc, committed_flag)) {
 #ifdef SUPERVERBOSE
 			dump_htlc(htlc, "COMMITTED");
 #endif
 			htlc_arr_append(committed, htlc);
-			if (htlc_has(htlc, pending_flag)) {
+			if (eltoo_htlc_has(htlc, pending_flag)) {
 #ifdef SUPERVERBOSE
 				dump_htlc(htlc, "REMOVING");
 #endif
 				htlc_arr_append(pending_removal, htlc);
 			} else if (htlc_owner(htlc) != side)
 				num_other_side++;
-		} else if (htlc_has(htlc, pending_flag)) {
+		} else if (eltoo_htlc_has(htlc, pending_flag)) {
 			htlc_arr_append(pending_addition, htlc);
 #ifdef SUPERVERBOSE
 			dump_htlc(htlc, "ADDING");
@@ -552,9 +552,9 @@ enum channel_add_err channel_add_htlc(struct eltoo_channel *channel,
 			htlcp, true, err_immediate_failures);
 }
 
-struct htlc *channel_get_htlc(struct channel *channel, enum side sender, u64 id)
+struct htlc *eltoo_channel_get_htlc(struct eltoo_channel *channel, enum side sender, u64 id)
 {
-	return htlc_get(channel->htlcs, id, sender);
+	return eltoo_htlc_get(channel->htlcs, id, sender);
 }
 
 enum channel_remove_err channel_fulfill_htlc(struct eltoo_channel *channel,
@@ -593,7 +593,7 @@ enum channel_remove_err channel_fulfill_htlc(struct eltoo_channel *channel,
 	 *     - MUST send a `warning` and close the connection, or send an
 	 *       `error` and fail the channel.
 	 */
-	if (!htlc_has(htlc, HTLC_FLAG(!htlc_owner(htlc), HTLC_F_COMMITTED))) {
+	if (!eltoo_htlc_has(htlc, HTLC_FLAG(!htlc_owner(htlc), HTLC_F_COMMITTED))) {
 		status_unusual("channel_fulfill_htlc: %"PRIu64" in state %s",
 			     htlc->id, htlc_state_name(htlc->eltoo_state));
 		return CHANNEL_ERR_HTLC_UNCOMMITTED;
@@ -628,13 +628,13 @@ enum channel_remove_err channel_fulfill_htlc(struct eltoo_channel *channel,
 	return CHANNEL_ERR_REMOVE_OK;
 }
 
-enum channel_remove_err channel_fail_htlc(struct channel *channel,
+enum channel_remove_err channel_fail_htlc(struct eltoo_channel *channel,
 					  enum side owner, u64 id,
 					  struct htlc **htlcp)
 {
 	struct htlc *htlc;
 
-	htlc = channel_get_htlc(channel, owner, id);
+	htlc = eltoo_channel_get_htlc(channel, owner, id);
 	if (!htlc)
 		return CHANNEL_ERR_NO_SUCH_ID;
 
@@ -646,21 +646,21 @@ enum channel_remove_err channel_fail_htlc(struct channel *channel,
 	 *     - MUST send a `warning` and close the connection, or send an
 	 *       `error` and fail the channel.
 	 */
-	if (!htlc_has(htlc, HTLC_FLAG(!htlc_owner(htlc), HTLC_F_COMMITTED))) {
+	if (!eltoo_htlc_has(htlc, HTLC_FLAG(!htlc_owner(htlc), HTLC_F_COMMITTED))) {
 		status_unusual("channel_fail_htlc: %"PRIu64" in state %s",
-			     htlc->id, htlc_state_name(htlc->state));
+			     htlc->id, eltoo_htlc_state_name(htlc->eltoo_state));
 		return CHANNEL_ERR_HTLC_UNCOMMITTED;
 	}
 
 	/* FIXME: Technically, they can fail this before we're committed to
 	 * it.  This implies a non-linear state machine. */
-	if (htlc->state == SENT_ADD_ACK_REVOCATION)
-		htlc->state = RCVD_REMOVE_HTLC;
-	else if (htlc->state == RCVD_ADD_ACK_REVOCATION)
-		htlc->state = SENT_REMOVE_HTLC;
+	if (htlc->eltoo_state == SENT_ADD_ACK)
+		htlc->eltoo_state = SENT_REMOVE_HTLC;
+	else if (htlc->eltoo_state == RCVD_ADD_ACK)
+		htlc->eltoo_state = RCVD_REMOVE_HTLC;
 	else {
 		status_unusual("channel_fail_htlc: %"PRIu64" in state %s",
-			     htlc->id, htlc_state_name(htlc->state));
+			     htlc->id, eltoo_htlc_state_name(htlc->eltoo_state));
 		return CHANNEL_ERR_HTLC_NOT_IRREVOCABLE;
 	}
 
@@ -670,7 +670,7 @@ enum channel_remove_err channel_fail_htlc(struct channel *channel,
 	return CHANNEL_ERR_REMOVE_OK;
 }
 
-static void htlc_incstate(struct channel *channel,
+static void htlc_incstate(struct eltoo_channel *channel,
 			  struct htlc *htlc,
 			  enum side sidechanged,
 			  struct balance owed[NUM_SIDES])
@@ -679,16 +679,16 @@ static void htlc_incstate(struct channel *channel,
 	const int committed_f = HTLC_FLAG(sidechanged, HTLC_F_COMMITTED);
 
 	status_debug("htlc %"PRIu64": %s->%s", htlc->id,
-		     htlc_state_name(htlc->state),
-		     htlc_state_name(htlc->state+1));
+		     eltoo_htlc_state_name(htlc->eltoo_state),
+		     eltoo_htlc_state_name(htlc->eltoo_state+1));
 
-	preflags = htlc_state_flags(htlc->state);
-	postflags = htlc_state_flags(htlc->state + 1);
+	preflags = eltoo_htlc_state_flags(htlc->eltoo_state);
+	postflags = eltoo_htlc_state_flags(htlc->eltoo_state + 1);
 	/* You can't change sides. */
 	assert((preflags & (HTLC_LOCAL_F_OWNER|HTLC_REMOTE_F_OWNER))
 	       == (postflags & (HTLC_LOCAL_F_OWNER|HTLC_REMOTE_F_OWNER)));
 
-	htlc->state++;
+	htlc->eltoo_state++;
 
 	/* If we've added or removed, adjust balances. */
 	if (!(preflags & committed_f) && (postflags & committed_f)) {
@@ -710,67 +710,10 @@ static void htlc_incstate(struct channel *channel,
 	}
 }
 
-/* Returns true if a change was made. */
-static bool fee_incstate(struct channel *channel,
-			 enum side sidechanged,
-			 enum htlc_state hstate)
-{
-	int preflags, postflags;
-
-	preflags = htlc_state_flags(hstate);
-	postflags = htlc_state_flags(hstate + 1);
-
-	/* You can't change sides. */
-	assert((preflags & (HTLC_LOCAL_F_OWNER|HTLC_REMOTE_F_OWNER))
-	       == (postflags & (HTLC_LOCAL_F_OWNER|HTLC_REMOTE_F_OWNER)));
-
-	/* These only advance through ADDING states. */
-	if (!(htlc_state_flags(hstate) & HTLC_ADDING))
-		return false;
-
-	if (!inc_fee_state(channel->fee_states, hstate))
-		return false;
-
-	status_debug("Feerate: %s->%s %s now %u",
-		     htlc_state_name(hstate),
-		     htlc_state_name(hstate+1),
-		     side_to_str(sidechanged),
-		     *channel->fee_states->feerate[hstate+1]);
-	return true;
-}
-
-static bool blockheight_incstate(struct channel *channel,
-				 enum side sidechanged,
-				 enum htlc_state hstate)
-{
-	int preflags, postflags;
-
-	preflags = htlc_state_flags(hstate);
-	postflags = htlc_state_flags(hstate + 1);
-
-	/* You can't change sides. */
-	assert((preflags & (HTLC_LOCAL_F_OWNER|HTLC_REMOTE_F_OWNER))
-	       == (postflags & (HTLC_LOCAL_F_OWNER|HTLC_REMOTE_F_OWNER)));
-
-	/* These only advance through ADDING states. */
-	if (!(htlc_state_flags(hstate) & HTLC_ADDING))
-		return false;
-
-	if (!inc_height_state(channel->blockheight_states, hstate))
-		return false;
-
-	status_debug("Blockheight: %s->%s %s now %u",
-		     htlc_state_name(hstate),
-		     htlc_state_name(hstate+1),
-		     side_to_str(sidechanged),
-		     *channel->blockheight_states->height[hstate+1]);
-	return true;
-}
-
 /* Returns flags which were changed. */
-static int change_htlcs(struct channel *channel,
+static int change_htlcs(struct eltoo_channel *channel,
 			enum side sidechanged,
-			const enum htlc_state *htlc_states,
+			const enum eltoo_htlc_state *htlc_states,
 			size_t n_hstates,
 			const struct htlc ***htlcs,
 			const char *prefix)
@@ -788,12 +731,12 @@ static int change_htlcs(struct channel *channel,
 	     h;
 	     h = htlc_map_next(channel->htlcs, &it)) {
 		for (i = 0; i < n_hstates; i++) {
-			if (h->state == htlc_states[i]) {
+			if (h->eltoo_state == htlc_states[i]) {
 				htlc_incstate(channel, h, sidechanged, owed);
 				dump_htlc(h, prefix);
 				htlc_arr_append(htlcs, h);
-				cflags |= (htlc_state_flags(htlc_states[i])
-					   ^ htlc_state_flags(h->state));
+				cflags |= (eltoo_htlc_state_flags(htlc_states[i])
+					   ^ eltoo_htlc_state_flags(h->eltoo_state));
 			}
 		}
 	}
@@ -808,18 +751,6 @@ static int change_htlcs(struct channel *channel,
 						     &channel->view[sidechanged].owed[i]),
 				      owed[i].msat);
 		}
-	}
-
-	/* Update fees and blockheight (do backwards, to avoid
-	 * double-increment!). */
-	for (i = n_hstates - 1; i >= 0; i--) {
-		if (fee_incstate(channel, sidechanged, htlc_states[i]))
-			cflags |= (htlc_state_flags(htlc_states[i])
-				   ^ htlc_state_flags(htlc_states[i]+1));
-
-		if (blockheight_incstate(channel, sidechanged, htlc_states[i]))
-			cflags |= (htlc_state_flags(htlc_states[i])
-				   ^ htlc_state_flags(htlc_states[i]+1));
 	}
 
 	return cflags;
@@ -904,15 +835,13 @@ bool htlc_dust_ok(const struct channel *channel,
 		total_dusted);
 }
 
-bool channel_sending_commit(struct channel *channel,
+bool channel_sending_update(struct eltoo_channel *channel,
 			    const struct htlc ***htlcs)
 {
 	int change;
-	const enum htlc_state states[] = { SENT_ADD_HTLC,
-					   SENT_REMOVE_REVOCATION,
-					   SENT_ADD_REVOCATION,
+	const enum eltoo_htlc_state states[] = { SENT_ADD_HTLC,
 					   SENT_REMOVE_HTLC };
-	status_debug("Trying commit");
+	status_debug("Trying update");
 
 	change = change_htlcs(channel, REMOTE, states, ARRAY_SIZE(states),
 			      htlcs, "sending_commit");
@@ -968,7 +897,7 @@ bool channel_sending_revoke_and_ack(struct channel *channel)
 	return (change & HTLC_REMOTE_F_PENDING);
 }
 
-size_t num_channel_htlcs(const struct channel *channel)
+size_t num_channel_htlcs(const struct eltoo_channel *channel)
 {
 	struct htlc_map_iter it;
 	const struct htlc *htlc;
@@ -991,7 +920,7 @@ static bool adjust_balance(struct balance view_owed[NUM_SIDES][NUM_SIDES],
 
 	for (side = 0; side < NUM_SIDES; side++) {
 		/* Did it ever add it? */
-		if (!htlc_has(htlc, HTLC_FLAG(side, HTLC_F_WAS_COMMITTED)))
+		if (!eltoo_htlc_has(htlc, HTLC_FLAG(side, HTLC_F_WAS_COMMITTED)))
 			continue;
 
 		/* Add it. */
@@ -1000,13 +929,13 @@ static bool adjust_balance(struct balance view_owed[NUM_SIDES][NUM_SIDES],
 
 		/* If it is no longer committed, remove it (depending
 		 * on fail || fulfill). */
-		if (htlc_has(htlc, HTLC_FLAG(side, HTLC_F_COMMITTED)))
+		if (eltoo_htlc_has(htlc, HTLC_FLAG(side, HTLC_F_COMMITTED)))
 			continue;
 
 		if (!htlc->failed && !htlc->r) {
 			status_broken("%s HTLC %"PRIu64
 				      " %s neither fail nor fulfill?",
-				      htlc_state_owner(htlc->state) == LOCAL
+				      eltoo_htlc_state_owner(htlc->eltoo_state) == LOCAL
 				      ? "out" : "in",
 				      htlc->id,
 				      htlc_state_name(htlc->state));
@@ -1018,22 +947,14 @@ static bool adjust_balance(struct balance view_owed[NUM_SIDES][NUM_SIDES],
 	return true;
 }
 
-bool pending_updates(const struct channel *channel,
+bool pending_updates(const struct eltoo_channel *channel,
 		     enum side side,
 		     bool uncommitted_ok)
 {
 	struct htlc_map_iter it;
 	const struct htlc *htlc;
 
-	/* Initiator might have fee changes or blockheight updates in play. */
-	if (side == channel->opener) {
-		if (!feerate_changes_done(channel->fee_states, uncommitted_ok))
-			return true;
-
-		if (!blockheight_changes_done(channel->blockheight_states,
-					      uncommitted_ok))
-			return true;
-	}
+    /* No blockheight updates for eltoo for now, continue */
 
 	for (htlc = htlc_map_first(channel->htlcs, &it);
 	     htlc;
@@ -1062,7 +983,7 @@ bool pending_updates(const struct channel *channel,
 	return false;
 }
 
-bool channel_force_htlcs(struct channel *channel,
+bool channel_force_htlcs(struct eltoo_channel *channel,
 			 const struct existing_htlc **htlcs)
 {
 	struct balance view_owed[NUM_SIDES][NUM_SIDES];
@@ -1104,7 +1025,7 @@ bool channel_force_htlcs(struct channel *channel,
 			     &htlc, false, NULL, false);
 		if (e != CHANNEL_ERR_ADD_OK) {
 			status_broken("%s HTLC %"PRIu64" failed error %u",
-				     htlc_state_owner(htlcs[i]->state) == LOCAL
+				     eltoo_htlc_state_owner(htlcs[i]->eltoo_state) == LOCAL
 				     ? "out" : "in", htlcs[i]->id, e);
 			return false;
 		}

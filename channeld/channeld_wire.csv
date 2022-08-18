@@ -370,6 +370,67 @@ msgdata,channeld_dev_peer_shachain,seed,sha256,
 
 # ELTOO STUFF
 
+# Begin!  (passes gossipd-client fd)
+msgtype,channeld_init_eltoo,1000
+msgdata,channeld_init_eltoo,chainparams,chainparams,
+msgdata,channeld_init_eltoo,our_features,feature_set,
+msgdata,channeld_init_eltoo,channel_id,channel_id,
+msgdata,channeld_init_eltoo,funding,bitcoin_outpoint,
+msgdata,channeld_init_eltoo,funding_satoshi,amount_sat,
+msgdata,channeld_init_eltoo,minimum_depth,u32,
+msgdata,channeld_init_eltoo,our_blockheight,u32,
+msgdata,channeld_init_eltoo,our_config,channel_config,
+msgdata,channeld_init_eltoo,their_config,channel_config,
+msgdata,channeld_init_eltoo,feerate_min,u32,
+msgdata,channeld_init_eltoo,feerate_max,u32,
+msgdata,channeld_init_eltoo,their_update_psig,partial_sig,
+msgdata,channeld_init_eltoo,our_update_psig,partial_sig,
+msgdata,channeld_init_eltoo,session,musig_session,
+msgdata,channeld_init_eltoo,their_funding_pubkey,pubkey,
+msgdata,channeld_init_eltoo,opener,enum side,
+msgdata,channeld_init_eltoo,fee_base,u32,
+msgdata,channeld_init_eltoo,fee_proportional,u32,
+msgdata,channeld_init_eltoo,htlc_minimum_msat,amount_msat,
+msgdata,channeld_init_eltoo,htlc_maximum_msat,amount_msat,
+msgdata,channeld_init_eltoo,local_msatoshi,amount_msat,
+msgdata,channeld_init_eltoo,our_funding_pubkey,pubkey,
+msgdata,channeld_init_eltoo,local_node_id,node_id,
+msgdata,channeld_init_eltoo,remote_node_id,node_id,
+msgdata,channeld_init_eltoo,commit_msec,u32,
+msgdata,channeld_init_eltoo,cltv_delta,u16,
+msgdata,channeld_init_eltoo,next_index,u64,
+msgdata,channeld_init_eltoo,updates_received,u64,
+msgdata,channeld_init_eltoo,next_htlc_id,u64,
+msgdata,channeld_init_eltoo,num_existing_htlcs,u16,
+msgdata,channeld_init_eltoo,htlcs,existing_htlc,num_existing_htlcs
+msgdata,channeld_init_eltoo,local_funding_locked,bool,
+msgdata,channeld_init_eltoo,remote_funding_locked,bool,
+msgdata,channeld_init_eltoo,funding_short_id,short_channel_id,
+msgdata,channeld_init_eltoo,reestablish,bool,
+msgdata,channeld_init_eltoo,send_shutdown,bool,
+msgdata,channeld_init_eltoo,remote_shutdown_received,bool,
+msgdata,channeld_init_eltoo,final_index,u32,
+msgdata,channeld_init_eltoo,final_ext_key,ext_key,
+msgdata,channeld_init_eltoo,final_scriptpubkey_len,u16,
+msgdata,channeld_init_eltoo,final_scriptpubkey,u8,final_scriptpubkey_len
+msgdata,channeld_init_eltoo,flags,u8,
+msgdata,channeld_init_eltoo,init_peer_pkt_len,u16,
+msgdata,channeld_init_eltoo,init_peer_pkt,u8,init_peer_pkt_len
+msgdata,channeld_init_eltoo,reached_announce_depth,bool,
+msgdata,channeld_init_eltoo,flen,u16,
+msgdata,channeld_init_eltoo,their_features,u8,flen
+msgdata,channeld_init_eltoo,upfront_shutdown_script_len,u16,
+msgdata,channeld_init_eltoo,upfront_shutdown_script,u8,upfront_shutdown_script_len
+msgdata,channeld_init_eltoo,remote_ann_node_sig,?secp256k1_ecdsa_signature,
+msgdata,channeld_init_eltoo,remote_ann_bitcoin_sig,?secp256k1_ecdsa_signature,
+msgdata,channeld_init_eltoo,desired_type,channel_type,
+msgdata,channeld_init_eltoo,dev_fast_gossip,bool,
+msgdata,channeld_init_eltoo,dev_fail_process_onionpacket,bool,
+msgdata,channeld_init_eltoo,dev_disable_commit,?u32,
+msgdata,channeld_init_eltoo,reestablish_only,bool,
+msgdata,channeld_init_eltoo,channel_update_len,u16,
+msgdata,channeld_init_eltoo,channel_update,u8,channel_update_len
+
 # When we receive funding_locked.
 msgtype,channeld_got_funding_locked_eltoo,1079
 
@@ -401,6 +462,31 @@ msgdata,channeld_got_ack,updatenum,u64,
 # RCVD_ADD_ACK, RCVD_REMOVE_ACK
 msgdata,channeld_got_ack,num_changed,u16,
 msgdata,channeld_got_ack,changed,changed_htlc,num_changed
+msgdata,channeld_got_ack,update_sig,bip340sig,
 # Wait for reply, to make sure it's on disk before we continue
 # (eg. if we sent another commitment_signed, that would implicitly ack).
 msgtype,channeld_got_ack_reply,1122
+
+# Peer told us that channel is shutting down
+msgtype,channeld_got_shutdown_eltoo,1084
+msgdata,channeld_got_shutdown_eltoo,scriptpubkey_len,u16,
+msgdata,channeld_got_shutdown_eltoo,scriptpubkey,u8,scriptpubkey_len
+msgdata,channeld_got_shutdown_eltoo,wrong_funding,?bitcoin_outpoint,
+
+# When we send a update_signed message, tell master.
+msgtype,channeld_sending_updatesig,1080
+msgdata,channeld_sending_updatesig,update_num,u64,
+# SENT_ADD_UPDATE, SENT_REMOVE_ACK, SENT_ADD_ACK, SENT_REMOVE_UPDATE
+msgdata,channeld_sending_updatesig,num_changed,u16,
+msgdata,channeld_sending_updatesig,changed,changed_htlc,num_changed
+msgdata,channeld_sending_updatesig,our_update_p_sig,partial_sig,
+msgdata,channeld_sending_updatesig,session,musig_session,
+
+# Wait for reply, to make sure it's on disk before we send commit.
+msgtype,channeld_sending_updatesig_reply,1180
+
+# Peer told us that channel is shutting down
+msgtype,channeld_got_shutdown_eltoo,1084
+msgdata,channeld_got_shutdown_eltoo,scriptpubkey_len,u16,
+msgdata,channeld_got_shutdown_eltoo,scriptpubkey,u8,scriptpubkey_len
+msgdata,channeld_got_shutdown_eltoo,wrong_funding,?bitcoin_outpoint,
