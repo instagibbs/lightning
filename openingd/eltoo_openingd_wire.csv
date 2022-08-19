@@ -14,7 +14,7 @@ msgdata,openingd_eltoo_init,chainparams,chainparams,
 msgdata,openingd_eltoo_init,our_features,feature_set,
 msgdata,openingd_eltoo_init,their_init_features_len,u16,
 msgdata,openingd_eltoo_init,their_init_features,u8,their_init_features_len
-msgdata,openingd_eltoo_init,our_config,eltoo_channel_config,
+msgdata,openingd_eltoo_init,our_config,channel_config,
 # Minimum/maximum configuration values we'll accept
 msgdata,openingd_eltoo_init,max_shared_delay,u32,
 msgdata,openingd_eltoo_init,min_effective_htlc_capacity_msat,amount_msat,
@@ -30,7 +30,7 @@ msgdata,openingd_eltoo_init,dev_temporary_channel_id,?byte,32
 # Openingd->master: we've successfully offered channel.
 # This gives their psig, means we can broadcast tx: we're done.
 msgtype,openingd_eltoo_funder_reply,6601
-msgdata,openingd_eltoo_funder_reply,their_config,eltoo_channel_config,
+msgdata,openingd_eltoo_funder_reply,their_config,channel_config,
 msgdata,openingd_eltoo_funder_reply,first_commit,bitcoin_tx,
 msgdata,openingd_eltoo_funder_reply,first_update_psig,bip340sig,
 msgdata,openingd_eltoo_funder_reply,minimum_depth,u32,
@@ -76,7 +76,7 @@ msgdata,openingd_eltoo_failed,reason,wirestring,
 # Openingd->master: they offered channel.
 # This gives their txid and info, means we can send funding_signed: we're done.
 msgtype,openingd_eltoo_fundee,6503
-msgdata,openingd_eltoo_fundee,their_config,eltoo_channel_config,
+msgdata,openingd_eltoo_fundee,their_config,channel_config,
 msgdata,openingd_eltoo_fundee,first_settlement,bitcoin_tx,
 msgdata,openingd_eltoo_fundee,first_update_sig,bip340sig,
 msgdata,openingd_eltoo_fundee,remote_fundingkey,pubkey,

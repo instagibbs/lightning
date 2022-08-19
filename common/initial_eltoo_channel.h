@@ -42,7 +42,7 @@ struct eltoo_channel {
 	enum side opener;
 
 	/* Limits and settings on this channel. */
-	struct eltoo_channel_config config[NUM_SIDES];
+	struct channel_config config[NUM_SIDES];
 
 	/* Mask for obscuring the encoding of the update number. */
 	u32 update_number_obscurer;
@@ -87,8 +87,8 @@ struct eltoo_channel *new_initial_eltoo_channel(const tal_t *ctx,
 				    u32 minimum_depth,
 				    struct amount_sat funding_sats,
 				    struct amount_msat local_msatoshi,
-				    const struct eltoo_channel_config *local,
-				    const struct eltoo_channel_config *remote,
+				    const struct channel_config *local,
+				    const struct channel_config *remote,
 				    const struct pubkey *local_funding_pubkey,
 				    const struct pubkey *remote_funding_pubkey,
 				    const struct pubkey *local_settle_pubkey,

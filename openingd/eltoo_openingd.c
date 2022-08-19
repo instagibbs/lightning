@@ -88,7 +88,7 @@ struct eltoo_state {
 	 * indicate the restrictions each side places on the channel.
      * FIXME do we need just the one?
      */
-	struct eltoo_channel_config localconf, remoteconf;
+	struct channel_config localconf, remoteconf;
 
 	/* The channel structure, as defined in common/initial_channel.h.  While
 	 * the structure has room for HTLCs, those routines are channeld-specific

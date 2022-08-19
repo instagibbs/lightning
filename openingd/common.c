@@ -12,8 +12,8 @@ bool check_eltoo_config_bounds(const tal_t *ctx,
 			 struct amount_sat funding,
 			 u32 max_shared_delay,
 			 struct amount_msat min_effective_htlc_capacity,
-			 const struct eltoo_channel_config *remoteconf,
-			 const struct eltoo_channel_config *localconf,
+			 const struct channel_config *remoteconf,
+			 const struct channel_config *localconf,
 			 char **err_reason)
 {
     /* For eltoo, funding is capacity always */

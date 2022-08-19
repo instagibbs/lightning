@@ -75,6 +75,7 @@ struct eltoo_peer {
 
 	struct channel_id channel_id;
 	struct eltoo_channel *channel;
+    struct channel *channel;
 
 	/* Messages from master: we queue them since we might be
 	 * waiting for a specific reply. */

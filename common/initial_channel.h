@@ -81,6 +81,14 @@ struct channel {
 
 	/* When the lease expires for the funds in this channel */
 	u32 lease_expiry;
+
+    /* Eltoo fields below */
+
+    /* Keys used for the lifetime of the channel */
+    struct eltoo_keyset eltoo_keyset;
+
+    /* End Eltoo fields*/
+
 };
 
 /**

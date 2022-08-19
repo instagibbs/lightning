@@ -77,58 +77,27 @@ struct channel_config {
 	 * maximum dust exposure allowed for this channel
 	 */
 	struct amount_msat max_dust_htlc_exposure_msat;
-};
 
-void towire_channel_config(u8 **pptr, const struct channel_config *config);
-void fromwire_channel_config(const u8 **ptr, size_t *max,
-			     struct channel_config *config);
-
-struct eltoo_channel_config {
-	/* Database ID */
-	u64 id;
-	/* BOLT #2:
-	 *
-	 * `dust_limit_satoshis` is the threshold below which outputs should
-	 * not be generated for this node's commitment or HTLC transaction
+    /* Eltoo fields start here
+     *
+     * We do not use: to_self_delay, channel_reserve
      */
-	struct amount_sat dust_limit;
 
-	/* BOLT #2:
-	 *
-	 * `max_htlc_value_in_flight_msat` is a cap on total value of
-	 * outstanding HTLCs, which allows a node to limit its exposure to
-	 * HTLCs */
-	struct amount_msat max_htlc_value_in_flight;
+    bool is_eltoo;
 
-	/* BOLT #2:
-	 *
-	 * `htlc_minimum_msat` indicates the smallest value HTLC this node
-	 * will accept.
-	 */
-	struct amount_msat htlc_minimum;
-
-	/* BOLT #2:
+	/* BOLT #X:
 	 *
      * `to_self_delay` is replaced with a symmetrical `shared_delay` which
      * must be agreed upon by nodes. This is currently set by the opener.
      */
 	u16 shared_delay;
 
-	/* BOLT #2:
-	 *
-	 * similarly, `max_accepted_htlcs` limits the number of outstanding
-	 * HTLCs the other node can offer. */
-	u16 max_accepted_htlcs;
+    /* Eltoo fields end here */
 
-	/* BOLT-TBD #X
-	 *
-	 * maximum dust exposure allowed for this channel
-	 */
-	struct amount_msat max_dust_htlc_exposure_msat;
 };
 
-void towire_eltoo_channel_config(u8 **pptr, const struct eltoo_channel_config *config);
-void fromwire_eltoo_channel_config(const u8 **ptr, size_t *max,
-			     struct eltoo_channel_config *config);
+void towire_channel_config(u8 **pptr, const struct channel_config *config);
+void fromwire_channel_config(const u8 **ptr, size_t *max,
+			     struct channel_config *config);
 
 #endif /* LIGHTNING_COMMON_CHANNEL_CONFIG_H */
