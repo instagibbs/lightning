@@ -188,8 +188,7 @@ void bind_update_tx_to_update_outpoint(struct bitcoin_tx *update_tx,
 struct bitcoin_tx *unbound_update_tx(const tal_t *ctx,
                      const struct bitcoin_tx *settle_tx,
                      struct amount_sat funding_sats,
-                     const struct pubkey *inner_pubkey,
-				     char** err_reason)
+                     const struct pubkey *inner_pubkey)
 {
 	struct bitcoin_tx *update_tx;
     int pos;

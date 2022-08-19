@@ -470,7 +470,7 @@ msgtype,channeld_got_ack_reply,1182
 msgtype,channeld_got_shutdown_eltoo,1084
 msgdata,channeld_got_shutdown_eltoo,scriptpubkey_len,u16,
 msgdata,channeld_got_shutdown_eltoo,scriptpubkey,u8,scriptpubkey_len
-msgdata,channeld_got_shutdown_eltoo,wrong_funding,?bitcoin_outpoint,
+msgdata,channeld_got_shutdown_eltoo,their_next_nonce,nonce,
 
 # When we send a update_signed message, tell master.
 msgtype,channeld_sending_updatesig,1080
@@ -484,8 +484,3 @@ msgdata,channeld_sending_updatesig,session,musig_session,
 # Wait for reply, to make sure it's on disk before we send commit.
 msgtype,channeld_sending_updatesig_reply,1180
 
-# Peer told us that channel is shutting down
-msgtype,channeld_got_shutdown_eltoo,1084
-msgdata,channeld_got_shutdown_eltoo,scriptpubkey_len,u16,
-msgdata,channeld_got_shutdown_eltoo,scriptpubkey,u8,scriptpubkey_len
-msgdata,channeld_got_shutdown_eltoo,wrong_funding,?bitcoin_outpoint,

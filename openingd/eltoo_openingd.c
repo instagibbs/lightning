@@ -16,6 +16,7 @@
 #include <common/fee_states.h>
 #include <common/gossip_rcvd_filter.h>
 #include <common/gossip_store.h>
+#include <common/initial_channel.h> // channel
 #include <common/initial_eltoo_channel.h>
 #include <common/memleak.h>
 #include <common/peer_billboard.h>
@@ -93,7 +94,7 @@ struct eltoo_state {
 	/* The channel structure, as defined in common/initial_channel.h.  While
 	 * the structure has room for HTLCs, those routines are channeld-specific
 	 * as initial channels never have HTLCs. */
-	struct eltoo_channel *channel;
+	struct channel *channel;
 
 	/* Channel type we agreed on (even before channel populated) */
 	struct channel_type *channel_type;
@@ -444,7 +445,6 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
 	u8 *msg;
 	struct channel_id id_in;
 	struct channel_id cid;
-	char *err_reason;
 	struct wally_tx_output *direct_outputs[NUM_SIDES];
     struct bitcoin_tx *settle_tx;
     struct partial_sig our_update_psig, their_update_psig;
@@ -513,18 +513,18 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
 	 * transaction.
 	 */
 	settle_tx = initial_settle_channel_tx(tmpctx, state->channel,
-                    direct_outputs, &err_reason);
+                    direct_outputs);
 	if (!settle_tx) {
 		negotiation_failed(state,
-				   "Could not make settle tx: %s", err_reason);
+				   "Could not make settle tx???");
 		return false;
 	}
 
-    *update_tx = initial_update_channel_tx(tmpctx, settle_tx, state->channel, &err_reason);
+    *update_tx = initial_update_channel_tx(tmpctx, settle_tx, state->channel);
 
 	if (!*update_tx) {
 		negotiation_failed(state,
-				   "Could not make update tx: %s", err_reason);
+				   "Could not make update tx???");
 		return false;
 	}
 
@@ -816,12 +816,6 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 				 &state->localconf,
 				 &err_reason)) {
 		negotiation_failed(state, "%s", err_reason);
-		return NULL;
-	}
-
-	/* If they give us a reason to reject, do so. */
-	if (err_reason) {
-		negotiation_failed(state, "%s", err_reason);
 		tal_free(err_reason);
 		return NULL;
 	}
@@ -950,19 +944,19 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 	 *       `error` and fail the channel.
 	 */
 	settle_tx = initial_settle_channel_tx(tmpctx, state->channel,
-                    direct_outputs, &err_reason);
+                    direct_outputs);
 	/* This shouldn't happen either, AFAICT. */
 	if (!settle_tx) {
 		negotiation_failed(state,
-				   "Failed to make settle tx: %s", err_reason);
+				   "Failed to make settle tx???");
 		return NULL;
 	}
 
-    update_tx = initial_update_channel_tx(tmpctx, settle_tx, state->channel, &err_reason);
+    update_tx = initial_update_channel_tx(tmpctx, settle_tx, state->channel);
 	/* Nor this */
 	if (!update_tx) {
 		negotiation_failed(state,
-				   "Failed to make update tx: %s", err_reason);
+				   "Failed to make update tx???");
 		return NULL;
 	}
 

@@ -12,7 +12,6 @@ LIGHTNINGD_SRC :=				\
 	lightningd/dual_open_control.c		\
 	lightningd/closed_channel.c		\
 	lightningd/connect_control.c		\
-	lightningd/eltoo_channel.c			\
 	lightningd/onion_message.c		\
 	lightningd/feerate.c			\
 	lightningd/forwards.c			\

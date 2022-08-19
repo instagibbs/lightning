@@ -1,5 +1,5 @@
-#ifndef LIGHTNING_CHANNELD_COMMIT_TX_H
-#define LIGHTNING_CHANNELD_COMMIT_TX_H
+#ifndef LIGHTNING_CHANNELD_SETTLE_TX_H
+#define LIGHTNING_CHANNELD_SETTLE_TX_H
 #include "config.h"
 #include <channeld/channeld_htlc.h>
 #include <common/initial_settlement_tx.h>
@@ -30,11 +30,6 @@ bool settle_tx_amount_trimmed(const struct htlc **htlcs,
 			      struct amount_sat dust_limit,
 			      struct amount_msat *amt);
 
-static void add_eltoo_htlc_out(struct bitcoin_tx *tx,
-                  const struct htlc *htlc,
-                  const struct eltoo_keyset *eltoo_keyset,
-                  enum side receiver_side);
-
 /**
  * settle_tx: create (unsigned) settlement tx to spend the funding tx output
  * @ctx: context to allocate transaction and @htlc_map from.
@@ -63,4 +58,4 @@ struct bitcoin_tx *settle_tx(const tal_t *ctx,
 			     struct wally_tx_output *direct_outputs[NUM_SIDES],
 			     u64 obscured_update_number);
 
-#endif /* LIGHTNING_CHANNELD_COMMIT_TX_H */
+#endif /* LIGHTNING_CHANNELD_SETTLE_TX_H */

@@ -5,13 +5,14 @@
 #include <common/blockheight_states.h>
 #include <common/channel_type.h>
 #include <common/fee_states.h>
+#include <common/initial_channel.h>
 #include <common/initial_eltoo_channel.h>
 #include <common/initial_settlement_tx.h>
 #include <common/keyset.h>
 #include <common/type_to_string.h>
 #include <common/update_tx.h>
 
-struct eltoo_channel *new_initial_eltoo_channel(const tal_t *ctx,
+struct channel *new_initial_eltoo_channel(const tal_t *ctx,
 				    const struct channel_id *cid,
 				    const struct bitcoin_outpoint *funding,
 				    u32 minimum_depth,
@@ -27,7 +28,7 @@ struct eltoo_channel *new_initial_eltoo_channel(const tal_t *ctx,
 				    bool option_wumbo,
 				    enum side opener)
 {
-	struct eltoo_channel *channel = tal(ctx, struct eltoo_channel);
+	struct channel *channel = tal(ctx, struct channel);
 	struct amount_msat remote_msatoshi;
     const struct pubkey *pubkey_ptrs[2];
     secp256k1_musig_keyagg_cache keyagg_cache;
@@ -74,9 +75,8 @@ struct eltoo_channel *new_initial_eltoo_channel(const tal_t *ctx,
 }
 
 struct bitcoin_tx *initial_settle_channel_tx(const tal_t *ctx,
-				      const struct eltoo_channel *channel,
-				      struct wally_tx_output *direct_outputs[NUM_SIDES],
-				      char** err_reason)
+				      const struct channel *channel,
+				      struct wally_tx_output *direct_outputs[NUM_SIDES])
 {
 	struct bitcoin_tx *init_settle_tx;
 
@@ -92,8 +92,7 @@ struct bitcoin_tx *initial_settle_channel_tx(const tal_t *ctx,
                     channel->view->owed[LOCAL],
                     channel->view->owed[REMOTE],
                     0 ^ channel->update_number_obscurer,
-                    direct_outputs,
-                    err_reason);
+                    direct_outputs);
 
 	if (init_settle_tx) {
 		psbt_input_add_pubkey(init_settle_tx->psbt, 0,
@@ -107,8 +106,7 @@ struct bitcoin_tx *initial_settle_channel_tx(const tal_t *ctx,
 
 struct bitcoin_tx *initial_update_channel_tx(const tal_t *ctx,
                       const struct bitcoin_tx *settle_tx,
-				      const struct eltoo_channel *channel,
-				      char** err_reason)
+				      const struct channel *channel)
 {
 	struct bitcoin_tx *init_update_tx;
     /* This should be gathered from settle_tx PSBT when stored there,
@@ -123,8 +121,7 @@ struct bitcoin_tx *initial_update_channel_tx(const tal_t *ctx,
 	init_update_tx = unbound_update_tx(ctx,
                     settle_tx,
                     channel->funding_sats,
-                    &dummy_inner_pubkey,
-                    err_reason);
+                    &dummy_inner_pubkey);
 
 	if (init_update_tx) {
 		psbt_input_add_pubkey(init_update_tx->psbt, 0,

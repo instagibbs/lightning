@@ -69,14 +69,12 @@ void bind_update_tx_to_update_outpoint(struct bitcoin_tx *update_tx,
  * @settlement_tx: initial settlement tx created via `initial_settlement_tx`
  * @funding_sats: funding amount
  * @inner_pubkey: inner public key for the eltoo channel
- * @err_reason: When NULL is returned, this will point to a human readable reason.
  *
  */
 struct bitcoin_tx *unbound_update_tx(const tal_t *ctx,
                      const struct bitcoin_tx *settle_tx,
 				     struct amount_sat funding_sats,
-                     const struct pubkey *inner_pubkey,
-				     char** err_reason);
+                     const struct pubkey *inner_pubkey);
 
 
 #endif /* LIGHTNING_COMMON_UPDATE_TX_H */

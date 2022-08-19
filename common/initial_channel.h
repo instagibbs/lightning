@@ -8,6 +8,7 @@
 #include <common/channel_id.h>
 #include <common/derive_basepoints.h>
 #include <common/htlc.h>
+#include <common/keyset.h>
 
 struct signature;
 struct added_htlc;
@@ -84,8 +85,11 @@ struct channel {
 
     /* Eltoo fields below */
 
-    /* Keys used for the lifetime of the channel */
+    /* Keys and signing state used for the lifetime of the channel */
     struct eltoo_keyset eltoo_keyset;
+
+	/* Mask for obscuring the encoding of the update number. */
+	u64 update_number_obscurer;
 
     /* End Eltoo fields*/
 

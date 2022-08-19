@@ -18,6 +18,7 @@
 #include <channeld/eltoo_channeld.h>
 #include <channeld/channeld_wiregen.h>
 #include <channeld/eltoo_full_channel.h>
+#include <channeld/full_channel_error.h>
 #include <channeld/watchtower.h>
 #include <common/billboard.h>
 #include <common/ecdh_hsmd.h>
@@ -74,8 +75,7 @@ struct eltoo_peer {
 	u64 htlc_id;
 
 	struct channel_id channel_id;
-	struct eltoo_channel *channel;
-    struct channel *channel;
+	struct channel *channel;
 
 	/* Messages from master: we queue them since we might be
 	 * waiting for a specific reply. */
@@ -285,7 +285,7 @@ static bool handle_master_request_later(struct eltoo_peer *peer, const u8 *msg)
 }
 
 #else /* !EXPERIMENTAL_FEATURES */
-static bool handle_master_request_later(struct peer *peer, const u8 *msg)
+static bool handle_master_request_later(struct eltoo_peer *peer, const u8 *msg)
 {
 	return false;
 }
@@ -634,7 +634,7 @@ static void handle_peer_add_htlc(struct eltoo_peer *peer, const u8 *msg)
 #if EXPERIMENTAL_FEATURES
 	blinding = tlvs->blinding;
 #endif
-	add_err = channel_add_htlc(peer->channel, REMOTE, id, amount,
+	add_err = eltoo_channel_add_htlc(peer->channel, REMOTE, id, amount,
 				   cltv_expiry, &payment_hash,
 				   onion_routing_packet, blinding, &htlc,
 				   /* err_immediate_failures */ false);
@@ -735,7 +735,7 @@ static void send_shutdown_complete(struct eltoo_peer *peer)
 
 /* This queues other traffic from the fd until we get reply. */
 static u8 *master_wait_sync_reply(const tal_t *ctx,
-				  struct peer *peer,
+				  struct eltoo_peer *peer,
 				  const u8 *msg,
 				  int replytype)
 {
@@ -774,6 +774,7 @@ static u8 *master_wait_sync_reply(const tal_t *ctx,
 static void send_update(struct eltoo_peer *peer)
 {
 	u8 *msg;
+    const u8 *hsmd_msg;
 	const struct htlc **changed_htlcs;
 	struct bitcoin_tx **update_and_settle_txs;
 	const struct htlc **htlc_map;
@@ -841,11 +842,11 @@ static void send_update(struct eltoo_peer *peer)
             &peer->channel_id,
             update_and_settle_txs[0],
             update_and_settle_txs[1],
-            &peer->channel->eltoo_keyset.other_funding_pubkey,
+            &peer->channel->eltoo_keyset.other_funding_key,
             &peer->channel->eltoo_keyset.other_next_nonce);
 
-    msg = hsm_req(tmpctx, take(msg));
-    if (!fromwire_hsmd_psign_update_tx_reply(msg, &peer->channel->eltoo_keyset.self_psig, &peer->channel->eltoo_keyset.self_next_nonce))
+    hsmd_msg = hsm_req(tmpctx, take(msg));
+    if (!fromwire_hsmd_psign_update_tx_reply(hsmd_msg, &peer->channel->eltoo_keyset.self_psig, &peer->channel->eltoo_keyset.session, &peer->channel->eltoo_keyset.self_next_nonce))
         status_failed(STATUS_FAIL_HSM_IO,
                   "Reading psign_update_tx reply: %s",
                   tal_hex(tmpctx, msg));
@@ -1017,20 +1018,9 @@ static void send_update_sign_ack(struct eltoo_peer *peer,
 static void handle_peer_update_sig(struct eltoo_peer *peer, const u8 *msg)
 {
 	struct channel_id channel_id;
-
-    /*
-	struct bitcoin_signature commit_sig;
-	secp256k1_ecdsa_signature *raw_sigs;
-	struct bitcoin_signature *htlc_sigs;
-	struct pubkey remote_htlckey;
-    */
 	struct bitcoin_tx **update_and_settle_txs;
     struct bip340sig update_sig;
 	const struct htlc **htlc_map, **changed_htlcs;
-	const u8 *funding_wscript;
-	size_t i;
-	struct simple_htlc **htlcs;
-	const u8 * msg2;
 
 	changed_htlcs = tal_arr(msg, const struct htlc *, 0);
     /* Does our counterparty offer any changes? */
@@ -1049,7 +1039,7 @@ static void handle_peer_update_sig(struct eltoo_peer *peer, const u8 *msg)
 		peer->last_empty_commitment = peer->next_index;
 	}
 
-	if (!fromwire_update_signed(tmpctx, msg,
+	if (!fromwire_update_signed(msg,
 					&channel_id, &peer->channel->eltoo_keyset.other_psig, &peer->channel->eltoo_keyset.other_next_nonce))
 		peer_failed_warn(peer->pps, &peer->channel_id,
 				 "Bad update_signed %s", tal_hex(msg, msg));
@@ -1079,7 +1069,7 @@ static void handle_peer_update_sig(struct eltoo_peer *peer, const u8 *msg)
                             &peer->channel_id,
                             &peer->channel->eltoo_keyset.self_psig,
                             &peer->channel->eltoo_keyset.other_psig,
-                            &peer->channel->eltoo_keyset.session
+                            &peer->channel->eltoo_keyset.session,
                             update_and_settle_txs[0],
                             update_and_settle_txs[1],
                             &peer->channel->eltoo_keyset.inner_pubkey);
@@ -1105,14 +1095,13 @@ static void handle_peer_update_sig(struct eltoo_peer *peer, const u8 *msg)
 
 }
 
-static u8 *got_signed_ack_msg(struct peer *peer,
+static u8 *got_signed_ack_msg(struct eltoo_peer *peer,
               u64 update_num,
 			  const struct htlc **changed_htlcs,
-              const bip340sig *update_sig)
+              const struct bip340sig *update_sig)
 {
 	u8 *msg;
 	struct changed_htlc *changed = tal_arr(tmpctx, struct changed_htlc, 0);
-	const struct bitcoin_tx *ptx = NULL;
 
 	for (size_t i = 0; i < tal_count(changed_htlcs); i++) {
 		struct changed_htlc c;
@@ -1141,7 +1130,6 @@ static void handle_peer_update_sig_ack(struct eltoo_peer *peer, const u8 *msg)
 	const struct htlc **changed_htlcs = tal_arr(msg, const struct htlc *, 0);
 	struct bitcoin_tx **update_and_settle_txs;
 	const struct htlc **htlc_map;
-	struct wally_tx_output *direct_outputs[NUM_SIDES];
 
 	if (!fromwire_update_signed_ack(msg, &channel_id, &peer->channel->eltoo_keyset.other_psig,
 				     &peer->channel->eltoo_keyset.other_next_nonce)) {
@@ -1184,7 +1172,7 @@ static void handle_peer_update_sig_ack(struct eltoo_peer *peer, const u8 *msg)
 	master_wait_sync_reply(tmpctx, peer, take(msg),
 			       WIRE_CHANNELD_GOT_ACK_REPLY);
 
-	status_debug("update_signed_ack %s: update = %d",
+	status_debug("update_signed_ack %s: update = %lu",
 		     side_to_str(peer->channel->opener), peer->next_index - 1);
 
 	/* We may now be quiescent on our side. */
@@ -1324,15 +1312,14 @@ static void handle_peer_shutdown(struct eltoo_peer *peer, const u8 *shutdown)
 {
 	struct channel_id channel_id;
 	u8 *scriptpubkey;
-	struct tlv_shutdown_tlvs *tlvs;
-	struct bitcoin_outpoint *wrong_funding;
 
 	/* Disable the channel. */
     /* FIXME Re-enable when gossip worked on
 	send_channel_update(peer, ROUTING_FLAGS_DISABLED);
     */
+    /* No OPT_SHUTDOWN_WRONG_FUNDING support for now */
 	if (!fromwire_shutdown_eltoo(tmpctx, shutdown, &channel_id, &scriptpubkey,
-			       &peer->channel->eltoo_keyset.other_next_nonce, &tlvs))
+			       &peer->channel->eltoo_keyset.other_next_nonce))
 		peer_failed_warn(peer->pps, &peer->channel_id,
 				 "Bad shutdown %s", tal_hex(peer, shutdown));
 
@@ -1358,49 +1345,12 @@ static void handle_peer_shutdown(struct eltoo_peer *peer, const u8 *shutdown)
 				 tal_hex(peer, scriptpubkey),
 				 tal_hex(peer, peer->remote_upfront_shutdown_script));
 
-	/* We only accept an wrong_funding if:
-	 * 1. It was negotiated.
-	 * 2. It's not dual-funding.
-	 * 3. They opened it.
-	 * 4. The channel was never used.
-	 */
-	if (tlvs->wrong_funding) {
-		if (!feature_negotiated(peer->our_features,
-					peer->their_features,
-					OPT_SHUTDOWN_WRONG_FUNDING))
-			peer_failed_warn(peer->pps, &peer->channel_id,
-					 "wrong_funding shutdown needs"
-					 " feature %u",
-					 OPT_SHUTDOWN_WRONG_FUNDING);
-		if (feature_negotiated(peer->our_features,
-				       peer->their_features,
-				       OPT_DUAL_FUND))
-			peer_failed_warn(peer->pps, &peer->channel_id,
-					 "wrong_funding shutdown invalid"
-					 " with dual-funding");
-		if (peer->channel->opener != REMOTE)
-			peer_failed_warn(peer->pps, &peer->channel_id,
-					 "No shutdown wrong_funding"
-					 " for channels we opened!");
-		if (peer->next_index != 1
-		    || peer->next_index != 1)
-			peer_failed_warn(peer->pps, &peer->channel_id,
-					 "No shutdown wrong_funding"
-					 " for used channels!");
-
-		/* Turn into our outpoint type. */
-		wrong_funding = tal(tmpctx, struct bitcoin_outpoint);
-		wrong_funding->txid = tlvs->wrong_funding->txid;
-		wrong_funding->n = tlvs->wrong_funding->outnum;
-	} else {
-		wrong_funding = NULL;
-	}
 
 	/* Tell master: we don't have to wait because on reconnect other end
 	 * will re-send anyway. */
 	wire_sync_write(MASTER_FD,
 			take(towire_channeld_got_shutdown_eltoo(NULL, scriptpubkey,
-							  wrong_funding, &peer->channel->eltoo_keyset.other_next_nonce)));
+							  &peer->channel->eltoo_keyset.other_next_nonce)));
 
 	peer->shutdown_sent[REMOTE] = true;
 	/* BOLT #2:
@@ -1418,7 +1368,7 @@ static void handle_peer_shutdown(struct eltoo_peer *peer, const u8 *shutdown)
 	billboard_update(peer);
 }
 
-static void handle_unexpected_reestablish(struct peer *peer, const u8 *msg)
+static void handle_unexpected_reestablish(struct eltoo_peer *peer, const u8 *msg)
 {
 	struct channel_id channel_id;
 	u64 last_update_number;
@@ -1429,19 +1379,12 @@ static void handle_unexpected_reestablish(struct peer *peer, const u8 *msg)
 #endif
 
 
+    /* No reestablish tlvs for now */
 	if (!fromwire_channel_reestablish_eltoo
-#if EXPERIMENTAL_FEATURES
-	    (tmpctx, msg, &channel_id,
-         &last_update_number,
-         &their_last_psig,
-         &their_next_nonce,
-	     &tlvs)
-#else
 	    (msg, &channel_id,
          &last_update_number,
          &their_last_psig,
          &their_next_nonce)
-#endif
 		)
 		peer_failed_warn(peer->pps, &peer->channel_id,
 				 "Bad channel_reestablish %s", tal_hex(peer, msg));

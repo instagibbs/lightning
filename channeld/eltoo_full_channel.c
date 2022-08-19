@@ -3,8 +3,11 @@
 #include <bitcoin/script.h>
 #include <ccan/array_size/array_size.h>
 #include <channeld/commit_tx.h>
-#include <channeld/full_channel.h>
+#include <channeld/eltoo_full_channel.h>
+#include <channeld/full_channel_error.h>
+#include <channeld/settle_tx.h>
 #include <common/blockheight_states.h>
+#include <common/channel_config.h>
 #include <common/features.h>
 #include <common/fee_states.h>
 #include <common/htlc_trim.h>
@@ -14,6 +17,7 @@
 #include <common/memleak.h>
 #include <common/status.h>
 #include <common/type_to_string.h>
+#include <common/update_tx.h>
 #include <stdio.h>
   /* Needs to be at end, since it doesn't include its own hdrs */
   #include "full_channel_error_names_gen.h"
@@ -45,7 +49,7 @@ static void balance_add_htlc(struct balance *balance,
 			     const struct htlc *htlc,
 			     enum side side)
 {
-	if (eltoo_htlc_owner(htlc) == side)
+	if (htlc_owner(htlc) == side)
 		balance->msat -= htlc->amount.millisatoshis; /* Raw: balance */
 }
 
@@ -58,9 +62,9 @@ static void balance_remove_htlc(struct balance *balance,
 
 	/* Fulfilled HTLCs are paid to recipient, otherwise returns to owner */
 	if (htlc->r)
-		paid_to = !eltoo_htlc_owner(htlc);
+		paid_to = !htlc_owner(htlc);
 	else
-		paid_to = eltoo_htlc_owner(htlc);
+		paid_to = htlc_owner(htlc);
 
 	if (side == paid_to)
 		balance->msat += htlc->amount.millisatoshis; /* Raw: balance */
@@ -79,7 +83,7 @@ static bool balance_ok(const struct balance *balance,
 	return true;
 }
 
-struct eltoo_channel *new_full_eltoo_channel(const tal_t *ctx,
+struct channel *new_full_eltoo_channel(const tal_t *ctx,
 				 const struct channel_id *cid,
 				 const struct bitcoin_outpoint *funding,
 				 u32 minimum_depth,
@@ -95,7 +99,7 @@ struct eltoo_channel *new_full_eltoo_channel(const tal_t *ctx,
 				 bool option_wumbo,
 				 enum side opener)
 {
-	struct eltoo_channel *channel = new_initial_eltoo_channel(ctx,
+	struct channel *channel = new_initial_eltoo_channel(ctx,
 						      cid,
 						      funding,
 						      minimum_depth,
@@ -146,7 +150,7 @@ static void dump_htlc(const struct htlc *htlc, const char *prefix)
 		     : "");
 }
 
-void dump_htlcs(const struct eltoo_channel *channel, const char *prefix)
+void dump_htlcs(const struct channel *channel, const char *prefix)
 {
 #ifdef SUPERVERBOSE
 	struct htlc_map_iter it;
@@ -232,69 +236,15 @@ static bool sum_offered_msatoshis(struct amount_msat *total,
 	return true;
 }
 
-static void add_htlcs(struct bitcoin_tx ***txs,
-		      const struct htlc **htlcmap,
-		      const struct channel *channel,
-		      const struct keyset *keyset,
-		      enum side side)
-{
-	struct bitcoin_outpoint outpoint;
-	u32 feerate_per_kw = channel_feerate(channel, side);
-	bool option_anchor_outputs = channel_has(channel, OPT_ANCHOR_OUTPUTS);
-
-	/* Get txid of commitment transaction */
-	bitcoin_txid((*txs)[0], &outpoint.txid);
-
-	for (outpoint.n = 0; outpoint.n < tal_count(htlcmap); outpoint.n++) {
-		const struct htlc *htlc = htlcmap[outpoint.n];
-		struct bitcoin_tx *tx;
-		struct ripemd160 ripemd;
-		const u8 *wscript;
-
-		if (!htlc)
-			continue;
-
-		if (htlc_owner(htlc) == side) {
-			ripemd160(&ripemd, htlc->rhash.u.u8, sizeof(htlc->rhash.u.u8));
-			wscript = htlc_offered_wscript(tmpctx, &ripemd, keyset,
-						       option_anchor_outputs);
-			tx = htlc_timeout_tx(*txs, chainparams, &outpoint,
-					     wscript,
-					     htlc->amount,
-					     htlc->expiry.locktime,
-					     channel->config[!side].to_self_delay,
-					     feerate_per_kw,
-					     keyset,
-					     option_anchor_outputs);
-		} else {
-			ripemd160(&ripemd, htlc->rhash.u.u8, sizeof(htlc->rhash.u.u8));
-			wscript = htlc_received_wscript(tmpctx, &ripemd,
-							&htlc->expiry, keyset,
-							option_anchor_outputs);
-			tx = htlc_success_tx(*txs, chainparams, &outpoint,
-					     wscript,
-					     htlc->amount,
-					     channel->config[!side].to_self_delay,
-					     feerate_per_kw,
-					     keyset,
-					     option_anchor_outputs);
-		}
-
-		/* Append to array. */
-		tal_arr_expand(txs, tx);
-	}
-}
-
 struct bitcoin_tx **eltoo_channel_txs(const tal_t *ctx,
                 const struct htlc ***htlcmap,
                 struct wally_tx_output *direct_outputs[NUM_SIDES],
-                const struct eltoo_channel *channel,
+                const struct channel *channel,
                 u64 update_number,
                 enum side side)
 {
     struct bitcoin_tx **txs;
     const struct htlc **committed;
-    char** err_reason;
 
     /* Figure out what @side will already be committed to. */
     gather_htlcs(ctx, channel, side, &committed, NULL, NULL);
@@ -314,8 +264,7 @@ struct bitcoin_tx **eltoo_channel_txs(const tal_t *ctx,
     txs[0] = unbound_update_tx(ctx,
         txs[0],
         channel->funding_sats,
-        &channel->eltoo_keyset.inner_pubkey,
-        err_reason);
+        &channel->eltoo_keyset.inner_pubkey);
 
     /* FIXME We don't handle failure to construct transactions yet */
     assert(txs[0]);
@@ -332,23 +281,7 @@ struct bitcoin_tx **eltoo_channel_txs(const tal_t *ctx,
     return txs;
 }
 
-static size_t num_untrimmed_htlcs(enum side side,
-				  struct amount_sat dust_limit,
-				  u32 feerate,
-				  bool option_static_remotekey,
-				  const struct htlc **committed,
-				  const struct htlc **adding,
-				  const struct htlc **removing)
-{
-	return commit_tx_num_untrimmed(committed, feerate, dust_limit,
-				       option_static_remotekey, side)
-		+ commit_tx_num_untrimmed(adding, feerate, dust_limit,
-					  option_static_remotekey, side)
-		- commit_tx_num_untrimmed(removing, feerate, dust_limit,
-					  option_static_remotekey, side);
-}
-
-static enum channel_add_err add_htlc(struct eltoo_channel *channel,
+static enum channel_add_err add_htlc(struct channel *channel,
 				     enum htlc_state state,
 				     u64 id,
 				     struct amount_msat amount,
@@ -358,7 +291,6 @@ static enum channel_add_err add_htlc(struct eltoo_channel *channel,
 				     const struct pubkey *blinding TAKES,
 				     struct htlc **htlcp,
 				     bool enforce_aggregate_limits,
-				     struct amount_sat *htlc_fee,
 				     bool err_immediate_failures)
 {
 	struct htlc *htlc, *old;
@@ -366,8 +298,8 @@ static enum channel_add_err add_htlc(struct eltoo_channel *channel,
 			   adding_msat, removing_msat, htlc_dust_amt;
 	enum side sender = htlc_state_owner(state), recipient = !sender;
 	const struct htlc **committed, **adding, **removing;
-	const struct channel_view *view;
-	size_t htlc_count;
+    size_t htlc_count;
+    bool ok;
 
 	htlc = tal(tmpctx, struct htlc);
 
@@ -407,9 +339,6 @@ static enum channel_add_err add_htlc(struct eltoo_channel *channel,
 		else
 			return CHANNEL_ERR_DUPLICATE;
 	}
-
-	/* We're always considering the recipient's view of the channel here */
-	view = &channel->view[recipient];
 
 	/* BOLT #2:
 	 *
@@ -500,8 +429,12 @@ static enum channel_add_err add_htlc(struct eltoo_channel *channel,
 
     /* No fee "fun", just don't make relay dust */
 
-	htlc_dust_amt = channel->config[side].dust_limit;
-    assert(channel->config[side].dust_limit, channel->config[!side].dust_limit);
+	ok = amount_sat_to_msat(&htlc_dust_amt, channel->config[sender].dust_limit);
+    /* Shouldn't happen? */
+    assert(ok);
+
+    assert(channel->config[sender].dust_limit.satoshis ==
+        channel->config[!sender].dust_limit.satoshis);
 
     /* This really shouldn't happen unless you never want an HTLC... */
 	if (amount_msat_greater(htlc_dust_amt,
@@ -521,7 +454,7 @@ static enum channel_add_err add_htlc(struct eltoo_channel *channel,
 	return CHANNEL_ERR_ADD_OK;
 }
 
-enum channel_add_err channel_add_htlc(struct eltoo_channel *channel,
+enum channel_add_err eltoo_channel_add_htlc(struct channel *channel,
 				      enum side sender,
 				      u64 id,
 				      struct amount_msat amount,
@@ -552,12 +485,12 @@ enum channel_add_err channel_add_htlc(struct eltoo_channel *channel,
 			htlcp, true, err_immediate_failures);
 }
 
-struct htlc *eltoo_channel_get_htlc(struct eltoo_channel *channel, enum side sender, u64 id)
+struct htlc *eltoo_channel_get_htlc(struct channel *channel, enum side sender, u64 id)
 {
 	return eltoo_htlc_get(channel->htlcs, id, sender);
 }
 
-enum channel_remove_err channel_fulfill_htlc(struct eltoo_channel *channel,
+enum channel_remove_err channel_fulfill_htlc(struct channel *channel,
 					     enum side owner,
 					     u64 id,
 					     const struct preimage *preimage,
@@ -566,7 +499,7 @@ enum channel_remove_err channel_fulfill_htlc(struct eltoo_channel *channel,
 	struct sha256 hash;
 	struct htlc *htlc;
 
-	htlc = channel_get_htlc(channel, owner, id);
+	htlc = eltoo_channel_get_htlc(channel, owner, id);
 	if (!htlc)
 		return CHANNEL_ERR_NO_SUCH_ID;
 
@@ -628,7 +561,7 @@ enum channel_remove_err channel_fulfill_htlc(struct eltoo_channel *channel,
 	return CHANNEL_ERR_REMOVE_OK;
 }
 
-enum channel_remove_err channel_fail_htlc(struct eltoo_channel *channel,
+enum channel_remove_err channel_fail_htlc(struct channel *channel,
 					  enum side owner, u64 id,
 					  struct htlc **htlcp)
 {
@@ -670,7 +603,7 @@ enum channel_remove_err channel_fail_htlc(struct eltoo_channel *channel,
 	return CHANNEL_ERR_REMOVE_OK;
 }
 
-static void htlc_incstate(struct eltoo_channel *channel,
+static void htlc_incstate(struct channel *channel,
 			  struct htlc *htlc,
 			  enum side sidechanged,
 			  struct balance owed[NUM_SIDES])
@@ -711,7 +644,7 @@ static void htlc_incstate(struct eltoo_channel *channel,
 }
 
 /* Returns flags which were changed. */
-static int change_htlcs(struct eltoo_channel *channel,
+static int change_htlcs(struct channel *channel,
 			enum side sidechanged,
 			const enum htlc_state *htlc_states,
 			size_t n_hstates,
@@ -756,86 +689,7 @@ static int change_htlcs(struct eltoo_channel *channel,
 	return cflags;
 }
 
-/* FIXME: The sender's requirements are *implied* by this, not stated! */
-/* BOLT #2:
- *
- * A receiving node:
- *...
- *   - if the sender cannot afford the new fee rate on the receiving node's
- *     current commitment transaction:
- *     - SHOULD send a `warning` and close the connection, or send an
- *       `error` and fail the channel.
- */
-u32 approx_max_feerate(const struct channel *channel)
-{
-	size_t num;
-	u64 weight;
-	struct amount_sat avail;
-	const struct htlc **committed, **adding, **removing;
-	bool option_anchor_outputs = channel_has(channel, OPT_ANCHOR_OUTPUTS);
-
-	gather_htlcs(tmpctx, channel, !channel->opener,
-		     &committed, &removing, &adding);
-
-	/* Assume none are trimmed; this gives lower bound on feerate. */
-	num = tal_count(committed) + tal_count(adding) - tal_count(removing);
-
-	weight = commit_tx_base_weight(num, option_anchor_outputs);
-
-	/* Available is their view */
-	avail = amount_msat_to_sat_round_down(channel->view[!channel->opener].owed[channel->opener]);
-
-	/* BOLT #3:
-	 * If `option_anchors` applies to the commitment
-	 * transaction, also subtract two times the fixed anchor size
-	 * of 330 sats from the funder (either `to_local` or
-	 * `to_remote`).
-	 */
-	if (option_anchor_outputs
-	    && !amount_sat_sub(&avail, avail, AMOUNT_SAT(660))) {
-		avail = AMOUNT_SAT(0);
-	} else {
-		/* We should never go below reserve. */
-		if (!amount_sat_sub(&avail, avail,
-				    channel->config[!channel->opener].channel_reserve))
-		avail = AMOUNT_SAT(0);
-	}
-
-	return avail.satoshis / weight * 1000; /* Raw: once-off reverse feerate*/
-}
-
-/* Is the sum of trimmed htlcs, as this new feerate, above our
- * max allowed htlc dust limit? */
-static struct amount_msat htlc_calculate_dust(const struct channel *channel,
-					      u32 feerate_per_kw,
-					      enum side side)
-{
-	const struct htlc **committed, **adding, **removing;
-	struct amount_msat acc_dust = AMOUNT_MSAT(0);
-
-	gather_htlcs(tmpctx, channel, side,
-		     &committed, &removing, &adding);
-
-	htlc_dust(channel, committed, adding, removing,
-		  side, feerate_per_kw, &acc_dust);
-
-	return acc_dust;
-}
-
-bool htlc_dust_ok(const struct channel *channel,
-		  u32 feerate_per_kw,
-		  enum side side)
-{
-	struct amount_msat total_dusted;
-
-	total_dusted = htlc_calculate_dust(channel, feerate_per_kw, side);
-
-	return amount_msat_greater_eq(
-		channel->config[LOCAL].max_dust_htlc_exposure_msat,
-		total_dusted);
-}
-
-bool channel_sending_update(struct eltoo_channel *channel,
+bool channel_sending_update(struct channel *channel,
 			    const struct htlc ***htlcs)
 {
 	int change;
@@ -882,22 +736,7 @@ bool channel_rcvd_update(struct channel *channel, const struct htlc ***htlcs)
 	return true;
 }
 
-bool channel_sending_revoke_and_ack(struct channel *channel)
-{
-	int change;
-	const enum htlc_state states[] = { RCVD_ADD_ACK_COMMIT,
-					   RCVD_REMOVE_COMMIT,
-					   RCVD_ADD_COMMIT,
-					   RCVD_REMOVE_ACK_COMMIT };
-	status_debug("Sending revoke_and_ack");
-	change = change_htlcs(channel, REMOTE, states, ARRAY_SIZE(states), NULL,
-			      "sending_revoke_and_ack");
-
-	/* Our ack can queue changes on their side. */
-	return (change & HTLC_REMOTE_F_PENDING);
-}
-
-size_t num_channel_htlcs(const struct eltoo_channel *channel)
+size_t num_channel_htlcs(const struct channel *channel)
 {
 	struct htlc_map_iter it;
 	const struct htlc *htlc;
@@ -947,7 +786,7 @@ static bool adjust_balance(struct balance view_owed[NUM_SIDES][NUM_SIDES],
 	return true;
 }
 
-bool pending_updates(const struct eltoo_channel *channel,
+bool pending_updates(const struct channel *channel,
 		     enum side side,
 		     bool uncommitted_ok)
 {
@@ -983,7 +822,7 @@ bool pending_updates(const struct eltoo_channel *channel,
 	return false;
 }
 
-bool channel_force_htlcs(struct eltoo_channel *channel,
+bool channel_force_htlcs(struct channel *channel,
 			 const struct existing_htlc **htlcs)
 {
 	struct balance view_owed[NUM_SIDES][NUM_SIDES];
@@ -1022,7 +861,7 @@ bool channel_force_htlcs(struct eltoo_channel *channel,
 			     &htlcs[i]->payment_hash,
 			     htlcs[i]->onion_routing_packet,
 			     htlcs[i]->blinding,
-			     &htlc, false, NULL, false);
+			     &htlc, false, false);
 		if (e != CHANNEL_ERR_ADD_OK) {
 			status_broken("%s HTLC %"PRIu64" failed error %u",
 				     htlc_state_owner(htlcs[i]->state) == LOCAL

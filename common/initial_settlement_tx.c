@@ -123,8 +123,7 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
 				     struct amount_msat self_pay,
 				     struct amount_msat other_pay,
 				     u32 obscured_update_number,
-				     struct wally_tx_output *direct_outputs[NUM_SIDES],
-				     char** err_reason)
+				     struct wally_tx_output *direct_outputs[NUM_SIDES])
 {
 	struct bitcoin_tx *tx;
 	size_t output_index, num_untrimmed;

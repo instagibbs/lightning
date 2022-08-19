@@ -560,8 +560,7 @@ static int test_invalid_update_tx(void)
                      self_pay,
                      other_pay,
                      obscured_update_number,
-                     /* direct_outputs FIXME Cannot figure out how this is used. */ NULL,
-                     &err_reason);
+                     /* direct_outputs FIXME Cannot figure out how this is used. */ NULL);
 
     psbt_b64 = psbt_to_b64(tmpctx, tx->psbt);
     printf("Settlement psbt 0: %s\n", psbt_b64);
@@ -582,8 +581,7 @@ static int test_invalid_update_tx(void)
     update_tx = unbound_update_tx(tmpctx,
                      tx,
                      update_output_sats,
-                     &inner_pubkey,
-                     &err_reason);
+                     &inner_pubkey);
 
     /* Signing happens next */
     annex_0 = make_eltoo_annex(tmpctx, tx);
@@ -627,8 +625,7 @@ static int test_invalid_update_tx(void)
     update_tx_1_A = unbound_update_tx(tmpctx,
                      settle_tx_1,
                      update_output_sats,
-                     &inner_pubkey,
-                     &err_reason);
+                     &inner_pubkey);
 
     /* Authorize this next state update */
     annex_1 = make_eltoo_annex(tmpctx, settle_tx_1);
@@ -731,8 +728,7 @@ static int test_initial_settlement_tx(void)
                      self_pay,
                      other_pay,
                      obscured_update_number,
-                     /* direct_outputs FIXME Cannot figure out how this is used. */ NULL,
-                     &err_reason);
+                     /* direct_outputs FIXME Cannot figure out how this is used. */ NULL);
 
     psbt_b64 = psbt_to_b64(tmpctx, tx->psbt);
     printf("Initial Settlement psbt: %s\n", psbt_b64);
@@ -753,8 +749,7 @@ static int test_initial_settlement_tx(void)
     update_tx = unbound_update_tx(tmpctx,
                      tx,
                      update_output_sats,
-                     &inner_pubkey,
-                     &err_reason);
+                     &inner_pubkey);
 
     psbt_b64 = psbt_to_b64(tmpctx, update_tx->psbt);
     printf("Unbound update psbt: %s\n", psbt_b64);

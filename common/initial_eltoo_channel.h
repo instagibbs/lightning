@@ -1,65 +1,20 @@
 /* This represents a channel with no HTLCs: all that's required for openingd. */
-#ifndef LIGHTNING_COMMON_INITIAL_CHANNEL_H
-#define LIGHTNING_COMMON_INITIAL_CHANNEL_H
+#ifndef LIGHTNING_COMMON_INITIAL_ELTOO_CHANNEL_H
+#define LIGHTNING_COMMON_INITIAL_ELTOO_CHANNEL_H
 #include "config.h"
 
 #include <bitcoin/tx.h>
 #include <common/channel_config.h>
 #include <common/channel_id.h>
-#include <common/derive_basepoints.h>
 #include <common/htlc.h>
+#include <common/initial_channel.h>
 #include <common/keyset.h>
+#include <wire/channel_type_wiregen.h>
 
 struct signature;
 struct added_htlc;
 struct failed_htlc;
 struct fulfilled_htlc;
-
-/* View from each side */
-struct channel_view {
-	/* How much is owed to each side (includes pending changes) */
-	struct amount_msat owed[NUM_SIDES];
-};
-
-struct eltoo_channel {
-
-	/* The id for this channel */
-	struct channel_id cid;
-
-	/* Funding txid and output. */
-	struct bitcoin_outpoint funding;
-
-    /* Keys used for the lifetime of the channel */
-    struct eltoo_keyset eltoo_keyset;
-
-	/* satoshis in from commitment tx */
-	struct amount_sat funding_sats;
-
-	/* confirmations needed for locking funding */
-	u32 minimum_depth;
-
-	/* Who is paying fees. */
-	enum side opener;
-
-	/* Limits and settings on this channel. */
-	struct channel_config config[NUM_SIDES];
-
-	/* Mask for obscuring the encoding of the update number. */
-	u32 update_number_obscurer;
-
-	/* All live HTLCs for this channel */
-	struct htlc_map *htlcs;
-
-	/* What it looks like to nodes. */
-	struct channel_view view[NUM_SIDES];
-
-	/* Features which apply to this channel. */
-	struct channel_type *type;
-
-	/* Are we using big channels? */
-	bool option_wumbo;
-
-};
 
 /**
  * new_initial_channel: Given initial funding, what is initial state?
@@ -81,7 +36,7 @@ struct eltoo_channel {
  *
  * Returns channel, or NULL if malformed.
  */
-struct eltoo_channel *new_initial_eltoo_channel(const tal_t *ctx,
+struct channel *new_initial_eltoo_channel(const tal_t *ctx,
 				    const struct channel_id *cid,
 				    const struct bitcoin_outpoint *funding,
 				    u32 minimum_depth,
@@ -102,15 +57,13 @@ struct eltoo_channel *new_initial_eltoo_channel(const tal_t *ctx,
  * @ctx: tal context to allocate return value from.
  * @channel: The channel to evaluate
  * @direct_outputs: If non-NULL, fill with pointers to the direct (non-HTLC) outputs (or NULL if none).
- * @err_reason: When NULL is returned, this will point to a human readable reason.
  *
  * Returns the fully signed settlement transaction, or NULL
  * if the channel size was insufficient to cover reserves.
  */
 struct bitcoin_tx *initial_settle_channel_tx(const tal_t *ctx,
-				      const struct eltoo_channel *channel,
-				      struct wally_tx_output *direct_outputs[NUM_SIDES],
-				      char** err_reason);
+				      const struct channel *channel,
+				      struct wally_tx_output *direct_outputs[NUM_SIDES]);
 
 /**
  * initial_update_channel_tx: Get the current update tx for the *empty* channel. Must be called
@@ -118,14 +71,10 @@ struct bitcoin_tx *initial_settle_channel_tx(const tal_t *ctx,
  * @ctx: tal context to allocate return value from.
  * @settle_tx: The settlement transaction to commit to
  * @channel: The channel to evaluate
- * @err_reason: When NULL is returned, this will point to a human readable reason.
  *
- * Returns the fully signed settlement transaction, or NULL
- * if the channel size was insufficient to cover reserves.
- */
+  */
 struct bitcoin_tx *initial_update_channel_tx(const tal_t *ctx,
                       const struct bitcoin_tx *settle_tx,
-                      const struct eltoo_channel *channel,
-                      char** err_reason);
+                      const struct channel *channel);
 
-#endif /* LIGHTNING_COMMON_INITIAL_CHANNEL_H */
+#endif /* LIGHTNING_COMMON_INITIAL_ELTOO_CHANNEL_H */

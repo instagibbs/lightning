@@ -24,7 +24,6 @@ struct wally_tx_output;
  * @other_pay: amount to pay directly to the other side
  * @obscured_update_number: obscured update number "o+k"
  * @direct_outputs: If non-NULL, fill with pointers to the direct (non-HTLC) outputs (or NULL if none).
- * @err_reason: When NULL is returned, this will point to a human readable reason.
  *
  */
 struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
@@ -36,8 +35,7 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
 				     struct amount_msat self_pay,
 				     struct amount_msat other_pay,
 				     u32 obscured_update_number,
-				     struct wally_tx_output *direct_outputs[NUM_SIDES],
-				     char** err_reason);
+				     struct wally_tx_output *direct_outputs[NUM_SIDES]);
 
 
 /* We always add a single ephemeral anchor output to settlement transactions */
