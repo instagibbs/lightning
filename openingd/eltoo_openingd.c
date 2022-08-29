@@ -449,6 +449,10 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
     struct bitcoin_tx *settle_tx;
     struct partial_sig our_update_psig, their_update_psig;
 
+    /* Dummy fields since they're unused at time of channel creation */
+    struct partial_sig dummy_self_psig, dummy_other_psig;
+    struct musig_session dummy_session;
+
 	/*~ Channel is ready; Report the channel parameters to the signer. */
 	msg = towire_hsmd_ready_eltoo_channel(NULL,
 				       /* is_outbound */ true,
@@ -471,7 +475,7 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
 
 	/*~ Now we can initialize the `struct channel`.  This represents
 	 * the current channel state and is how we can generate the current
-	 * commitment transaction.
+	 * update and settlement transactions.
 	 *
 	 * The routines to support `struct channel` are split into a common
 	 * part (common/initial_channel) which doesn't support HTLCs and is
@@ -491,6 +495,9 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
 					     &state->their_funding_pubkey,
 					     &state->our_settlement_pubkey,
 					     &state->their_settlement_pubkey,
+                         &dummy_self_psig,
+                         &dummy_other_psig,
+                         &dummy_session,
 					     state->channel_type,
 					     feature_offered(state->their_features,
 							     OPT_LARGE_CHANNELS),
@@ -706,6 +713,10 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 	struct tlv_open_channel_eltoo_tlvs *open_tlvs;
 	struct wally_tx_output *direct_outputs[NUM_SIDES];
     struct partial_sig our_update_psig, their_update_psig;
+
+    /* Dummy fields since they're unused at time of channel creation */
+    struct partial_sig dummy_self_psig, dummy_other_psig;
+    struct musig_session dummy_session;
 
 	/* BOLT #2:
 	 *
@@ -925,6 +936,9 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 					     &state->their_funding_pubkey,
 					     &state->our_settlement_pubkey,
 					     &state->their_settlement_pubkey,
+                         &dummy_self_psig,
+                         &dummy_other_psig,
+                         &dummy_session,
 					     state->channel_type,
 					     feature_offered(state->their_features,
 							     OPT_LARGE_CHANNELS),

@@ -2032,8 +2032,7 @@ static void init_channel(struct eltoo_peer *peer)
 	struct amount_msat local_msat;
 	struct pubkey funding_pubkey[NUM_SIDES];
 	struct pubkey settle_pubkey[NUM_SIDES];
-    /* FIXME thread these musig things through to channel creation */
-    struct partial_sig self_psig, other_psig;
+    struct partial_sig psigs[NUM_SIDES];
     struct musig_session session;
 	struct channel_config conf[NUM_SIDES];
 	struct bitcoin_outpoint funding;
@@ -2066,8 +2065,8 @@ static void init_channel(struct eltoo_peer *peer)
 				    &funding_sats,
 				    &minimum_depth,
 				    &conf[LOCAL], &conf[REMOTE],
-				    &other_psig,
-				    &self_psig,
+				    &psigs[REMOTE],
+				    &psigs[LOCAL],
 				    &session,
 				    &funding_pubkey[REMOTE],
                     &settle_pubkey[REMOTE],
@@ -2159,6 +2158,9 @@ static void init_channel(struct eltoo_peer *peer)
 					 &funding_pubkey[REMOTE],
                      &settle_pubkey[LOCAL],
                      &settle_pubkey[REMOTE],
+                     &psigs[LOCAL],
+                     &psigs[REMOTE],
+                     &session,
 					 take(channel_type),
 					 feature_offered(peer->their_features,
 							 OPT_LARGE_CHANNELS),
