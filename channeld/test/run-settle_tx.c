@@ -501,7 +501,6 @@ static int test_invalid_update_tx(void)
     struct amount_msat other_pay;
     u32 obscured_update_number;
     /* struct wally_tx_output direct_outputs[NUM_SIDES]; Can't figure out how it's used */
-    char* err_reason;
     struct bitcoin_tx *tx, *tx_cmp, *update_tx, *settle_tx_1, *update_tx_1_A;
     struct privkey alice_funding_privkey, bob_funding_privkey, alice_settle_privkey, bob_settle_privkey;
     int ok;
@@ -670,7 +669,6 @@ static int test_initial_settlement_tx(void)
     struct amount_msat other_pay;
     u32 obscured_update_number;
     /* struct wally_tx_output direct_outputs[NUM_SIDES]; Can't figure out how it's used */
-    char* err_reason;
     struct bitcoin_tx *tx, *tx_cmp, *update_tx;
     struct privkey alice_funding_privkey, bob_funding_privkey, alice_settle_privkey, bob_settle_privkey;
     int ok;

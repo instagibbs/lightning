@@ -62,9 +62,6 @@ struct eltoo_peer {
 	/* Features we support. */
 	struct feature_set *our_features;
 
-	/* Tolerable amounts for feerate (only relevant for fundee). */
-	u32 feerate_min, feerate_max;
-
 	/* BOLT #2:
 	 *
 	 * A sending node:
@@ -681,9 +678,7 @@ static bool shutdown_complete(const struct eltoo_peer *peer)
 	return peer->shutdown_sent[LOCAL]
 		&& peer->shutdown_sent[REMOTE]
 		&& num_channel_htlcs(peer->channel) == 0
-		/* We could be awaiting revoke-and-ack for a feechange */
 		&& peer->updates_received == peer->next_index - 1;
-
 }
 
 /* BOLT #2:
@@ -1374,10 +1369,6 @@ static void handle_unexpected_reestablish(struct eltoo_peer *peer, const u8 *msg
 	u64 last_update_number;
     struct partial_sig their_last_psig;
     struct nonce their_next_nonce;
-#if EXPERIMENTAL_FEATURES
-	struct tlv_channel_reestablish_tlvs *tlvs;
-#endif
-
 
     /* No reestablish tlvs for now */
 	if (!fromwire_channel_reestablish_eltoo
@@ -1463,7 +1454,7 @@ static void peer_in(struct eltoo_peer *peer, const u8 *msg)
         /* FIXME How should we handle illegal messages in general? */
 		return;
 	case WIRE_UPDATE_FEE:
-		handle_peer_feechange(peer, msg);
+        /* FIXME How should we handle illegal messages in general? */
 		return;
     case WIRE_UPDATE_SIGNED:
         handle_peer_update_sig(peer, msg);
@@ -1543,9 +1534,6 @@ static void peer_in(struct eltoo_peer *peer, const u8 *msg)
     case WIRE_ACCEPT_CHANNEL_ELTOO:
     case WIRE_FUNDING_CREATED_ELTOO:
     case WIRE_FUNDING_SIGNED_ELTOO:
-    case WIRE_UPDATE_SIGNED:
-    case WIRE_UPDATE_SIGNED_ACK:
-    case WIRE_CHANNEL_REESTABLISH_ELTOO:
     case WIRE_SHUTDOWN_ELTOO:
     case WIRE_CLOSING_SIGNED_ELTOO:
     /* Eltoo stuff ends */
@@ -1617,14 +1605,11 @@ static void handle_funding_depth(struct eltoo_peer *peer, const u8 *msg)
 		peer->short_channel_ids[LOCAL] = *scid;
 
 		if (!peer->funding_locked[LOCAL]) {
-			status_debug("funding_locked: sending commit index"
-				     " %"PRIu64": %s",
-				     peer->next_index,
-				     type_to_string(tmpctx, struct pubkey,
-						    &peer->next_local_per_commit));
-			msg = towire_funding_locked(NULL,
-						    &peer->channel_id,
-						    &peer->next_local_per_commit);
+			status_debug("funding_locked_eltoo"
+				     " %"PRIu64"",
+				     peer->next_index);
+			msg = towire_funding_locked_eltoo(NULL,
+						    &peer->channel_id);
 			peer_write(peer->pps, take(msg));
 
 			peer->funding_locked[LOCAL] = true;
@@ -1658,7 +1643,6 @@ static void handle_offer_htlc(struct eltoo_peer *peer, const u8 *inmsg)
 	enum channel_add_err e;
 	const u8 *failwiremsg;
 	const char *failstr;
-	struct amount_sat htlc_fee;
 	struct pubkey *blinding;
 
 	if (!peer->funding_locked[LOCAL] || !peer->funding_locked[REMOTE])
@@ -1679,10 +1663,10 @@ static void handle_offer_htlc(struct eltoo_peer *peer, const u8 *inmsg)
 		tlvs = NULL;
 #endif
 
-	e = channel_add_htlc(peer->channel, LOCAL, peer->htlc_id,
+	e = eltoo_channel_add_htlc(peer->channel, LOCAL, peer->htlc_id,
 			     amount, cltv_expiry, &payment_hash,
 			     onion_routing_packet, take(blinding), NULL,
-			     &htlc_fee, true);
+			     true);
 	status_debug("Adding HTLC %"PRIu64" amount=%s cltv=%u gave %s",
 		     peer->htlc_id,
 		     type_to_string(tmpctx, struct amount_msat, &amount),
@@ -1724,7 +1708,7 @@ static void handle_offer_htlc(struct eltoo_peer *peer, const u8 *inmsg)
 	/* FIXME: Fuzz the boundaries a bit to avoid probing? */
 	case CHANNEL_ERR_CHANNEL_CAPACITY_EXCEEDED:
 		failwiremsg = towire_temporary_channel_failure(inmsg, get_cupdate(peer));
-		failstr = tal_fmt(inmsg, "Capacity exceeded - HTLC fee: %s", fmt_amount_sat(inmsg, htlc_fee));
+		failstr = tal_fmt(inmsg, "Capacity exceeded");
 		goto failed;
 	case CHANNEL_ERR_HTLC_BELOW_MINIMUM:
 		failwiremsg = towire_amount_below_minimum(inmsg, amount, get_cupdate(peer));
@@ -2047,6 +2031,10 @@ static void init_channel(struct eltoo_peer *peer)
 	struct amount_sat funding_sats;
 	struct amount_msat local_msat;
 	struct pubkey funding_pubkey[NUM_SIDES];
+	struct pubkey settle_pubkey[NUM_SIDES];
+    /* FIXME thread these musig things through to channel creation */
+    struct partial_sig self_psig, other_psig;
+    struct musig_session session;
 	struct channel_config conf[NUM_SIDES];
 	struct bitcoin_outpoint funding;
 	enum side opener;
@@ -2078,12 +2066,11 @@ static void init_channel(struct eltoo_peer *peer)
 				    &funding_sats,
 				    &minimum_depth,
 				    &conf[LOCAL], &conf[REMOTE],
-				    &peer->feerate_min,
-				    &peer->feerate_max,
-				    &peer->channel->eltoo_keyset.other_update_psig,
-				    &peer->channel->eltoo_keyset.self_update_psig,
-				    &peer->channel->eltoo_keyset.session,
+				    &other_psig,
+				    &self_psig,
+				    &session,
 				    &funding_pubkey[REMOTE],
+                    &settle_pubkey[REMOTE],
 				    &opener,
 				    &peer->fee_base,
 				    &peer->fee_per_satoshi,
@@ -2091,6 +2078,7 @@ static void init_channel(struct eltoo_peer *peer)
 				    &peer->htlc_maximum_msat,
 				    &local_msat,
 				    &funding_pubkey[LOCAL],
+                    &settle_pubkey[LOCAL],
 				    &peer->node_ids[LOCAL],
 				    &peer->node_ids[REMOTE],
 				    &peer->commit_msec,
@@ -2138,13 +2126,10 @@ static void init_channel(struct eltoo_peer *peer)
 
 	status_debug("init %s: "
 		     " next_idx = %"PRIu64
-		     " updates_received = %"PRIu64
-             " feerates %s range %u-%u",
+		     " updates_received = %"PRIu64,
 		     side_to_str(opener),
-		     peer->next_index, peer->next_index,
-		     peer->updates_received,
-		     type_to_string(tmpctx, struct fee_states, fee_states),
-		     peer->feerate_min, peer->feerate_max);
+		     peer->next_index,
+		     peer->updates_received);
 
 	if (remote_ann_node_sig && remote_ann_bitcoin_sig) {
 		peer->announcement_node_sigs[REMOTE] = *remote_ann_node_sig;
@@ -2172,6 +2157,8 @@ static void init_channel(struct eltoo_peer *peer)
 					 &conf[LOCAL], &conf[REMOTE],
 					 &funding_pubkey[LOCAL],
 					 &funding_pubkey[REMOTE],
+                     &settle_pubkey[LOCAL],
+                     &settle_pubkey[REMOTE],
 					 take(channel_type),
 					 feature_offered(peer->their_features,
 							 OPT_LARGE_CHANNELS),
