@@ -13,7 +13,6 @@ void towire_channel_config(u8 **pptr, const struct channel_config *config)
         towire_u16(pptr, config->to_self_delay);
         towire_u16(pptr, config->max_accepted_htlcs);
         towire_amount_msat(pptr, config->max_dust_htlc_exposure_msat);
-        towire_u16(pptr, config->shared_delay);
     } else {
         towire_amount_sat(pptr, config->dust_limit);
         towire_amount_msat(pptr, config->max_htlc_value_in_flight);
