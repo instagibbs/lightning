@@ -580,7 +580,7 @@ bool peer_start_dualopend(struct peer *peer UNNEEDED, struct peer_fd *peer_fd UN
 { fprintf(stderr, "peer_start_dualopend called!\n"); abort(); }
 /* Generated stub for peer_start_openingd */
 bool peer_start_openingd(struct peer *peer UNNEEDED,
-			 struct peer_fd *peer_fd UNNEEDED)
+			 struct peer_fd *peer_fd UNNEEDED, bool eltoo)
 { fprintf(stderr, "peer_start_openingd called!\n"); abort(); }
 /* Generated stub for plugin_hook_call_ */
 bool plugin_hook_call_(struct lightningd *ld UNNEEDED,

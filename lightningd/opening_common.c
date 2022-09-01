@@ -172,3 +172,49 @@ void channel_config(struct lightningd *ld,
     /* Is ln-penalty channel */
     ours->is_eltoo = false;
 }
+
+void eltoo_channel_config(struct lightningd *ld,
+		    struct channel_config *ours,
+		    u32 *max_shared_delay,
+		    struct amount_msat *min_effective_htlc_capacity)
+{
+	/* FIXME: depend on feerate. */
+	*max_shared_delay = 60;
+
+	/* Take minimal effective capacity from config min_capacity_sat */
+	if (!amount_sat_to_msat(min_effective_htlc_capacity,
+				amount_sat(ld->config.min_capacity_sat)))
+		fatal("amount_msat overflow for config.min_capacity_sat");
+
+	/* BOLT #2:
+	 *
+	 * The sending node SHOULD:
+	 *...
+	 *   - set `dust_limit_satoshis` to a sufficient value to allow
+	 *     commitment transactions to propagate through the Bitcoin network.
+	 */
+	ours->dust_limit = chainparams->dust_limit;
+	ours->max_htlc_value_in_flight = AMOUNT_MSAT(UINT64_MAX);
+
+	ours->max_dust_htlc_exposure_msat
+		= ld->config.max_dust_htlc_exposure_msat;
+
+	/* Don't care */
+	ours->htlc_minimum = ld->config.htlc_minimum_msat;
+
+	/* BOLT #2:
+	 *
+	 * The sending node SHOULD:
+	 *   - set `to_self_delay` sufficient to ensure the sender can
+	 *     irreversibly spend a commitment transaction output, in case of
+	 *     misbehavior by the receiver.
+	 */
+	 ours->to_self_delay = ld->config.locktime_blocks;
+
+	 ours->max_accepted_htlcs = ld->config.max_concurrent_htlcs;
+
+	 /* This is filled in by lightning_openingd, for consistency. */
+	 ours->channel_reserve = AMOUNT_SAT(UINT64_MAX);
+
+     ours->is_eltoo = true;
+}

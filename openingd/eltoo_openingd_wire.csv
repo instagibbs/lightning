@@ -98,3 +98,24 @@ msgtype,openingd_eltoo_dev_memleak,6533
 
 msgtype,openingd_eltoo_dev_memleak_reply,6133
 msgdata,openingd_eltoo_dev_memleak_reply,leak,bool,
+
+# Openingd->master: they offered channel, should we continue?
+msgtype,openingd_eltoo_got_offer,6505
+msgdata,openingd_eltoo_got_offer,funding_satoshis,amount_sat,
+msgdata,openingd_eltoo_got_offer,push_msat,amount_msat,
+msgdata,openingd_eltoo_got_offer,dust_limit_satoshis,amount_sat,
+msgdata,openingd_eltoo_got_offer,max_htlc_value_in_flight_msat,amount_msat,
+msgdata,openingd_eltoo_got_offer,htlc_minimum_msat,amount_msat,
+msgdata,openingd_eltoo_got_offer,shared_delay,u16,
+msgdata,openingd_eltoo_got_offer,max_accepted_htlcs,u16,
+msgdata,openingd_eltoo_got_offer,channel_flags,u8,
+msgdata,openingd_eltoo_got_offer,shutdown_len,u16,
+msgdata,openingd_eltoo_got_offer,shutdown_scriptpubkey,u8,shutdown_len
+
+# master->openingd: optional rejection message
+msgtype,openingd_eltoo_got_offer_reply,6605
+msgdata,openingd_eltoo_got_offer_reply,rejection,?wirestring,
+msgdata,openingd_eltoo_got_offer_reply,shutdown_len,u16,
+msgdata,openingd_eltoo_got_offer_reply,our_shutdown_scriptpubkey,?u8,shutdown_len
+msgdata,openingd_eltoo_got_offer_reply,our_shutdown_wallet_index,?u32,
+

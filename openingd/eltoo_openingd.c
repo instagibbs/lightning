@@ -1159,6 +1159,8 @@ static u8 *handle_master_in(struct eltoo_state *state)
 	case WIRE_OPENINGD_ELTOO_FUNDER_START_REPLY:
 	case WIRE_OPENINGD_ELTOO_FUNDEE:
 	case WIRE_OPENINGD_ELTOO_FAILED:
+    case WIRE_OPENINGD_ELTOO_GOT_OFFER:
+    case WIRE_OPENINGD_ELTOO_GOT_OFFER_REPLY:
 		break;
 	}
 

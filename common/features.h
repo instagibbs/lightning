@@ -157,4 +157,7 @@ struct feature_set *feature_set_dup(const tal_t *ctx,
 
 #define OPT_SHUTDOWN_WRONG_FUNDING		104
 
+ /* `option_eltoo` | ... I ... */
+#define OPT_ELTOO                   50
+
 #endif /* LIGHTNING_COMMON_FEATURES_H */
