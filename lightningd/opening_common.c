@@ -168,4 +168,7 @@ void channel_config(struct lightningd *ld,
 
 	 /* This is filled in by lightning_openingd, for consistency. */
 	 ours->channel_reserve = AMOUNT_SAT(UINT64_MAX);
+
+    /* Is ln-penalty channel */
+    ours->is_eltoo = false;
 }
