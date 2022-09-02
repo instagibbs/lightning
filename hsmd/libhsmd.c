@@ -431,7 +431,7 @@ static void hsm_unilateral_close_privkey(struct privkey *dst,
 	struct secrets secrets;
 
 	get_channel_seed(&info->peer_id, info->channel_id, &channel_seed);
-	derive_basepoints(&channel_seed, NULL, &basepoints, &secrets, NULL);
+	derive_basepoints(&channel_seed, NULL, NULL, &basepoints, &secrets, NULL);
 
 	/* BOLT #3:
 	 *
@@ -783,15 +783,16 @@ static u8 *handle_get_channel_basepoints(struct hsmd_client *c,
 	struct secret seed;
 	struct basepoints basepoints;
 	struct pubkey funding_pubkey;
+    struct pubkey settle_pubkey;
 
 	if (!fromwire_hsmd_get_channel_basepoints(msg_in, &peer_id, &dbid))
 		return hsmd_status_malformed_request(c, msg_in);
 
 	get_channel_seed(&peer_id, dbid, &seed);
-	derive_basepoints(&seed, &funding_pubkey, &basepoints, NULL, NULL);
+	derive_basepoints(&seed, &funding_pubkey, &settle_pubkey, &basepoints, NULL, NULL);
 
 	return towire_hsmd_get_channel_basepoints_reply(NULL, &basepoints,
-							&funding_pubkey);
+							&funding_pubkey, &settle_pubkey);
 }
 
 static u8 *handle_gen_nonce(struct hsmd_client *c,
@@ -808,7 +809,7 @@ static u8 *handle_gen_nonce(struct hsmd_client *c,
     /* Generate privkey for additional nonce entropy */
 	get_channel_seed(&c->id, c->dbid, &channel_seed);
 	derive_basepoints(&channel_seed,
-			  NULL, NULL, &secrets, NULL);
+			  NULL, NULL, NULL, &secrets, NULL);
 
     /* Fill and return own next_nonce FIXME add in more entropy */
     bipmusig_gen_nonce(&secretstuff.sec_nonce,
@@ -1139,7 +1140,7 @@ static u8 *handle_sign_mutual_close_tx(struct hsmd_client *c, const u8 *msg_in)
 	 * outputs! */
 	get_channel_seed(&c->id, c->dbid, &channel_seed);
 	derive_basepoints(&channel_seed,
-			  &local_funding_pubkey, NULL, &secrets, NULL);
+			  &local_funding_pubkey, NULL, NULL, &secrets, NULL);
 
 	funding_wscript = bitcoin_redeem_2of2(tmpctx,
 					      &local_funding_pubkey,
@@ -1245,7 +1246,7 @@ static u8 *handle_sign_remote_htlc_tx(struct hsmd_client *c, const u8 *msg_in)
 
 	tx->chainparams = c->chainparams;
 	get_channel_seed(&c->id, c->dbid, &channel_seed);
-	derive_basepoints(&channel_seed, NULL, &basepoints, &secrets, NULL);
+	derive_basepoints(&channel_seed, NULL, NULL, &basepoints, &secrets, NULL);
 
 	if (!derive_simple_privkey(&secrets.htlc_basepoint_secret,
 				   &basepoints.htlc,
@@ -1317,7 +1318,7 @@ static u8 *handle_sign_remote_commitment_tx(struct hsmd_client *c, const u8 *msg
 
 	get_channel_seed(&c->id, c->dbid, &channel_seed);
 	derive_basepoints(&channel_seed,
-			  &local_funding_pubkey, NULL, &secrets, NULL);
+			  &local_funding_pubkey, NULL, NULL, &secrets, NULL);
 
 	funding_wscript = bitcoin_redeem_2of2(tmpctx,
 					      &local_funding_pubkey,
@@ -1459,7 +1460,7 @@ static u8 *handle_psign_update_tx(struct hsmd_client *c, const u8 *msg_in)
 
 	get_channel_seed(&c->id, c->dbid, &channel_seed);
 	derive_basepoints(&channel_seed,
-			  &local_funding_pubkey, NULL, &secrets, NULL);
+			  &local_funding_pubkey, NULL, NULL, &secrets, NULL);
 
     /* Now that we have both public keys, we can derive the MuSig session */
 
@@ -1537,7 +1538,7 @@ static u8 *handle_sign_commitment_tx(struct hsmd_client *c, const u8 *msg_in)
 
 	get_channel_seed(&peer_id, dbid, &channel_seed);
 	derive_basepoints(&channel_seed,
-			  &local_funding_pubkey, NULL, &secrets, NULL);
+			  &local_funding_pubkey, NULL, NULL, &secrets, NULL);
 
 	/*~ Bitcoin signatures cover the (part of) the script they're
 	 * executing; the rules are a bit complex in general, but for

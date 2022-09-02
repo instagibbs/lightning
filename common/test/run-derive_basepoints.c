@@ -113,6 +113,7 @@ STRUCTEQ_DEF(basepoints, 0,
 	     delayed_payment.pubkey);
 STRUCTEQ_DEF(secrets, 0,
 	     funding_privkey.secret.data,
+	     settle_privkey.secret.data,
 	     revocation_basepoint_secret.data,
 	     payment_basepoint_secret.data,
 	     htlc_basepoint_secret.data,
@@ -123,6 +124,7 @@ STRUCTEQ_DEF(privkey, 0,
 struct info {
 	struct secret seed;
 	struct pubkey funding_pubkey;
+    struct pubkey settle_pubkey;
 	struct basepoints basepoints;
 	struct secrets secrets;
 	struct sha256 shaseed;
@@ -145,6 +147,7 @@ int main(int argc, char *argv[])
 	common_setup(argv[0]);
 	baseline = new_info(ctx);
 	assert(derive_basepoints(&baseline->seed, &baseline->funding_pubkey,
+                 &baseline->settle_pubkey,
 				 &baseline->basepoints,
 				 &baseline->secrets,
 				 &baseline->shaseed));
@@ -152,6 +155,7 @@ int main(int argc, char *argv[])
 	/* Same seed, same result. */
 	info = new_info(ctx);
 	assert(derive_basepoints(&info->seed, &info->funding_pubkey,
+                 &baseline->settle_pubkey,
 				 &info->basepoints,
 				 &info->secrets,
 				 &info->shaseed));
@@ -168,6 +172,7 @@ int main(int argc, char *argv[])
 
 			assert(derive_basepoints(&info->seed,
 						 &info->funding_pubkey,
+                         &info->settle_pubkey,
 						 &info->basepoints,
 						 &info->secrets,
 						 &info->shaseed));
@@ -182,7 +187,7 @@ int main(int argc, char *argv[])
 
 	/* Any field can be NULL (except seed). */
 	info = new_info(ctx);
-	assert(derive_basepoints(&info->seed, NULL,
+	assert(derive_basepoints(&info->seed, NULL, &info->settle_pubkey,
 				 &info->basepoints,
 				 &info->secrets,
 				 &info->shaseed));
@@ -191,7 +196,16 @@ int main(int argc, char *argv[])
 	assert(sha256_eq(&baseline->shaseed, &info->shaseed));
 
 	info = new_info(ctx);
+	assert(derive_basepoints(&info->seed, &info->funding_pubkey, NULL,
+				 &info->basepoints,
+				 &info->secrets,
+				 &info->shaseed));
+	assert(basepoints_eq(&baseline->basepoints, &info->basepoints));
+	assert(secrets_eq(&baseline->secrets, &info->secrets));
+
+	info = new_info(ctx);
 	assert(derive_basepoints(&info->seed, &info->funding_pubkey,
+                 &info->settle_pubkey,
 				 NULL,
 				 &info->secrets,
 				 &info->shaseed));
@@ -201,6 +215,7 @@ int main(int argc, char *argv[])
 
 	info = new_info(ctx);
 	assert(derive_basepoints(&info->seed, &info->funding_pubkey,
+                 &info->settle_pubkey,
 				 &info->basepoints,
 				 NULL,
 				 &info->shaseed));
@@ -210,6 +225,7 @@ int main(int argc, char *argv[])
 
 	info = new_info(ctx);
 	assert(derive_basepoints(&info->seed, &info->funding_pubkey,
+                 &info->settle_pubkey,
 				 &info->basepoints,
 				 &info->secrets,
 				 NULL));

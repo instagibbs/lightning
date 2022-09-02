@@ -17,6 +17,7 @@ struct basepoints {
 
 struct secrets {
 	struct privkey funding_privkey;
+	struct privkey settle_privkey;
 	struct secret revocation_basepoint_secret;
 	struct secret payment_basepoint_secret;
 	struct secret htlc_basepoint_secret;
@@ -27,12 +28,14 @@ struct secrets {
  * derive_basepoints - given a (per-peer) seed, get the basepoints
  * @seed: (in) seed (derived by master daemon from counter and main seed)
  * @funding_pubkey: (out) pubkey for funding tx output (if non-NULL)
+ * @settle_pubkey: (out) pubkey used for settlement transactions (eltoo only)
  * @basepoints: (out) basepoints for channel (if non-NULL)
  * @secrets: (out) basepoints for channel (if non-NULL)
  * @shaseed: (out) seed for shachain (if non-NULL)
  */
 bool derive_basepoints(const struct secret *seed,
 		       struct pubkey *funding_pubkey,
+               struct pubkey *settle_pubkey,
 		       struct basepoints *basepoints,
 		       struct secrets *secrets,
 		       struct sha256 *shaseed);

@@ -954,7 +954,8 @@ void get_channel_basepoints(struct lightningd *ld,
 			    const struct node_id *peer_id,
 			    const u64 dbid,
 			    struct basepoints *local_basepoints,
-			    struct pubkey *local_funding_pubkey);
+			    struct pubkey *local_funding_pubkey,
+                struct pubkey *local_settle_pubkey);
 
 void channel_set_billboard(struct channel *channel, bool perm,
 			   const char *str TAKES);
