@@ -702,6 +702,13 @@ void fromwire_partial_sig(const u8 **cursor, size_t *max,
     }
 }
 
+char *fmt_partial_sig(const tal_t *ctx, const struct partial_sig *psig)
+{
+	return tal_hexstr(ctx, psig->p_sig.data, sizeof(psig->p_sig.data));
+}
+
+REGISTER_TYPE_TO_HEXSTR(partial_sig);
+
 void towire_musig_session(u8 **pptr, const struct musig_session *session)
 {
     /* No proper serialization/parsing supplied, we're just copying bytes */

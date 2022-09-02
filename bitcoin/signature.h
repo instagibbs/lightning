@@ -15,7 +15,6 @@ struct pubkey;
 struct point32;
 struct privkey;
 struct bitcoin_tx_output;
-struct bip340sig;
 
 enum sighash_type {
     SIGHASH_ALL = 1,
@@ -283,13 +282,6 @@ bool check_tx_sig(const struct bitcoin_tx *tx, size_t input_num,
 		  const struct bitcoin_signature *sig);
 
 /**
- * check a Schnorr signature
- */
-bool check_schnorr_sig(const struct sha256 *hash,
-		       const secp256k1_pubkey *pubkey,
-		       const struct bip340sig *sig);
-
-/**
  * check_tx_taproot_sig - check a bitcoin signature for a transaction input
  * @tx: the bitcoin transaction which has been signed.
  * @input_num: the input number to which @sig should apply.
@@ -331,20 +323,15 @@ void fromwire_musig_session(const u8 **cursor, size_t *max,
 			struct musig_session *session);
 
 /* Get a hex string sig */
-char *fmt_secp256k1_ecdsa_signature(const tal_t *ctx,
-				    const secp256k1_ecdsa_signature *sig);
+char *fmt_signature(const tal_t *ctx, const secp256k1_ecdsa_signature *sig);
 char *fmt_bip340sig(const tal_t *ctx, const struct bip340sig *bip340sig);
-char *fmt_bitcoin_signature(const tal_t *ctx,
-			    const struct bitcoin_signature *sig);
+char *fmt_partial_sig(const tal_t *ctx, const struct partial_sig *psig);
 
 /* For caller convenience, we hand in tag in parts (any can be "") */
 void bip340_sighash_init(struct sha256_ctx *sctx,
 			 const char *tag1,
 			 const char *tag2,
 			 const char *tag3);
-
-/* Some of the spec test vectors assume no sig grinding. */
-extern bool dev_no_signature_grind;
 
 /* Used for APO style covenant signatures */
 void create_keypair_of_one(secp256k1_keypair *G_pair);
