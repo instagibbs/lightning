@@ -853,7 +853,7 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 
     /* Fetch MuSig nonce for channel since we have none yet */
     msg = towire_hsmd_gen_nonce(NULL, &state->channel_id);
-	peer_write(state->pps, take(msg));
+    wire_sync_write(HSM_FD, take(msg));
 
 	msg = wire_sync_read(tmpctx, HSM_FD);
     if (!fromwire_hsmd_gen_nonce_reply(msg, &state->eltoo_keyset.self_next_nonce)) {
