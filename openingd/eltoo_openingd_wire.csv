@@ -32,7 +32,7 @@ msgdata,openingd_eltoo_init,dev_temporary_channel_id,?byte,32
 msgtype,openingd_eltoo_funder_reply,6601
 msgdata,openingd_eltoo_funder_reply,their_config,channel_config,
 msgdata,openingd_eltoo_funder_reply,first_commit,bitcoin_tx,
-msgdata,openingd_eltoo_funder_reply,first_update_psig,bip340sig,
+msgdata,openingd_eltoo_funder_reply,first_update_sig,bip340sig,
 msgdata,openingd_eltoo_funder_reply,minimum_depth,u32,
 msgdata,openingd_eltoo_funder_reply,remote_funding_key,pubkey,
 msgdata,openingd_eltoo_funder_reply,remote_settlement_key,pubkey,
