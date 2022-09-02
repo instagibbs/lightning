@@ -423,6 +423,12 @@ static u8 *funder_channel_start(struct eltoo_state *state, u8 channel_flags)
 		return NULL;
 	}
 
+    /* Should match what we offered if they accepted FIXME put this in bounds check? */
+    if (state->remoteconf.shared_delay != state->localconf.shared_delay) {
+		negotiation_failed(state, "%s", err_reason);
+		return NULL;
+    } 
+
 	funding_output_script = scriptpubkey_eltoo_funding(tmpctx,
                                &state->our_funding_pubkey,
 						       &state->their_funding_pubkey);
@@ -834,6 +840,9 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 		tal_free(err_reason);
 		return NULL;
 	}
+
+    /* If we like shared_delay of opener, accept terms by matching */
+    state->localconf.shared_delay = state->remoteconf.shared_delay;
 
 	if (!state->upfront_shutdown_script[LOCAL])
 		state->upfront_shutdown_script[LOCAL]
