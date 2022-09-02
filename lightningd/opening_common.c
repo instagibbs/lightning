@@ -179,7 +179,7 @@ void eltoo_channel_config(struct lightningd *ld,
 		    struct amount_msat *min_effective_htlc_capacity)
 {
 	/* FIXME: depend on feerate. */
-	*max_shared_delay = 60;
+	*max_shared_delay = ld->config.locktime_max;
 
 	/* Take minimal effective capacity from config min_capacity_sat */
 	if (!amount_sat_to_msat(min_effective_htlc_capacity,
@@ -202,14 +202,8 @@ void eltoo_channel_config(struct lightningd *ld,
 	/* Don't care */
 	ours->htlc_minimum = ld->config.htlc_minimum_msat;
 
-	/* BOLT #2:
-	 *
-	 * The sending node SHOULD:
-	 *   - set `to_self_delay` sufficient to ensure the sender can
-	 *     irreversibly spend a commitment transaction output, in case of
-	 *     misbehavior by the receiver.
-	 */
-	 ours->to_self_delay = ld->config.locktime_blocks;
+    /* FIXME better voodoo based on TODO BOLT description */
+     ours->shared_delay = ld->config.locktime_blocks;
 
 	 ours->max_accepted_htlcs = ld->config.max_concurrent_htlcs;
 
