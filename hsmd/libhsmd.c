@@ -109,6 +109,11 @@ bool hsmd_check_client_capabilities(struct hsmd_client *client,
 	case WIRE_HSMD_SIGN_REMOTE_HTLC_TX:
 	case WIRE_HSMD_VALIDATE_COMMITMENT_TX:
 	case WIRE_HSMD_VALIDATE_REVOCATION:
+    case WIRE_HSMD_GEN_NONCE:
+    case WIRE_HSMD_PSIGN_UPDATE_TX:
+    case WIRE_HSMD_COMBINE_PSIG:
+    case WIRE_HSMD_READY_ELTOO_CHANNEL:
+    case WIRE_HSMD_VALIDATE_UPDATE_TX_PSIG: /* FIXME unused for now ...  */
 		return (client->capabilities & HSM_CAP_SIGN_REMOTE_TX) != 0;
 
 	case WIRE_HSMD_SIGN_MUTUAL_CLOSE_TX:
@@ -128,11 +133,6 @@ bool hsmd_check_client_capabilities(struct hsmd_client *client,
 	case WIRE_HSMD_SIGN_MESSAGE:
 	case WIRE_HSMD_GET_OUTPUT_SCRIPTPUBKEY:
 	case WIRE_HSMD_SIGN_BOLT12:
-    case WIRE_HSMD_READY_ELTOO_CHANNEL:
-    case WIRE_HSMD_PSIGN_UPDATE_TX:
-    case WIRE_HSMD_COMBINE_PSIG:
-    case WIRE_HSMD_VALIDATE_UPDATE_TX_PSIG:
-    case WIRE_HSMD_GEN_NONCE:
 		return (client->capabilities & HSM_PERM_MASTER) != 0;
 
 	/*~ These are messages sent by the HSM so we should never receive them. */
@@ -799,7 +799,6 @@ static u8 *handle_gen_nonce(struct hsmd_client *c,
 					 const u8 *msg_in)
 {
     struct channel_id channel_id;
-    struct nonce nonce;
 	struct secret channel_seed;
 	struct secrets secrets;
 
@@ -818,7 +817,7 @@ static u8 *handle_gen_nonce(struct hsmd_client *c,
            NULL /* keyagg_cache */,
            NULL /* msg32 */);
 
-	return towire_hsmd_gen_nonce_reply(NULL, &nonce);
+	return towire_hsmd_gen_nonce_reply(NULL, &secretstuff.pub_nonce);
 }
 
 /*~ The client has asked us to extract the shared secret from an EC Diffie
