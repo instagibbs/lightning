@@ -70,7 +70,8 @@ struct eltoo_state {
 	struct pubkey their_funding_pubkey;
     struct pubkey their_settlement_pubkey;
 
-    /* This seems necesssary for opening... move all keys here? */
+    /* FIXME  This seems necesssary for opening... move all keys here?
+      also need to "forward" the nonce for normal channel operation */
     struct eltoo_keyset eltoo_keyset;
 
 	/* Initially temporary, then final channel id. */
