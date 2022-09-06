@@ -183,3 +183,15 @@ static char *point32_to_hexstr(const tal_t *ctx, const struct point32 *point32)
 	return tal_hexstr(ctx, output, sizeof(output));
 }
 REGISTER_TYPE_TO_STRING(point32, point32_to_hexstr);
+
+static char *nonce_to_hexstr(const tal_t *ctx, const struct nonce *nonce)
+{
+    u8 nonce_output[66];
+
+    secp256k1_musig_pubnonce_serialize(secp256k1_ctx,
+        nonce_output,
+        &nonce->nonce);
+
+    return tal_hexstr(ctx, nonce_output, sizeof(nonce_output));
+}
+REGISTER_TYPE_TO_STRING(nonce, nonce_to_hexstr);

@@ -1401,6 +1401,7 @@ static u8 *handle_combine_psig(struct hsmd_client *c, const u8 *msg_in)
     annex = make_eltoo_annex(tmpctx, settle_tx);
     bitcoin_tx_taproot_hash_for_sig(update_tx, /* input_index */ 0, SIGHASH_ANYPREVOUTANYSCRIPT|SIGHASH_SINGLE, /* non-NULL script signals bip342... */ annex, annex, &hash_out);
 
+
     if (!bipmusig_partial_sigs_combine_verify(p_sig_ptrs,
                /* num_signers */ 2,
                &inner_pubkey,
@@ -1430,7 +1431,7 @@ static u8 *handle_psign_update_tx(struct hsmd_client *c, const u8 *msg_in)
     struct musig_session session;
 
     /* MuSig stuff */
-    struct pubkey dummy_inner_pubkey; /* only cache needed for signing */
+    struct pubkey inner_pubkey;
     secp256k1_musig_keyagg_cache keyagg_cache;
     const struct pubkey *pubkey_ptrs[2];
     const secp256k1_musig_pubnonce *pubnonce_ptrs[2];
@@ -1466,7 +1467,7 @@ static u8 *handle_psign_update_tx(struct hsmd_client *c, const u8 *msg_in)
     annex = make_eltoo_annex(tmpctx, settle_tx);
     pubkey_ptrs[0] = &remote_funding_pubkey;
     pubkey_ptrs[1] = &local_funding_pubkey;
-    bipmusig_inner_pubkey(&dummy_inner_pubkey,
+    bipmusig_inner_pubkey(&inner_pubkey,
                &keyagg_cache,
                pubkey_ptrs,
                /* n_pubkeys */ 2);
@@ -1494,7 +1495,7 @@ static u8 *handle_psign_update_tx(struct hsmd_client *c, const u8 *msg_in)
            &keyagg_cache,
            hash_out.sha.u.u8);
 
-	return towire_hsmd_psign_update_tx_reply(NULL, &p_sig, &session, &secretstuff.pub_nonce);
+	return towire_hsmd_psign_update_tx_reply(NULL, &p_sig, &session, &secretstuff.pub_nonce, &inner_pubkey);
 }
 
 

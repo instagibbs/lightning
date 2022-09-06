@@ -563,6 +563,7 @@ msgtype,hsmd_psign_update_tx_reply,162
 msgdata,hsmd_psign_update_tx_reply,update_psig,partial_sig,
 msgdata,hsmd_psign_update_tx_reply,session,musig_session,
 msgdata,hsmd_psign_update_tx_reply,next_nonce,nonce,
+msgdata,hsmd_psign_update_tx_reply,inner_pubkey,pubkey,
 
 msgtype,hsmd_validate_update_tx_psig,163
 msgdata,hsmd_validate_update_tx_psig,channel_id,channel_id,

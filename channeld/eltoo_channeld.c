@@ -841,7 +841,7 @@ static void send_update(struct eltoo_peer *peer)
             &peer->channel->eltoo_keyset.other_next_nonce);
 
     hsmd_msg = hsm_req(tmpctx, take(msg));
-    if (!fromwire_hsmd_psign_update_tx_reply(hsmd_msg, &peer->channel->eltoo_keyset.self_psig, &peer->channel->eltoo_keyset.session, &peer->channel->eltoo_keyset.self_next_nonce))
+    if (!fromwire_hsmd_psign_update_tx_reply(hsmd_msg, &peer->channel->eltoo_keyset.self_psig, &peer->channel->eltoo_keyset.session, &peer->channel->eltoo_keyset.self_next_nonce, &peer->channel->eltoo_keyset.inner_pubkey))
         status_failed(STATUS_FAIL_HSM_IO,
                   "Reading psign_update_tx reply: %s",
                   tal_hex(tmpctx, msg));
@@ -1055,7 +1055,7 @@ static void handle_peer_update_sig(struct eltoo_peer *peer, const u8 *msg)
                            &peer->channel->eltoo_keyset.other_next_nonce);
     wire_sync_write(HSM_FD, take(msg));
     msg = wire_sync_read(tmpctx, HSM_FD);
-    if (!fromwire_hsmd_psign_update_tx_reply(msg, &peer->channel->eltoo_keyset.self_psig, &peer->channel->eltoo_keyset.session, &peer->channel->eltoo_keyset.self_next_nonce))
+    if (!fromwire_hsmd_psign_update_tx_reply(msg, &peer->channel->eltoo_keyset.self_psig, &peer->channel->eltoo_keyset.session, &peer->channel->eltoo_keyset.self_next_nonce, &peer->channel->eltoo_keyset.inner_pubkey))
         status_failed(STATUS_FAIL_HSM_IO, "Bad sign_tx_reply %s",
                   tal_hex(tmpctx, msg));
 

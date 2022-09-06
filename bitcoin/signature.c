@@ -11,6 +11,8 @@
 #include <wire/wire.h>
 #include <sodium/randombytes.h>
 
+#include <stdio.h>
+
 #ifndef SUPERVERBOSE
 #define SUPERVERBOSE(...)
 #endif
@@ -330,7 +332,7 @@ bool bipmusig_partial_sigs_combine_verify(const secp256k1_musig_partial_sig * co
         return false;
     }
 
-   return secp256k1_schnorrsig_verify(secp256k1_ctx, sig->u8, hash->sha.u.u8, sizeof(hash->sha.u.u8), &xonly_inner_pubkey);
+    return secp256k1_schnorrsig_verify(secp256k1_ctx, sig->u8, hash->sha.u.u8, sizeof(hash->sha.u.u8), &xonly_inner_pubkey);
 }
 
 void bitcoin_tx_hash_for_sig(const struct bitcoin_tx *tx, unsigned int in,
