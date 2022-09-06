@@ -749,7 +749,8 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 	struct tlv_open_channel_eltoo_tlvs *open_tlvs;
 	struct wally_tx_output *direct_outputs[NUM_SIDES];
     struct partial_sig our_update_psig, their_update_psig;
-    /* These never leave openingd, keep local */
+    /* These never leave openingd, keep local. funding_* nonces go in keyset and propagated
+     * to eltoo_channeld! */
     struct nonce their_opening_nonce, our_opening_nonce;
 
     /* Dummy fields since they're unused at time of channel creation */
@@ -1039,7 +1040,7 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 
 	/* BOLT #2:
 	 *
-	 * ### The `funding_signed` Message
+	 * ### The `funding_signed_eltoo` Message
 	 *
 	 * This message gives the funder the signature it needs for the first
 	 * commitment transaction, so it can broadcast the transaction knowing
@@ -1052,7 +1053,7 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 						   update_tx,
                            settle_tx,
 						   &state->their_funding_pubkey,
-                           &state->eltoo_keyset.other_next_nonce);
+                           &their_opening_nonce);
 	wire_sync_write(HSM_FD, take(msg));
 
 	status_debug("partial signature req on tx %s, using our key %s, their key %s, our nonce %s, their nonce %s",
@@ -1062,11 +1063,12 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
         type_to_string(tmpctx, struct pubkey,
                &state->their_funding_pubkey),
              type_to_string(tmpctx, struct nonce,
-                    &state->eltoo_keyset.self_next_nonce),
+                    &our_opening_nonce),
             type_to_string(tmpctx, struct nonce,
-                   &state->eltoo_keyset.other_next_nonce));
+                   &their_opening_nonce));
 
 	msg = wire_sync_read(tmpctx, HSM_FD);
+    /* Reply puts next nonce into keyset and xmitted with funding_signed_eltoo */
 	if (!fromwire_hsmd_psign_update_tx_reply(msg, &our_update_psig, &state->eltoo_keyset.session, &state->eltoo_keyset.self_next_nonce, &state->eltoo_keyset.inner_pubkey))
 		status_failed(STATUS_FAIL_HSM_IO,
 			      "Bad sign_tx_reply %s", tal_hex(tmpctx, msg));

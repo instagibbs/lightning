@@ -504,6 +504,7 @@ static void opening_fundee_finished(struct subd *openingd,
 	channel_info.their_config.id = 0;
 
 	peer_fd = new_peer_fd_arr(tmpctx, fds);
+    /* FIXME we need switching behavior for this message wrt eltoo */
 	if (!fromwire_openingd_fundee(tmpctx, reply,
 				     &channel_info.their_config,
 				     &remote_commit,
