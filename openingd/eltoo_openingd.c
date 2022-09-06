@@ -335,6 +335,9 @@ static u8 *funder_channel_start(struct eltoo_state *state, u8 channel_flags)
 				"Failed to get nonce for channel: %s", tal_hex(msg, msg));
     }
 
+	status_debug("temp channel_id being sent during open_channel: %s",
+		     type_to_string(tmpctx, struct channel_id, &state->channel_id));
+
 	msg = towire_open_channel_eltoo(NULL,
 				  &chainparams->genesis_blockhash,
 				  &state->channel_id,
@@ -385,6 +388,9 @@ static u8 *funder_channel_start(struct eltoo_state *state, u8 channel_flags)
 				"Parsing accept_channel %s", tal_hex(msg, msg));
 	}
 	set_remote_upfront_shutdown(state, accept_tlvs->upfront_shutdown_script);
+
+	status_debug("temp channel_id being accepted during accept_channel: %s",
+		     type_to_string(tmpctx, struct channel_id, &state->channel_id));
 
 	/* BOLT #2:
 	 * - if `channel_type` is set, and `channel_type` was set in
@@ -755,6 +761,9 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 				    "Parsing open_channel %s", tal_hex(tmpctx, open_channel_msg));
 	set_remote_upfront_shutdown(state, open_tlvs->upfront_shutdown_script);
 
+	status_debug("temp channel_id being received during open_channel: %s",
+		     type_to_string(tmpctx, struct channel_id, &state->channel_id));
+
 	/* BOLT #2:
 	 * The receiving node MUST fail the channel if:
 	 *...
@@ -870,6 +879,9 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 				&state->channel_id,
 				"Failed to get nonce for channel: %s", tal_hex(msg, msg));
     }
+
+	status_debug("temp channel_id being sent during accept channel: %s",
+		     type_to_string(tmpctx, struct channel_id, &state->channel_id));
 
 	msg = towire_accept_channel_eltoo(NULL, &state->channel_id,
 				    state->localconf.dust_limit,

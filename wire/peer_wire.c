@@ -243,6 +243,7 @@ bool extract_channel_id(const u8 *in_pkt, struct channel_id *channel_id)
 		 */
 
 		/* Skip over chain_hash */
+    case WIRE_OPEN_CHANNEL_ELTOO:
 		fromwire_pad(&cursor, &max, sizeof(struct bitcoin_blkid));
 
 	/* These have them at the start */
@@ -424,7 +425,6 @@ bool extract_channel_id(const u8 *in_pkt, struct channel_id *channel_id)
     case WIRE_YIELD:
         /* FIXME add BOLT text here */
     /* Eltoo stuff */
-    case WIRE_OPEN_CHANNEL_ELTOO:
     case WIRE_ACCEPT_CHANNEL_ELTOO:
     case WIRE_FUNDING_CREATED_ELTOO:
     case WIRE_FUNDING_LOCKED_ELTOO:
