@@ -359,6 +359,7 @@ static void make_channel_local_active(struct eltoo_peer *peer)
 
 static void send_announcement_signatures(struct eltoo_peer *peer)
 {
+    return;
 	/* First 2 + 256 byte are the signatures and msg type, skip them */
 	size_t offset = 258;
 	struct sha256_double hash;
@@ -509,6 +510,7 @@ static void channel_announcement_negotiate(struct eltoo_peer *peer)
 		 * receive the remote announcement reply. But we will rebuild the channel with announcement
 		 * from the DB directly, other than waiting for the remote announcement reply.
 		 */
+        /* FIXME no announcements for now */
 		send_announcement_signatures(peer);
 		peer->have_sigs[LOCAL] = true;
 		billboard_update(peer);
