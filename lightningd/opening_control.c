@@ -218,6 +218,7 @@ wallet_commit_channel(struct lightningd *ld,
 			      feerate, feerate,
 			      &uc->local_basepoints,
 			      &uc->local_funding_pubkey,
+			      &uc->local_settle_pubkey,
 			      false, /* !has_future_per_commitment_point */
 			      ld->config.fee_base,
 			      ld->config.fee_per_satoshi,
@@ -366,6 +367,81 @@ static void opening_funder_start_replied(struct subd *openingd, const u8 *resp,
 	return;
 
 failed:
+	/* Frees fc too */
+	tal_free(fc->uc);
+}
+
+static void opening_eltoo_funder_finished(struct subd *openingd, const u8 *resp,
+				    const int *fds,
+				    struct funding_channel *fc)
+{
+	struct channel_info channel_info;
+	struct channel_id cid;
+	struct bitcoin_outpoint funding;
+	struct bip340sig first_update_sig;
+	struct bitcoin_tx *update_tx;
+	struct channel *channel;
+	struct lightningd *ld = openingd->ld;
+	u8 *remote_upfront_shutdown_script;
+	struct peer_fd *peer_fd;
+	struct channel_type *type;
+
+	/* This is a new channel_info.their_config so set its ID to 0 */
+	channel_info.their_config.id = 0;
+
+	if (!fromwire_openingd_eltoo_funder_reply(resp, resp,
+					   &channel_info.their_config,
+					   &update_tx,
+					   &first_update_sig,
+					   &fc->uc->minimum_depth,
+					   &channel_info.remote_fundingkey,
+					   &channel_info.remote_settlekey,
+					   &funding,
+					   &remote_upfront_shutdown_script,
+					   &type)) {
+		log_broken(fc->uc->log,
+			   "bad OPENING_ELTOO_FUNDER_REPLY %s",
+			   tal_hex(resp, resp));
+		was_pending(command_fail(fc->cmd, LIGHTNINGD,
+					 "bad OPENING_ELTOO_FUNDER_REPLY %s",
+					 tal_hex(fc->cmd, resp)));
+		goto cleanup;
+	}
+	update_tx->chainparams = chainparams;
+
+	peer_fd = new_peer_fd_arr(resp, fds);
+
+	/* Saved with channel to disk */
+	derive_channel_id(&cid, &funding);
+
+	/* Steals fields from uc */
+	channel = wallet_commit_channel(ld, fc->uc,
+					&cid,
+					update_tx,
+					NULL /* remote_commit_sig */,
+					&funding,
+					fc->funding_sats,
+					fc->push,
+					fc->channel_flags,
+					&channel_info,
+					0 /* feerate */,
+					fc->our_upfront_shutdown_script,
+					remote_upfront_shutdown_script,
+					type,
+					&first_update_sig);
+	if (!channel) {
+		was_pending(command_fail(fc->cmd, LIGHTNINGD,
+					 "Key generation failure"));
+		goto cleanup;
+	}
+
+	/* Watch for funding confirms */
+	channel_watch_funding(ld, channel);
+
+	funding_success(channel);
+	peer_start_eltoo_channeld(channel, peer_fd, NULL, false /* reconnected */, false /* reestablish_only */);
+
+cleanup:
 	/* Frees fc too */
 	tal_free(fc->uc);
 }
@@ -560,7 +636,7 @@ static void opening_eltoo_fundee_finished(struct subd *openingd,
 			      &channel->funding.txid, &channel->remote_funding_locked);
 
 	/* On to normal operation! */
-	peer_start_channeld(channel, peer_fd, fwd_msg, false, NULL);
+	peer_start_eltoo_channeld(channel, peer_fd, fwd_msg, false /* reconnected */, false /* reestablish_only */);
 
 	tal_free(uc);
 	return;

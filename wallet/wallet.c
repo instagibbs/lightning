@@ -1903,7 +1903,7 @@ static struct channel *wallet_stmt2channel(struct wallet *w, struct db_stmt *stm
 	struct changed_htlc *last_sent_commit;
 	s64 final_key_idx, channel_config_id;
 	struct basepoints local_basepoints;
-	struct pubkey local_funding_pubkey;
+	struct pubkey local_funding_pubkey, local_settle_pubkey;
 	bool has_future_per_commitment_point;
 	struct amount_sat funding_sat, our_funding_sat;
 	struct amount_msat push_msat, our_msat, msat_to_us_min, msat_to_us_max, htlc_minimum_msat, htlc_maximum_msat;
@@ -2025,6 +2025,7 @@ static struct channel *wallet_stmt2channel(struct wallet *w, struct db_stmt *stm
 	db_col_pubkey(stmt, "delayed_payment_basepoint_local",
 		      &local_basepoints.delayed_payment);
 	db_col_pubkey(stmt, "funding_pubkey_local", &local_funding_pubkey);
+	db_col_pubkey(stmt, "settle_pubkey_local", &local_settle_pubkey);
 	if (db_col_is_null(stmt, "shutdown_wrong_txid")) {
 		db_col_ignore(stmt, "shutdown_wrong_outnum");
 		shutdown_wrong_funding = NULL;
@@ -2169,7 +2170,7 @@ static struct channel *wallet_stmt2channel(struct wallet *w, struct db_stmt *stm
 			   db_col_u64(stmt, "first_blocknum"),
 			   db_col_int(stmt, "min_possible_feerate"),
 			   db_col_int(stmt, "max_possible_feerate"),
-			   &local_basepoints, &local_funding_pubkey,
+			   &local_basepoints, &local_funding_pubkey, &local_settle_pubkey,
 			   has_future_per_commitment_point,
 			   db_col_int(stmt, "feerate_base"),
 			   db_col_int(stmt, "feerate_ppm"),

@@ -1616,7 +1616,7 @@ static bool test_channel_inflight_crud(struct lightningd *ld, const tal_t *ctx)
 			   100, /* min_possible_feerate */
 			   10000, /* max_possible_feerate */
 			   &basepoints,
-			   &pk, NULL,
+			   &pk, NULL /* local_settle_pubkey */, NULL,
 			   1000, 100,
 			   NULL, 0, 0, channel_type_static_remotekey(NULL),
 			   LOCAL, 0, REASON_UNKNOWN,

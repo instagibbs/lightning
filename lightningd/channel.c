@@ -534,6 +534,7 @@ struct channel *new_channel(struct peer *peer, u64 dbid,
 			    u32 max_possible_feerate,
 			    const struct basepoints *local_basepoints,
 			    const struct pubkey *local_funding_pubkey,
+			    const struct pubkey *local_settle_pubkey,
 			    bool has_future_per_commitment_point,
 			    u32 feerate_base,
 			    u32 feerate_ppm,
@@ -670,6 +671,7 @@ struct channel *new_channel(struct peer *peer, u64 dbid,
 	channel->max_possible_feerate = max_possible_feerate;
 	channel->local_basepoints = *local_basepoints;
 	channel->local_funding_pubkey = *local_funding_pubkey;
+	channel->local_settle_pubkey = *local_settle_pubkey;
 	channel->has_future_per_commitment_point = has_future_per_commitment_point;
 	channel->feerate_base = feerate_base;
 	channel->feerate_ppm = feerate_ppm;
