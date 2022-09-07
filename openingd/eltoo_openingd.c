@@ -1112,6 +1112,7 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 				     update_tx,
 				     &update_sig,
 				     &state->their_funding_pubkey,
+				     &state->their_settlement_pubkey,
 				     &state->funding,
 				     state->funding_sats,
 				     state->push_msat,

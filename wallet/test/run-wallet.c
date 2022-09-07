@@ -600,10 +600,17 @@ bool peer_start_channeld(struct channel *channel UNNEEDED,
 bool peer_start_dualopend(struct peer *peer UNNEEDED, struct peer_fd *peer_fd UNNEEDED,
 			  struct channel *channel UNNEEDED)
 { fprintf(stderr, "peer_start_dualopend called!\n"); abort(); }
+/* Generated stub for peer_start_eltoo_channeld */
+void peer_start_eltoo_channeld(struct channel *channel UNNEEDED,
+			 struct peer_fd *peer_fd UNNEEDED,
+			 const u8 *fwd_msg UNNEEDED,
+			 bool reconnected UNNEEDED,
+			 bool reestablish_only UNNEEDED)
+{ fprintf(stderr, "peer_start_eltoo_channeld called!\n"); abort(); }
 /* Generated stub for peer_start_openingd */
 bool peer_start_openingd(struct peer *peer UNNEEDED,
 			 struct peer_fd *peer_fd UNNEEDED,
-             bool eltoo)
+             bool eltoo UNNEEDED)
 { fprintf(stderr, "peer_start_openingd called!\n"); abort(); }
 /* Generated stub for plugin_hook_call_ */
 bool plugin_hook_call_(struct lightningd *ld UNNEEDED,
