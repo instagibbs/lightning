@@ -476,6 +476,99 @@ cleanup:
 	tal_free(fc->uc);
 }
 
+static void opening_eltoo_fundee_finished(struct subd *openingd,
+				    const u8 *reply,
+				    const int *fds,
+				    struct uncommitted_channel *uc)
+{
+	const u8 *fwd_msg;
+	struct channel_info channel_info;
+	struct bip340sig first_update_sig;
+	struct bitcoin_tx *settle_tx;
+	struct channel_id cid;
+	struct lightningd *ld = openingd->ld;
+	struct bitcoin_outpoint funding;
+	struct amount_sat funding_sats;
+	struct amount_msat push;
+	u8 channel_flags;
+	struct channel *channel;
+	u8 *remote_upfront_shutdown_script, *local_upfront_shutdown_script;
+	struct peer_fd *peer_fd;
+	struct channel_type *type;
+
+	log_debug(uc->log, "Got opening_eltoo_fundee_finish_response");
+
+	/* This is a new channel_info.their_config, set its ID to 0 */
+	channel_info.their_config.id = 0;
+
+	peer_fd = new_peer_fd_arr(tmpctx, fds);
+
+    /* FIXME is this really the right fields to send? */
+    if (!fromwire_openingd_eltoo_fundee(tmpctx, reply,
+				     &channel_info.their_config,
+				     &settle_tx,
+				     &first_update_sig,
+				     &channel_info.remote_fundingkey,
+				     &funding,
+				     &funding_sats,
+				     &push,
+				     &channel_flags,
+				     cast_const2(u8 **, &fwd_msg),
+				     &local_upfront_shutdown_script,
+				     &remote_upfront_shutdown_script,
+				     &type)) {
+		log_broken(uc->log, "bad OPENING_ELTOO_FUNDEE_REPLY %s",
+			   tal_hex(reply, reply));
+		uncommitted_channel_disconnect(uc, LOG_BROKEN,
+					       "bad OPENING_ELTOO_FUNDEE_REPLY");
+		goto failed;
+	}
+
+	settle_tx->chainparams = chainparams;
+
+	derive_channel_id(&cid, &funding);
+
+	/* Consumes uc */
+	channel = wallet_commit_channel(ld, uc,
+					&cid,
+					settle_tx,
+					NULL /* remote_commit_sig */,
+					&funding,
+					funding_sats,
+					push,
+					channel_flags,
+					&channel_info,
+					0 /* feerate */,
+					local_upfront_shutdown_script,
+					remote_upfront_shutdown_script,
+					type,
+                    &first_update_sig);
+	if (!channel) {
+		uncommitted_channel_disconnect(uc, LOG_BROKEN,
+					       "Commit channel failed");
+		goto failed;
+	}
+
+	log_debug(channel->log, "Watching funding tx %s",
+		  type_to_string(reply, struct bitcoin_txid,
+				 &channel->funding.txid));
+
+	channel_watch_funding(ld, channel);
+
+	/* Tell plugins about the success */
+	notify_channel_opened(ld, &channel->peer->id, &channel->funding_sats,
+			      &channel->funding.txid, &channel->remote_funding_locked);
+
+	/* On to normal operation! */
+	peer_start_channeld(channel, peer_fd, fwd_msg, false, NULL);
+
+	tal_free(uc);
+	return;
+
+failed:
+	tal_free(uc);
+}
+
 static void opening_fundee_finished(struct subd *openingd,
 				    const u8 *reply,
 				    const int *fds,
@@ -504,8 +597,8 @@ static void opening_fundee_finished(struct subd *openingd,
 	channel_info.their_config.id = 0;
 
 	peer_fd = new_peer_fd_arr(tmpctx, fds);
-    /* FIXME we need switching behavior for this message wrt eltoo */
-	if (!fromwire_openingd_fundee(tmpctx, reply,
+    
+    if (!fromwire_openingd_fundee(tmpctx, reply,
 				     &channel_info.their_config,
 				     &remote_commit,
 				     &pbase,
@@ -878,6 +971,66 @@ static void opening_got_offer(struct subd *openingd,
 	tal_add_destructor2(openingd, openchannel_payload_remove_openingd, payload);
 	plugin_hook_call_openchannel(openingd->ld, NULL, payload);
 }
+
+static unsigned int eltoo_openingd_msg(struct subd *openingd,
+				 const u8 *msg, const int *fds)
+{
+	enum eltoo_openingd_wire t = fromwire_peektype(msg);
+	struct uncommitted_channel *uc = openingd->channel;
+
+	switch (t) {
+	case WIRE_OPENINGD_ELTOO_FUNDER_REPLY:
+		if (!uc->fc) {
+			log_broken(openingd->log, "Unexpected FUNDER_REPLY %s",
+				   tal_hex(tmpctx, msg));
+			tal_free(openingd);
+			return 0;
+		}
+		if (tal_count(fds) != 1)
+			return 1;
+		opening_eltoo_funder_finished(openingd, msg, fds, uc->fc);
+		return 0;
+	case WIRE_OPENINGD_ELTOO_FUNDER_START_REPLY:
+		if (!uc->fc) {
+			log_broken(openingd->log, "Unexpected FUNDER_START_REPLY %s",
+				   tal_hex(tmpctx, msg));
+			tal_free(openingd);
+			return 0;
+		}
+		opening_funder_start_replied(openingd, msg, fds, uc->fc, true /* eltoo */);
+		return 0;
+	case WIRE_OPENINGD_ELTOO_FAILED:
+		openingd_failed(openingd, msg, uc);
+		return 0;
+
+	case WIRE_OPENINGD_ELTOO_FUNDEE:
+		if (tal_count(fds) != 1)
+			return 1;
+		opening_eltoo_fundee_finished(openingd, msg, fds, uc);
+		return 0;
+
+	case WIRE_OPENINGD_ELTOO_GOT_OFFER:
+		opening_got_offer(openingd, msg, uc);
+		return 0;
+
+	/* We send these! */
+	case WIRE_OPENINGD_ELTOO_INIT:
+	case WIRE_OPENINGD_ELTOO_FUNDER_START:
+	case WIRE_OPENINGD_ELTOO_FUNDER_COMPLETE:
+	case WIRE_OPENINGD_ELTOO_FUNDER_CANCEL:
+	case WIRE_OPENINGD_ELTOO_GOT_OFFER_REPLY:
+	case WIRE_OPENINGD_ELTOO_DEV_MEMLEAK:
+	/* Replies never get here */
+	case WIRE_OPENINGD_DEV_MEMLEAK_REPLY:
+		break;
+	}
+
+	log_broken(openingd->log, "Unexpected msg %s: %s",
+		   openingd_wire_name(t), tal_hex(tmpctx, msg));
+	tal_free(openingd);
+	return 0;
+}
+
 
 static unsigned int openingd_msg(struct subd *openingd,
 				 const u8 *msg, const int *fds)
