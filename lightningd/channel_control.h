@@ -10,6 +10,12 @@ struct lightningd;
 struct peer_fd;
 struct peer;
 
+bool peer_start_eltoo_channeld(struct channel *channel,
+			 struct peer_fd *peer_fd,
+			 const u8 *fwd_msg,
+			 bool reconnected,
+			 bool reestablish_only);
+
 bool peer_start_channeld(struct channel *channel,
 			 struct peer_fd *peer_fd,
 			 const u8 *fwd_msg,

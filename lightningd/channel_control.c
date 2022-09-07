@@ -1684,6 +1684,160 @@ static void channel_control_errmsg(struct channel *channel,
 	channel_errmsg(channel, peer_fd, desc, err_for_them, disconnect, warning);
 }
 
+bool peer_start_eltoo_channeld(struct channel *channel,
+			 struct peer_fd *peer_fd,
+			 const u8 *fwd_msg,
+			 bool reconnected,
+			 bool reestablish_only)
+{
+	u8 *initmsg;
+	int hsmfd;
+	const struct existing_htlc **htlcs;
+	struct short_channel_id scid;
+	struct lightningd *ld = channel->peer->ld;
+	const struct config *cfg = &ld->config;
+	bool reached_announce_depth;
+	secp256k1_ecdsa_signature *remote_ann_node_sig, *remote_ann_bitcoin_sig;
+
+	hsmfd = hsm_get_client_fd(ld, &channel->peer->id,
+				  channel->dbid,
+				  HSM_PERM_SIGN_GOSSIP
+				  | HSM_PERM_ECDH
+				  | HSM_PERM_COMMITMENT_POINT
+				  | HSM_PERM_SIGN_REMOTE_TX
+				  | HSM_PERM_SIGN_ONCHAIN_TX);
+
+	channel_set_owner(channel,
+			  new_channel_subd(channel, ld,
+					   "lightning_eltoo_channeld",
+					   channel,
+					   &channel->peer->id,
+					   channel->log, true,
+					   channeld_wire_name,
+					   channel_msg,
+					   channel_errmsg,
+					   channel_set_billboard,
+					   take(&peer_fd->fd),
+					   take(&hsmfd), NULL));
+
+	if (!channel->owner) {
+		log_broken(channel->log, "Could not subdaemon channel: %s",
+			   strerror(errno));
+		channel_fail_reconnect_later(channel,
+					     "Failed to subdaemon channel");
+		return false;
+	}
+
+	htlcs = peer_htlcs(tmpctx, channel);
+
+	if (channel->scid) {
+		scid = *channel->scid;
+		reached_announce_depth
+			= is_scid_depth_announceable(&scid,
+						     get_block_height(ld->topology));
+		log_debug(channel->log, "Already have funding locked in%s",
+			  reached_announce_depth
+			  ? " (and ready to announce)" : "");
+	} else {
+		log_debug(channel->log, "Waiting for funding confirmations");
+		memset(&scid, 0, sizeof(scid));
+		reached_announce_depth = false;
+	}
+
+	/* Warn once. */
+	if (ld->config.ignore_fee_limits)
+		log_debug(channel->log, "Ignoring fee limits!");
+
+	if (!wallet_remote_ann_sigs_load(tmpctx, channel->peer->ld->wallet,
+					 channel->dbid,
+					 &remote_ann_node_sig,
+					 &remote_ann_bitcoin_sig)) {
+		channel_internal_error(channel,
+				       "Could not load remote announcement"
+				       " signatures");
+		return false;
+	}
+
+	struct ext_key final_ext_key;
+	if (bip32_key_from_parent(
+		    ld->wallet->bip32_base,
+		    channel->final_key_idx,
+		    BIP32_FLAG_KEY_PUBLIC,
+		    &final_ext_key) != WALLY_OK) {
+		channel_internal_error(channel,
+				       "Could not derive final_ext_key %"PRIu64,
+				       channel->final_key_idx);
+		return false;
+	}
+
+	initmsg = towire_channeld_init_eltoo(tmpctx,
+				       chainparams,
+				       ld->our_features,
+				       &channel->cid,
+				       &channel->funding,
+				       channel->funding_sats,
+				       channel->minimum_depth,
+				       &channel->our_config,
+				       &channel->channel_info.their_config,
+				       &channel->their_last_psig,
+				       &channel->our_last_psig,
+				       &channel->session,
+				       &channel->channel_info.remote_fundingkey,
+				       &channel->channel_info.remote_settlekey,
+				       channel->opener,
+				       channel->feerate_base,
+				       channel->feerate_ppm,
+				       channel->htlc_minimum_msat,
+				       channel->htlc_maximum_msat,
+				       channel->our_msat,
+				       &channel->local_funding_pubkey,
+				       &channel->local_settle_pubkey,
+				       &ld->id,
+				       &channel->peer->id,
+				       cfg->commit_time_ms,
+				       cfg->cltv_expiry_delta,
+				       channel->next_index[LOCAL],
+				       0 /* updates_received FIXME is this even necessary? locktime has this */,
+				       channel->next_htlc_id,
+				       htlcs,
+				       channel->scid != NULL,
+				       channel->remote_funding_locked,
+				       &scid,
+				       reconnected,
+				       /* Anything that indicates we are or have
+					* shut down */
+				       channel->state == CHANNELD_SHUTTING_DOWN
+				       || channel->state == CLOSINGD_SIGEXCHANGE
+				       || channel_closed(channel),
+				       channel->shutdown_scriptpubkey[REMOTE] != NULL,
+				       channel->final_key_idx,
+				       &final_ext_key,
+				       channel->shutdown_scriptpubkey[LOCAL],
+				       channel->channel_flags,
+				       fwd_msg,
+				       reached_announce_depth,
+				       channel->peer->their_features,
+				       channel->remote_upfront_shutdown_script,
+				       remote_ann_node_sig,
+				       remote_ann_bitcoin_sig,
+				       channel->type,
+				       IFDEV(ld->dev_fast_gossip, false),
+				       IFDEV(dev_fail_process_onionpacket, false),
+				       IFDEV(ld->dev_disable_commit == -1
+					     ? NULL
+					     : (u32 *)&ld->dev_disable_commit,
+					     NULL),
+				       reestablish_only,
+				       channel->channel_update);
+
+	/* We don't expect a response: we are triggered by funding_depth_cb. */
+	subd_send_msg(channel->owner, take(initmsg));
+
+	/* No fee updates (or blockheights) for eltoo channels */
+	return true;
+}
+
+
 bool peer_start_channeld(struct channel *channel,
 			 struct peer_fd *peer_fd,
 			 const u8 *fwd_msg,
