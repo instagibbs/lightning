@@ -535,7 +535,7 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
 	 * peer's signature, via `funding_signed`, it will broadcast the funding
 	 * transaction.
 	 */
-	settle_tx = initial_settle_channel_tx(tmpctx, state->channel,
+	settle_tx = initial_settle_channel_tx(state, state->channel,
                     direct_outputs);
 	if (!settle_tx) {
 		negotiation_failed(state,
@@ -543,7 +543,7 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
 		return false;
 	}
 
-    *update_tx = initial_update_channel_tx(tmpctx, settle_tx, state->channel);
+    *update_tx = initial_update_channel_tx(state, settle_tx, state->channel);
 
 	if (!*update_tx) {
 		negotiation_failed(state,

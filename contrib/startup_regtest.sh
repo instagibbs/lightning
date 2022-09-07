@@ -148,6 +148,18 @@ start_ln() {
 	echo "	bt-cli, stop_ln"
 }
 
+setup_ln() {
+    l2id=$(l2-cli getinfo | jq -r .id)
+    l1addr=$(l1-cli newaddr | jq -r .bech32)
+    bt-cli loadwallet "default"
+    btcaddr=$(bt-cli getnewaddress)
+    bt-cli sendtoaddress $l1addr 1
+    bt-cli generatetoaddress 101 $btcaddr
+    l1-cli connect $l2id@localhost:7272
+    sleep 1
+    l1-cli fundchannel $l2id 10000
+}
+
 stop_nodes() {
 	if [ -z "$2" ]; then
 		network=regtest
