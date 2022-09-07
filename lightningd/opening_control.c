@@ -218,7 +218,6 @@ wallet_commit_channel(struct lightningd *ld,
 			      feerate, feerate,
 			      &uc->local_basepoints,
 			      &uc->local_funding_pubkey,
-			      &uc->local_settle_pubkey,
 			      false, /* !has_future_per_commitment_point */
 			      ld->config.fee_base,
 			      ld->config.fee_per_satoshi,

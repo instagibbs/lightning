@@ -1903,7 +1903,7 @@ static struct channel *wallet_stmt2channel(struct wallet *w, struct db_stmt *stm
 	struct changed_htlc *last_sent_commit;
 	s64 final_key_idx, channel_config_id;
 	struct basepoints local_basepoints;
-	struct pubkey local_funding_pubkey, local_settle_pubkey;
+	struct pubkey local_funding_pubkey;
 	bool has_future_per_commitment_point;
 	struct amount_sat funding_sat, our_funding_sat;
 	struct amount_msat push_msat, our_msat, msat_to_us_min, msat_to_us_max, htlc_minimum_msat, htlc_maximum_msat;
@@ -1974,7 +1974,6 @@ static struct channel *wallet_stmt2channel(struct wallet *w, struct db_stmt *stm
 
 	/* Populate channel_info */
 	db_col_pubkey(stmt, "fundingkey_remote", &channel_info.remote_fundingkey);
-	db_col_pubkey(stmt, "settlekey_remote", &channel_info.remote_settlekey);
 	db_col_pubkey(stmt, "revocation_basepoint_remote", &channel_info.theirbase.revocation);
 	db_col_pubkey(stmt, "payment_basepoint_remote", &channel_info.theirbase.payment);
 	db_col_pubkey(stmt, "htlc_basepoint_remote", &channel_info.theirbase.htlc);
@@ -2026,7 +2025,6 @@ static struct channel *wallet_stmt2channel(struct wallet *w, struct db_stmt *stm
 	db_col_pubkey(stmt, "delayed_payment_basepoint_local",
 		      &local_basepoints.delayed_payment);
 	db_col_pubkey(stmt, "funding_pubkey_local", &local_funding_pubkey);
-	db_col_pubkey(stmt, "settle_pubkey_local", &local_settle_pubkey);
 	if (db_col_is_null(stmt, "shutdown_wrong_txid")) {
 		db_col_ignore(stmt, "shutdown_wrong_outnum");
 		shutdown_wrong_funding = NULL;
@@ -2171,7 +2169,7 @@ static struct channel *wallet_stmt2channel(struct wallet *w, struct db_stmt *stm
 			   db_col_u64(stmt, "first_blocknum"),
 			   db_col_int(stmt, "min_possible_feerate"),
 			   db_col_int(stmt, "max_possible_feerate"),
-			   &local_basepoints, &local_funding_pubkey, &local_settle_pubkey,
+			   &local_basepoints, &local_funding_pubkey,
 			   has_future_per_commitment_point,
 			   db_col_int(stmt, "feerate_base"),
 			   db_col_int(stmt, "feerate_ppm"),
@@ -2397,7 +2395,6 @@ static bool wallet_channels_load_active(struct wallet *w)
 					", push_msatoshi"
 					", msatoshi_local"
 					", fundingkey_remote"
-					", settlekey_remote"
 					", revocation_basepoint_remote"
 					", payment_basepoint_remote"
 					", htlc_basepoint_remote"
@@ -2845,7 +2842,6 @@ void wallet_channel_save(struct wallet *w, struct channel *chan)
 	wallet_channel_config_save(w, &chan->channel_info.their_config);
 	stmt = db_prepare_v2(w->db, SQL("UPDATE channels SET"
 					"  fundingkey_remote=?,"
-					"  settlekey_remote=?,"
 					"  revocation_basepoint_remote=?,"
 					"  payment_basepoint_remote=?,"
 					"  htlc_basepoint_remote=?,"
@@ -2856,7 +2852,6 @@ void wallet_channel_save(struct wallet *w, struct channel *chan)
 					"  future_per_commitment_point=?"
 					" WHERE id=?"));
 	db_bind_pubkey(stmt, &chan->channel_info.remote_fundingkey);
-	db_bind_pubkey(stmt, &chan->channel_info.remote_settlekey);
 	db_bind_pubkey(stmt, &chan->channel_info.theirbase.revocation);
 	db_bind_pubkey(stmt, &chan->channel_info.theirbase.payment);
 	db_bind_pubkey(stmt, &chan->channel_info.theirbase.htlc);

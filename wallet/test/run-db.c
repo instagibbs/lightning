@@ -110,7 +110,7 @@ u64 forward_index_update_status(struct lightningd *ld UNNEEDED,
 				const struct short_channel_id *out_channel UNNEEDED)
 { fprintf(stderr, "forward_index_update_status called!\n"); abort(); }
 /* Generated stub for fromwire_hsmd_get_channel_basepoints_reply */
-bool fromwire_hsmd_get_channel_basepoints_reply(const void *p UNNEEDED, struct basepoints *basepoints UNNEEDED, struct pubkey *funding_pubkey UNNEEDED, struct pubkey *settle_pubkey UNNEEDED)
+bool fromwire_hsmd_get_channel_basepoints_reply(const void *p UNNEEDED, struct basepoints *basepoints UNNEEDED, struct pubkey *funding_pubkey UNNEEDED)
 { fprintf(stderr, "fromwire_hsmd_get_channel_basepoints_reply called!\n"); abort(); }
 /* Generated stub for fromwire_hsmd_get_output_scriptpubkey_reply */
 bool fromwire_hsmd_get_output_scriptpubkey_reply(const tal_t *ctx UNNEEDED, const void *p UNNEEDED, u8 **script UNNEEDED)
@@ -120,8 +120,7 @@ void get_channel_basepoints(struct lightningd *ld UNNEEDED,
 			    const struct node_id *peer_id UNNEEDED,
 			    const u64 dbid UNNEEDED,
 			    struct basepoints *local_basepoints UNNEEDED,
-			    struct pubkey *local_funding_pubkey UNNEEDED,
-                struct pubkey *local_settle_pubkey UNNEEDED)
+			    struct pubkey *local_funding_pubkey UNNEEDED)
 { fprintf(stderr, "get_channel_basepoints called!\n"); abort(); }
 /* Generated stub for hash_cid */
 size_t hash_cid(const struct channel_id *cid UNNEEDED)

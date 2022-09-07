@@ -87,7 +87,6 @@ msgdata,hsmd_get_channel_basepoints,dbid,u64,
 msgtype,hsmd_get_channel_basepoints_reply,110
 msgdata,hsmd_get_channel_basepoints_reply,basepoints,basepoints,
 msgdata,hsmd_get_channel_basepoints_reply,funding_pubkey,pubkey,
-msgdata,hsmd_get_channel_basepoints_reply,settle_pubkey,pubkey,
 
 #include <common/channel_type.h>
 # Provide channel parameters.

@@ -37,7 +37,6 @@ static void derive_keys(const struct secret *seed, struct keys *keys)
 
 	if (dev_force_channel_secrets) {
 		keys->f = dev_force_channel_secrets->funding_privkey;
-		keys->s = dev_force_channel_secrets->settle_privkey;
 		keys->r.secret = dev_force_channel_secrets->revocation_basepoint_secret;
 		keys->p.secret = dev_force_channel_secrets->payment_basepoint_secret;
 		keys->h.secret = dev_force_channel_secrets->htlc_basepoint_secret;
@@ -49,7 +48,6 @@ static void derive_keys(const struct secret *seed, struct keys *keys)
 
 bool derive_basepoints(const struct secret *seed,
 		       struct pubkey *funding_pubkey,
-               struct pubkey *settle_pubkey,
 		       struct basepoints *basepoints,
 		       struct secrets *secrets,
 		       struct sha256 *shaseed)
@@ -60,7 +58,6 @@ bool derive_basepoints(const struct secret *seed,
 
 	if (secrets) {
 		secrets->funding_privkey = keys.f;
-        secrets->settle_privkey = keys.s;
 		secrets->revocation_basepoint_secret = keys.r.secret;
 		secrets->payment_basepoint_secret = keys.p.secret;
 		secrets->htlc_basepoint_secret = keys.h.secret;
@@ -71,11 +68,6 @@ bool derive_basepoints(const struct secret *seed,
 		if (!pubkey_from_privkey(&keys.f, funding_pubkey))
 			return false;
 	}
-
-    if (settle_pubkey) {
-		if (!pubkey_from_privkey(&keys.f, settle_pubkey))
-			return false;
-    }
 
 	if (basepoints) {
 		if (!pubkey_from_privkey(&keys.r, &basepoints->revocation)

@@ -72,7 +72,7 @@ new_uncommitted_channel(struct peer *peer)
 		      tal_hex(new_channel_msg, new_channel_msg));
 
 	get_channel_basepoints(ld, &uc->peer->id, uc->dbid,
-			       &uc->local_basepoints, &uc->local_funding_pubkey, &uc->local_settle_pubkey);
+			       &uc->local_basepoints, &uc->local_funding_pubkey);
 
 	uc->peer->uncommitted_channel = uc;
 	tal_add_destructor(uc, destroy_uncommitted_channel);

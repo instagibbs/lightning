@@ -834,8 +834,7 @@ void notify_channel_state_changed(struct lightningd *ld UNNEEDED,
 }
 bool fromwire_hsmd_get_channel_basepoints_reply(const void *p UNNEEDED,
 					       struct basepoints *basepoints,
-					       struct pubkey *funding_pubkey,
-                           struct pubkey *settle_pubkey)
+					       struct pubkey *funding_pubkey)
 {
 	struct pubkey pk;
 	pubkey_from_der(tal_hexdata(tmpctx,
@@ -844,7 +843,6 @@ bool fromwire_hsmd_get_channel_basepoints_reply(const void *p UNNEEDED,
 				    66),
 			33, &pk);
 	*funding_pubkey = pk;
-    *settle_pubkey = pk;
 	basepoints->revocation = pk;
 	basepoints->payment = pk;
 	basepoints->htlc = pk;
@@ -1623,7 +1621,7 @@ static bool test_channel_inflight_crud(struct lightningd *ld, const tal_t *ctx)
 			   100, /* min_possible_feerate */
 			   10000, /* max_possible_feerate */
 			   &basepoints,
-			   &pk, NULL /* local_settle_pubkey */, NULL,
+			   &pk, NULL,
 			   1000, 100,
 			   NULL, 0, 0, channel_type_static_remotekey(NULL),
 			   LOCAL, 0, REASON_UNKNOWN,
