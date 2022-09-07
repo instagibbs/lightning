@@ -156,7 +156,7 @@ setup_ln() {
     bt-cli sendtoaddress $l1addr 1
     bt-cli generatetoaddress 101 $btcaddr
     l1-cli connect $l2id@localhost:7272
-    sleep 3
+    sleep 5
     l1-cli fundchannel $l2id 10000
 }
 

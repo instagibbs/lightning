@@ -349,7 +349,7 @@ static u8 *funder_channel_start(struct eltoo_state *state, u8 channel_flags)
 				  state->localconf.shared_delay,
 				  state->localconf.max_accepted_htlcs,
 				  &state->our_funding_pubkey,
-				  &state->our_settlement_pubkey,
+				  &state->our_settlement_pubkey, /* FIXME is this set?? */
 				  channel_flags,
                   &state->eltoo_keyset.self_next_nonce,
 				  open_tlvs);

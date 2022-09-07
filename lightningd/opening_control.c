@@ -408,6 +408,15 @@ static void opening_eltoo_funder_finished(struct subd *openingd, const u8 *resp,
 	}
 	update_tx->chainparams = chainparams;
 
+    /* We make sure other basepoints are valid
+     * even if unused...
+     * FIXME wallet db gets upset if I don't do this due to statement construction...  */
+    memcpy(&channel_info.theirbase.revocation, &channel_info.theirbase.payment, sizeof(channel_info.theirbase.payment));
+    memcpy(&channel_info.theirbase.htlc, &channel_info.theirbase.payment, sizeof(channel_info.theirbase.payment));
+    memcpy(&channel_info.theirbase.delayed_payment, &channel_info.theirbase.payment, sizeof(channel_info.theirbase.payment));
+    memcpy(&channel_info.remote_per_commit, &channel_info.theirbase.payment, sizeof(channel_info.theirbase.payment));
+    memcpy(&channel_info.old_remote_per_commit, &channel_info.theirbase.payment, sizeof(channel_info.theirbase.payment));
+
 	peer_fd = new_peer_fd_arr(resp, fds);
 
 	/* Saved with channel to disk */
@@ -599,6 +608,16 @@ static void opening_eltoo_fundee_finished(struct subd *openingd,
 					       "bad OPENING_ELTOO_FUNDEE_REPLY");
 		goto failed;
 	}
+
+
+    /* We make sure other basepoints are valid
+     * even if unused...
+     * FIXME wallet db gets upset if I don't do this due to statement construction...  */
+    memcpy(&channel_info.theirbase.revocation, &channel_info.theirbase.payment, sizeof(channel_info.theirbase.payment));
+    memcpy(&channel_info.theirbase.htlc, &channel_info.theirbase.payment, sizeof(channel_info.theirbase.payment));
+    memcpy(&channel_info.theirbase.delayed_payment, &channel_info.theirbase.payment, sizeof(channel_info.theirbase.payment));
+    memcpy(&channel_info.remote_per_commit, &channel_info.theirbase.payment, sizeof(channel_info.theirbase.payment));
+    memcpy(&channel_info.old_remote_per_commit, &channel_info.theirbase.payment, sizeof(channel_info.theirbase.payment));
 
 	settle_tx->chainparams = chainparams;
 

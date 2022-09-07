@@ -1822,7 +1822,7 @@ static bool wallet_channel_config_load(struct wallet *w, const u64 id,
 	const char *query = SQL(
 	    "SELECT dust_limit_satoshis, max_htlc_value_in_flight_msat, "
 	    "channel_reserve_satoshis, htlc_minimum_msat, to_self_delay, "
-	    "max_accepted_htlcs, max_dust_htlc_exposure_msat"
+	    "max_accepted_htlcs, max_dust_htlc_exposure_msat "
 	    " FROM channel_configs WHERE id= ? ;");
 	struct db_stmt *stmt = db_prepare_v2(w->db, query);
 	db_bind_u64(stmt, id);
@@ -1974,12 +1974,12 @@ static struct channel *wallet_stmt2channel(struct wallet *w, struct db_stmt *stm
 
 	/* Populate channel_info */
 	db_col_pubkey(stmt, "fundingkey_remote", &channel_info.remote_fundingkey);
-	db_col_pubkey(stmt, "revocation_basepoint_remote", &channel_info.theirbase.revocation);
-	db_col_pubkey(stmt, "payment_basepoint_remote", &channel_info.theirbase.payment);
-	db_col_pubkey(stmt, "htlc_basepoint_remote", &channel_info.theirbase.htlc);
-	db_col_pubkey(stmt, "delayed_payment_basepoint_remote", &channel_info.theirbase.delayed_payment);
-	db_col_pubkey(stmt, "per_commit_remote", &channel_info.remote_per_commit);
-	db_col_pubkey(stmt, "old_per_commit_remote", &channel_info.old_remote_per_commit);
+    db_col_pubkey(stmt, "revocation_basepoint_remote", &channel_info.theirbase.revocation);
+    db_col_pubkey(stmt, "payment_basepoint_remote", &channel_info.theirbase.payment);
+    db_col_pubkey(stmt, "htlc_basepoint_remote", &channel_info.theirbase.htlc);
+    db_col_pubkey(stmt, "delayed_payment_basepoint_remote", &channel_info.theirbase.delayed_payment);
+    db_col_pubkey(stmt, "per_commit_remote", &channel_info.remote_per_commit);
+    db_col_pubkey(stmt, "old_per_commit_remote", &channel_info.old_remote_per_commit);
 
 	wallet_channel_config_load(w, db_col_u64(stmt, "channel_config_remote"),
 				   &channel_info.their_config);
@@ -1988,7 +1988,8 @@ static struct channel *wallet_stmt2channel(struct wallet *w, struct db_stmt *stm
 		= wallet_channel_fee_states_load(w,
 						 db_col_u64(stmt, "id"),
 						 db_col_int(stmt, "funder"));
-	if (!fee_states)
+    /* No fee states expected for eltoo */
+	if (!our_config.is_eltoo && !fee_states)
 		ok = false;
 
 	if (!ok) {
@@ -1996,12 +1997,12 @@ static struct channel *wallet_stmt2channel(struct wallet *w, struct db_stmt *stm
 		return NULL;
 	}
 
-	/* Blockheight states for the channel! */
+	/* Blockheight states for the channel! (not eltoo for now) */
 	height_states
 		= wallet_channel_height_states_load(w,
 						    db_col_u64(stmt, "id"),
 						    db_col_int(stmt, "funder"));
-	if (!height_states)
+	if (!our_config.is_eltoo && !height_states)
 		ok = false;
 
 	if (!ok) {
