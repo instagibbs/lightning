@@ -93,7 +93,6 @@ struct bitcoin_tx *initial_settle_channel_tx(const tal_t *ctx,
 
     /* Note that funding prevout here is not quite right, but we'll re-bind at-chain time */
     init_settle_tx = initial_settlement_tx(ctx,
-                    &channel->funding,
                     channel->funding_sats,
                     channel->config->shared_delay,
                     &channel->eltoo_keyset,

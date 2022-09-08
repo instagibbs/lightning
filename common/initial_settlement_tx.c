@@ -115,7 +115,6 @@ void add_settlement_input(struct bitcoin_tx *tx, const struct bitcoin_outpoint *
 
 
 struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
-				     const struct bitcoin_outpoint *update_outpoint,
 				     struct amount_sat update_outpoint_sats,
 				     u32 shared_delay,
 				     const struct eltoo_keyset *eltoo_keyset,
@@ -135,6 +134,11 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
     const struct pubkey *pubkey_ptrs[2];
     struct pubkey inner_pubkey;
     secp256k1_musig_keyagg_cache keyagg_cache;
+
+    /* PSBTs insist that a utxo is "real", insert garbage so we have value later */
+    struct bitcoin_outpoint fake_outpoint;
+    memset(fake_outpoint.txid.shad.sha.u.u8, 0xff, sizeof(fake_outpoint.txid.shad.sha.u.u8));
+    fake_outpoint.n = 0;
 
    /* For MuSig aggregation for outputs */
     pubkey_ptrs[0] = &(eltoo_keyset->self_funding_key);
@@ -250,7 +254,7 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
 	 *    * `txin[0]` script bytes: 0
 	 */
 
-    add_settlement_input(tx, update_outpoint, update_outpoint_sats, shared_delay, &inner_pubkey, obscured_update_number, pubkey_ptrs);
+    add_settlement_input(tx, &fake_outpoint, update_outpoint_sats, shared_delay, &inner_pubkey, obscured_update_number, pubkey_ptrs);
 
     /* Transaction is now ready for broadcast! */
 
