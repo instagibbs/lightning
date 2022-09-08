@@ -1074,6 +1074,20 @@ void lockin_complete(struct channel *channel,
 	lockin_has_completed(channel, true);
 }
 
+bool channel_on_channel_ready_eltoo(struct channel *channel)
+{
+	if (channel->remote_channel_ready) {
+		channel_internal_error(channel,
+				       "channel_got_channel_ready_eltoo twice");
+		return false;
+	}
+
+	log_debug(channel->log, "Got channel_ready_eltoo");
+	channel->remote_channel_ready = true;
+
+	return true;
+}
+
 bool channel_on_channel_ready(struct channel *channel,
 			      const struct pubkey *next_per_commitment_point,
 			      const struct short_channel_id *remote_alias)
@@ -1096,6 +1110,25 @@ bool channel_on_channel_ready(struct channel *channel,
 	channel->remote_channel_ready = true;
 
 	return true;
+}
+
+static void peer_got_channel_ready_eltoo(struct channel *channel, const u8 *msg)
+{
+	if (!fromwire_channeld_got_funding_locked_eltoo(msg)) {
+		channel_internal_error(channel,
+				       "bad channel_got_channel_ready_eltoo %s",
+				       tal_hex(channel, msg));
+		return;
+	}
+
+	if (!channel_on_channel_ready_eltoo(channel))
+		return;
+
+	if (channel->scid)
+		lockin_complete(channel, CHANNELD_AWAITING_LOCKIN);
+	else
+		/* Remember that we got the lockin */
+		wallet_channel_save(channel->peer->ld->wallet, channel);
 }
 
 static void handle_peer_splice_locked(struct channel *channel, const u8 *msg)
@@ -1552,6 +1585,9 @@ static unsigned channel_msg(struct subd *sd, const u8 *msg, const int *fds)
 	case WIRE_CHANNELD_GOT_CHANNEL_READY:
 		peer_got_channel_ready(sd->channel, msg);
 		break;
+	case WIRE_CHANNELD_GOT_FUNDING_LOCKED_ELTOO:
+		peer_got_funding_locked_eltoo(sd->channel, msg);
+        break;
 	case WIRE_CHANNELD_GOT_ANNOUNCEMENT:
 		peer_got_announcement(sd->channel, msg);
 		break;
@@ -1613,7 +1649,7 @@ static unsigned channel_msg(struct subd *sd, const u8 *msg, const int *fds)
 		handle_confirmed_stfu(sd->ld, sd->channel, msg);
 		break;
 	case WIRE_CHANNELD_GOT_FUNDING_LOCKED_ELTOO:
-		/* FIXME Handle this */
+		peer_got_channel_ready_eltoo(sd->channel, msg);
 		break;
 	case WIRE_CHANNELD_GOT_UPDATESIG:
 		/* FIXME handle this */

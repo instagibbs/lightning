@@ -109,7 +109,7 @@ start_nodes() {
 
 		# Start the lightning nodes
 		test -f "/tmp/l$i-$network/lightningd-$network.pid" || \
-			"$LIGHTNINGD" "--lightning-dir=/tmp/l$i-$network" & #"--dev-debugger=eltoo_openingd" &
+			"$LIGHTNINGD" "--lightning-dir=/tmp/l$i-$network" "--dev-debugger=eltoo_channeld" &
 		# shellcheck disable=SC2139 disable=SC2086
 		alias l$i-cli="$LCLI --lightning-dir=/tmp/l$i-$network"
 		# shellcheck disable=SC2139 disable=SC2086
@@ -157,7 +157,8 @@ setup_ln() {
     bt-cli generatetoaddress 101 $btcaddr
     l1-cli connect $l2id@localhost:7272
     sleep 5
-    l1-cli fundchannel $l2id 10000
+    l1-cli fundchannel $l2id 10000 normal false
+    bt-cli generatetoaddress 6 $btcaddr
 }
 
 stop_nodes() {
