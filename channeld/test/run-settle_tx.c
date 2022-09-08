@@ -97,9 +97,8 @@ static struct secret secret_from_hex(const char *hex)
 	return s;
 }
 
-static u8 *musig_sign(struct bitcoin_tx *update_tx, u8 *annex, struct privkey *alice_privkey, struct privkey *bob_privkey, struct pubkey *inner_pubkey, secp256k1_musig_keyagg_cache *keyagg_cache)
+static struct bip340sig musig_sign(struct bitcoin_tx *update_tx, u8 *annex, struct privkey *alice_privkey, struct privkey *bob_privkey, struct pubkey *inner_pubkey, secp256k1_musig_keyagg_cache *keyagg_cache)
 {
-    u8 *final_sig;
     const secp256k1_musig_pubnonce *pubnonce_ptrs[2];
     struct sha256_double msg_out;
     secp256k1_musig_session session[2];
@@ -146,11 +145,7 @@ static u8 *musig_sign(struct bitcoin_tx *update_tx, u8 *annex, struct privkey *a
         assert(ok);
     }
 
-    final_sig = tal_arr(tmpctx, u8, sizeof(sig.u8)+1);
-    memcpy(final_sig, sig.u8, sizeof(sig.u8));
-    /* FIXME store signature in PSBT_IN_PARTIAL_SIG */
-    final_sig[tal_count(final_sig)-1] = SIGHASH_ANYPREVOUTANYSCRIPT|SIGHASH_SINGLE;
-    return final_sig;
+    return sig;
 }
 
 static void tx_must_be_eq(const struct bitcoin_tx *a,
@@ -515,7 +510,7 @@ static int test_invalid_update_tx(void)
 
     /* MuSig signing stuff */
     u8 *annex_0, *annex_1;
-    u8 *final_sig;
+    struct bip340sig sig;
 
     /* Test initial settlement tx */
 
@@ -584,7 +579,7 @@ static int test_invalid_update_tx(void)
 
     /* Signing happens next */
     annex_0 = make_eltoo_annex(tmpctx, tx);
-    final_sig = musig_sign(update_tx, annex_0, &alice_funding_privkey, &bob_funding_privkey, &inner_pubkey, keyagg_cache);
+    sig = musig_sign(update_tx, annex_0, &alice_funding_privkey, &bob_funding_privkey, &inner_pubkey, keyagg_cache);
 
     /* Re-bind, add final script/tapscript info into PSBT */
     bind_update_tx_to_funding_outpoint(update_tx,
@@ -592,7 +587,7 @@ static int test_invalid_update_tx(void)
                     &update_output,
                     &eltoo_keyset,
                     &inner_pubkey,
-                    final_sig);
+                    &sig);
 
     psbt_b64 = psbt_to_b64(tmpctx, update_tx->psbt);
     printf("Update transaction 0: %s\n", psbt_b64);
@@ -628,7 +623,7 @@ static int test_invalid_update_tx(void)
 
     /* Authorize this next state update */
     annex_1 = make_eltoo_annex(tmpctx, settle_tx_1);
-    final_sig = musig_sign(update_tx_1_A, annex_1, &alice_funding_privkey, &bob_funding_privkey, &inner_pubkey, keyagg_cache);
+    sig = musig_sign(update_tx_1_A, annex_1, &alice_funding_privkey, &bob_funding_privkey, &inner_pubkey, keyagg_cache);
 
     /* This can RBF the first update tx */
     bind_update_tx_to_funding_outpoint(update_tx_1_A,
@@ -636,7 +631,7 @@ static int test_invalid_update_tx(void)
                     &update_output,
                     &eltoo_keyset,
                     &inner_pubkey,
-                    final_sig);
+                    &sig);
 
     psbt_b64 = psbt_to_b64(tmpctx, update_tx_1_A->psbt);
     printf("Update transaction 1A(funding output): %s\n", psbt_b64);
@@ -649,7 +644,7 @@ static int test_invalid_update_tx(void)
                     annex_0, /* annex you see on chain */
                     obscured_update_number - 1, /* locktime you see on old update tx */
                     &inner_pubkey,
-                    final_sig);
+                    &sig);
 
     psbt_b64 = psbt_to_b64(tmpctx, update_tx_1_A->psbt);
     printf("Update transaction 1B(update output): %s\n", psbt_b64);
@@ -682,7 +677,7 @@ static int test_initial_settlement_tx(void)
     /* MuSig signing stuff */
     struct pubkey inner_pubkey;
     u8 *annex;
-    u8 *final_sig;
+    struct bip340sig sig;
 
     /* Test initial settlement tx */
 
@@ -754,7 +749,7 @@ static int test_initial_settlement_tx(void)
 
     /* Signing happens next */
     annex = make_eltoo_annex(tmpctx, tx);
-    final_sig = musig_sign(update_tx, annex, &alice_funding_privkey, &bob_funding_privkey, &inner_pubkey, keyagg_cache);
+    sig = musig_sign(update_tx, annex, &alice_funding_privkey, &bob_funding_privkey, &inner_pubkey, keyagg_cache);
 
     /* We want to close the channel without cooperation... time to rebind and finalize */
 
@@ -764,7 +759,7 @@ static int test_initial_settlement_tx(void)
                     &update_output,
                     &eltoo_keyset,
                     &inner_pubkey,
-                    final_sig);
+                    &sig);
 
     psbt_b64 = psbt_to_b64(tmpctx, update_tx->psbt);
     printf("Initial update psbt with finalized witness for input: %s\n", psbt_b64);

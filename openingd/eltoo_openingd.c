@@ -464,6 +464,7 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
 	struct wally_tx_output *direct_outputs[NUM_SIDES];
     struct bitcoin_tx *settle_tx;
     struct partial_sig our_update_psig, their_update_psig;
+//    u8 *final_sig;
 
     /* Dummy fields since they're unused at time of channel creation */
     struct partial_sig dummy_self_psig, dummy_other_psig;
@@ -562,8 +563,9 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
                            &state->eltoo_keyset.other_next_nonce);
 	wire_sync_write(HSM_FD, take(msg));
 
-	status_debug("partial signature req on tx %s, using our key %s, their key %s, our nonce %s, their nonce %s",
+	status_debug("partial signature req on update tx %s, settlement tx %s, using our key %s, their key %s, our nonce %s, their nonce %s",
         type_to_string(tmpctx, struct bitcoin_tx, *update_tx),
+        type_to_string(tmpctx, struct bitcoin_tx, settle_tx),
         type_to_string(tmpctx, struct pubkey,
                &state->our_funding_pubkey),
         type_to_string(tmpctx, struct pubkey,
@@ -692,6 +694,19 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
 		status_failed(STATUS_FAIL_INTERNAL_ERROR,
 			      "Unable to set signature internally");
     */
+//    final_sig = tal_arr(tmpctx, u8, sizeof(sig.u8)+1);
+//    memcpy(final_sig, sig.u8, sizeof(sig.u8));
+//    /* FIXME store signature in PSBT_IN_PARTIAL_SIG */
+//    final_sig[tal_count(final_sig)-1] = SIGHASH_ANYPREVOUTANYSCRIPT|SIGHASH_SINGLE;
+
+    /* Re-bind, add final script/tapscript info into PSBT */
+//    bind_update_tx_to_funding_outpoint(update_tx,
+//                    tx, 
+//                    &update_output,
+//                    &eltoo_keyset,
+//                    &inner_pubkey,
+//                    final_sig);
+
 	peer_billboard(false, "Funding channel: opening negotiation succeeded");
 
 	return true;

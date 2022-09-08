@@ -91,6 +91,7 @@ struct bitcoin_tx *initial_settle_channel_tx(const tal_t *ctx,
 	/* This assumes no HTLCs! */
 	assert(!channel->htlcs);
 
+    /* Note that funding prevout here is not quite right, but we'll re-bind at-chain time */
     init_settle_tx = initial_settlement_tx(ctx,
                     &channel->funding,
                     channel->funding_sats,

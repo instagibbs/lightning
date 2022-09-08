@@ -29,14 +29,14 @@ void tx_add_unbound_input(struct bitcoin_tx *update_tx,
  * @funding_outpoint: The outpoint to be spend on chain
  * @eltoo_keyset: Set of keys to derive inner public key
  * @psbt_inner_pubkey: Inner pubkey for the state input
- * @final_sig: Raw 65-bytes of signature to be put into witness
+ * @sig: bip340 signature to be put into witness
  */
 void bind_update_tx_to_funding_outpoint(struct bitcoin_tx *update_tx,
                     const struct bitcoin_tx *settle_tx,
                     const struct bitcoin_outpoint *funding_outpoint,
                     const struct eltoo_keyset *eltoo_keyset,
                     const struct pubkey *psbt_inner_pubkey,
-                    u8 *final_sig);
+                    const struct bip340sig *sig);
 
 /* Used to bind the update transaction to the non-funding outpoints
  * of the eltoo contract. This only occurs if invalidated update
@@ -51,7 +51,7 @@ void bind_update_tx_to_funding_outpoint(struct bitcoin_tx *update_tx,
  * @invalidated_update_number: The locktime of the update transaction
  *   which is having its outpoint spent by @update_tx
  * @psbt_inner_pubkey: Inner pubkey for the state input
- * @final_sig: Raw 65-bytes of signature to put into witness
+ * @sig: bip340 signature to put into witness
  */
 void bind_update_tx_to_update_outpoint(struct bitcoin_tx *update_tx,
                     struct bitcoin_tx *settle_tx,
@@ -60,7 +60,7 @@ void bind_update_tx_to_update_outpoint(struct bitcoin_tx *update_tx,
                     const u8 *invalidated_annex_hint,
                     u32 invalidated_update_number,
                     struct pubkey *psbt_inner_pubkey,
-                    u8 *final_sig);
+                    const struct bip340sig *sig);
 
 /**
  * unbound_update_tx: create (unsigned) update tx to spend a yet-to-decided ouutpoint

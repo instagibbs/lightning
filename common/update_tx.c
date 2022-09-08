@@ -67,7 +67,7 @@ void bind_update_tx_to_funding_outpoint(struct bitcoin_tx *update_tx,
                     const struct bitcoin_outpoint *funding_outpoint,
                     const struct eltoo_keyset *eltoo_keyset,
                     const struct pubkey *psbt_inner_pubkey,
-                    u8 *final_sig)
+                    const struct bip340sig *sig)
 {
     const struct pubkey *pubkey_ptrs[2];
     u8 *update_tapscript[1];
@@ -77,10 +77,18 @@ void bind_update_tx_to_funding_outpoint(struct bitcoin_tx *update_tx,
     secp256k1_musig_keyagg_cache unused_coop_cache;
     u8 **update_witness;
     struct amount_sat funding_sats;
+    u8 *final_sig;
 
     /* Stuff that should go in PSBT eventually */
     struct sha256 psbt_tap_merkle_root;
     unsigned char psbt_tap_tweak[32];
+
+
+    /* Construct bytes of sig with flag */
+    final_sig = tal_arr(tmpctx, u8, sizeof(sig->u8)+1);
+    memcpy(final_sig, sig->u8, sizeof(sig->u8));
+    /* FIXME store signature in PSBT_IN_PARTIAL_SIG */
+    final_sig[tal_count(final_sig)-1] = SIGHASH_ANYPREVOUTANYSCRIPT|SIGHASH_SINGLE;
 
    /* For MuSig aggregation for outputs */
     pubkey_ptrs[0] = &(eltoo_keyset->self_funding_key);
@@ -127,7 +135,7 @@ void bind_update_tx_to_update_outpoint(struct bitcoin_tx *update_tx,
                     const u8 *invalidated_annex_hint,
                     u32 invalidated_update_number,
                     struct pubkey *psbt_inner_pubkey,
-                    u8 *final_sig)
+                    const struct bip340sig *sig)
 {
     const struct pubkey *pubkey_ptrs[2];
     u8 *update_tapscript;
@@ -137,10 +145,18 @@ void bind_update_tx_to_update_outpoint(struct bitcoin_tx *update_tx,
     secp256k1_musig_keyagg_cache unused_coop_cache;
     u8 **update_witness;
     struct amount_sat funding_sats;
+    u8 *final_sig;
 
     /* Stuff that should go in PSBT eventually */
     struct sha256 psbt_tap_merkle_root;
     unsigned char psbt_tap_tweak[32];
+
+    /* Construct bytes of sig with flag */
+    final_sig = tal_arr(tmpctx, u8, sizeof(sig->u8)+1);
+    memcpy(final_sig, sig->u8, sizeof(sig->u8));
+    /* FIXME store signature in PSBT_IN_PARTIAL_SIG */
+    final_sig[tal_count(final_sig)-1] = SIGHASH_ANYPREVOUTANYSCRIPT|SIGHASH_SINGLE;
+
 
    /* For MuSig aggregation for outputs */
     pubkey_ptrs[0] = &(eltoo_keyset->self_funding_key);
