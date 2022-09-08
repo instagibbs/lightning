@@ -28,6 +28,7 @@
 #include <common/status.h>
 #include <common/subdaemon.h>
 #include <common/type_to_string.h>
+#include <common/update_tx.h>
 #include <common/wire_error.h>
 #include <errno.h>
 #include <hsmd/hsmd_wiregen.h>
@@ -464,7 +465,6 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
 	struct wally_tx_output *direct_outputs[NUM_SIDES];
     struct bitcoin_tx *settle_tx;
     struct partial_sig our_update_psig, their_update_psig;
-//    u8 *final_sig;
 
     /* Dummy fields since they're unused at time of channel creation */
     struct partial_sig dummy_self_psig, dummy_other_psig;
@@ -686,6 +686,8 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
     }
 
 	/* We save their sig to our first update tx */
+
+    status_debug("Rebinding update transaction 0");
     /* FIXME Store as taproot signature in PSBT once updated
         or should we just sneak it in same way for now?
 	if (!psbt_input_set_signature((*update_tx)->psbt, 0,
@@ -694,18 +696,18 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
 		status_failed(STATUS_FAIL_INTERNAL_ERROR,
 			      "Unable to set signature internally");
     */
-//    final_sig = tal_arr(tmpctx, u8, sizeof(sig.u8)+1);
-//    memcpy(final_sig, sig.u8, sizeof(sig.u8));
-//    /* FIXME store signature in PSBT_IN_PARTIAL_SIG */
-//    final_sig[tal_count(final_sig)-1] = SIGHASH_ANYPREVOUTANYSCRIPT|SIGHASH_SINGLE;
+    /* For now: Re-bind, add final script/tapscript info into PSBT */
+    bind_update_tx_to_funding_outpoint(*update_tx,
+                    settle_tx, 
+                    &state->funding,
+                    &state->channel->eltoo_keyset,
+                    &state->channel->eltoo_keyset.inner_pubkey,
+                    update_sig);
 
-    /* Re-bind, add final script/tapscript info into PSBT */
-//    bind_update_tx_to_funding_outpoint(update_tx,
-//                    tx, 
-//                    &update_output,
-//                    &eltoo_keyset,
-//                    &inner_pubkey,
-//                    final_sig);
+    /* For debugging, remove later */
+    status_debug("Signed update transaction 0: %s", psbt_to_b64(NULL, (*update_tx)->psbt));
+
+    status_debug("Settle transaction 0: %s", psbt_to_b64(NULL, settle_tx->psbt));
 
 	peer_billboard(false, "Funding channel: opening negotiation succeeded");
 

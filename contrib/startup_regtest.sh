@@ -109,7 +109,7 @@ start_nodes() {
 
 		# Start the lightning nodes
 		test -f "/tmp/l$i-$network/lightningd-$network.pid" || \
-			"$LIGHTNINGD" "--lightning-dir=/tmp/l$i-$network" & #"--dev-debugger=eltoo_openingd" &
+			"$LIGHTNINGD" "--lightning-dir=/tmp/l$i-$network" "--dev-debugger=eltoo_openingd" &
 		# shellcheck disable=SC2139 disable=SC2086
 		alias l$i-cli="$LCLI --lightning-dir=/tmp/l$i-$network"
 		# shellcheck disable=SC2139 disable=SC2086
@@ -126,7 +126,7 @@ start_nodes() {
 start_ln() {
 	# Start bitcoind in the background
 	test -f "$PATH_TO_BITCOIN/regtest/bitcoind.pid" || \
-		bitcoind -regtest -txindex -fallbackfee=0.00000253 -daemon -daemonwait
+		$(pwd)/../bitcoin/src/bitcoind -regtest -txindex -fallbackfee=0.00000253 -daemon -daemonwait -trueoutputs=1 -annexcarrier=1
 
 	# Wait for it to start
 	while ! bitcoin-cli -regtest ping 2> /tmp/null; do echo "awaiting bitcoind..." && sleep 1; done
