@@ -673,6 +673,7 @@ static struct io_plan *msg_send_next(struct io_conn *conn, struct subd *sd)
 {
 	const u8 *msg;
 	int fd;
+	u16 type;
 
 	/* Don't send if we haven't read version! */
 	if (!sd->rcvd_version)
@@ -683,11 +684,14 @@ static struct io_plan *msg_send_next(struct io_conn *conn, struct subd *sd)
 	if (!msg)
 		return msg_queue_wait(conn, sd->outq, msg_send_next, sd);
 
+    type = fromwire_peektype(msg);
+
 	fd = msg_extract_fd(sd->outq, msg);
 	if (fd >= 0) {
 		tal_free(msg);
 		return io_send_fd(conn, fd, true, msg_send_next, sd);
 	}
+    log_debug(sd->log, "TYPE: %u, FD: %d", type, fd);
 	return io_write_wire(conn, take(msg), msg_send_next, sd);
 }
 

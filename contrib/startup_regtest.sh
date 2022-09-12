@@ -94,8 +94,8 @@ start_nodes() {
 		if $LIGHTNINGD --help | grep -q dev-fast-gossip; then
 			cat <<- EOF >> "/tmp/l$i-$network/config"
 			dev-fast-gossip
-			dev-bitcoind-poll=5
 			experimental-dual-fund
+			#dev-bitcoind-poll=120
 			funder-policy=match
 			funder-policy-mod=100
 			funder-min-their-funding=10000
@@ -109,7 +109,7 @@ start_nodes() {
 
 		# Start the lightning nodes
 		test -f "/tmp/l$i-$network/lightningd-$network.pid" || \
-			"$LIGHTNINGD" "--lightning-dir=/tmp/l$i-$network" "--dev-debugger=eltoo_channeld" &
+			"$LIGHTNINGD" "--lightning-dir=/tmp/l$i-$network" & #"--dev-debugger=eltoo_channeld" &
 		# shellcheck disable=SC2139 disable=SC2086
 		alias l$i-cli="$LCLI --lightning-dir=/tmp/l$i-$network"
 		# shellcheck disable=SC2139 disable=SC2086
@@ -154,11 +154,11 @@ setup_ln() {
     bt-cli loadwallet "default"
     btcaddr=$(bt-cli getnewaddress)
     bt-cli sendtoaddress $l1addr 1
-    bt-cli generatetoaddress 101 $btcaddr
     l1-cli connect $l2id@localhost:7272
+    bt-cli generatetoaddress 101 $btcaddr
     sleep 5
     l1-cli fundchannel $l2id 10000 normal false
-    bt-cli generatetoaddress 6 $btcaddr
+    bt-cli generatetoaddress 7 $btcaddr
 }
 
 stop_nodes() {

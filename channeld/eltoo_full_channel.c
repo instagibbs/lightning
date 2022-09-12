@@ -268,7 +268,7 @@ struct bitcoin_tx **eltoo_channel_txs(const tal_t *ctx,
 
     /* We only fill out witness data for update transactions for onchain events */
     txs[0] = unbound_update_tx(ctx,
-        txs[0],
+        txs[1],
         channel->funding_sats,
         &channel->eltoo_keyset.inner_pubkey);
 
@@ -279,9 +279,9 @@ struct bitcoin_tx **eltoo_channel_txs(const tal_t *ctx,
     /* Set the remote/local pubkeys on the update tx psbt FIXME add
       inner pubkey when possible */
     psbt_input_add_pubkey(txs[0]->psbt, 0,
-                  &channel->funding_pubkey[side]);
+                  &channel->eltoo_keyset.self_funding_key);
     psbt_input_add_pubkey(txs[0]->psbt, 0,
-                  &channel->funding_pubkey[!side]);
+                  &channel->eltoo_keyset.other_funding_key);
 
     tal_free(committed);
     return txs;

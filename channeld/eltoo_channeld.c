@@ -1913,6 +1913,28 @@ static void handle_dev_memleak(struct eltoo_peer *peer, const u8 *msg)
 							       found_leak)));
 }
 
+/* Unused for now, just take message off wire */
+static void handle_feerates(struct eltoo_peer *peer, const u8 *inmsg)
+{
+    u32 dummy_feerate;
+
+    if (!fromwire_channeld_feerates(inmsg, &dummy_feerate,
+                       &dummy_feerate,
+                       &dummy_feerate,
+                       &dummy_feerate))
+        master_badmsg(WIRE_CHANNELD_FEERATES, inmsg);
+}
+
+/* Unused for now, just take message off wire */
+static void handle_blockheight(struct eltoo_peer *peer, const u8 *inmsg)
+{
+    u32 blockheight;
+
+    if (!fromwire_channeld_blockheight(inmsg, &blockheight))
+        master_badmsg(WIRE_CHANNELD_BLOCKHEIGHT, inmsg);
+}
+
+
 #if EXPERIMENTAL_FEATURES
 static void handle_dev_quiesce(struct eltoo_peer *peer, const u8 *msg)
 {
@@ -1944,10 +1966,10 @@ static void req_in(struct eltoo_peer *peer, const u8 *msg)
 		handle_offer_htlc(peer, msg);
 		return;
 	case WIRE_CHANNELD_FEERATES:
-        /* FIXME handle illegal messages */
+        handle_feerates(peer, msg);
 		return;
 	case WIRE_CHANNELD_BLOCKHEIGHT:
-         /* FIXME handle illegal messages */
+        handle_blockheight(peer, msg);
 		return;
 	case WIRE_CHANNELD_FULFILL_HTLC:
 		if (handle_master_request_later(peer, msg))
@@ -2287,6 +2309,8 @@ int main(int argc, char *argv[])
 			tptr = &timeout;
 		}
 
+
+        status_debug("***SELECT***");
 		if (select(nfds, &rfds, NULL, NULL, tptr) < 0) {
 			/* Signals OK, eg. SIGUSR1 */
 			if (errno == EINTR)
@@ -2294,6 +2318,7 @@ int main(int argc, char *argv[])
 			status_failed(STATUS_FAIL_INTERNAL_ERROR,
 				      "select failed: %s", strerror(errno));
 		}
+        status_debug("***UNSELECT***");
 
 		if (FD_ISSET(MASTER_FD, &rfds)) {
 			msg = wire_sync_read(tmpctx, MASTER_FD);
@@ -2302,6 +2327,9 @@ int main(int argc, char *argv[])
 				status_failed(STATUS_FAIL_MASTER_IO,
 					      "Can't read command: %s",
 					      strerror(errno));
+			status_debug("Dealing with %s",
+				     channeld_wire_name(
+					     fromwire_peektype(msg)));
 			req_in(peer, msg);
 		} else if (FD_ISSET(peer->pps->peer_fd, &rfds)) {
 			/* This could take forever, but who cares? */
