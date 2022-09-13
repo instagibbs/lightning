@@ -71,6 +71,9 @@ struct eltoo_state {
 	struct pubkey their_funding_pubkey;
     struct pubkey their_settlement_pubkey;
 
+    /* Storage for nonces to be used in funding_*_eltoo */
+    struct nonce our_init_nonce, their_init_nonce;
+
 	/* Initially temporary, then final channel id. */
 	struct channel_id channel_id;
 
@@ -326,7 +329,7 @@ static u8 *funder_channel_start(struct eltoo_state *state, u8 channel_flags)
 	wire_sync_write(HSM_FD, take(msg));
 
 	msg = wire_sync_read(tmpctx, HSM_FD);
-    if (!fromwire_hsmd_gen_nonce_reply(msg, &state->channel->eltoo_keyset.self_next_nonce)) {
+    if (!fromwire_hsmd_gen_nonce_reply(msg, &state->our_init_nonce)) {
 		peer_failed_err(state->pps,
 				&state->channel_id,
 				"Failed to get nonce for channel: %s", tal_hex(msg, msg));
@@ -348,7 +351,7 @@ static u8 *funder_channel_start(struct eltoo_state *state, u8 channel_flags)
 				  &state->our_funding_pubkey,
 				  &state->our_settlement_pubkey, /* FIXME is this set?? */
 				  channel_flags,
-                  &state->channel->eltoo_keyset.self_next_nonce,
+                  &state->our_init_nonce,
 				  open_tlvs);
 	peer_write(state->pps, take(msg));
 
@@ -378,7 +381,7 @@ static u8 *funder_channel_start(struct eltoo_state *state, u8 channel_flags)
 				     &state->remoteconf.max_accepted_htlcs,
 				     &state->their_funding_pubkey,
 				     &state->their_settlement_pubkey,
-                     &state->channel->eltoo_keyset.other_next_nonce,
+                     &state->their_init_nonce,
 				     &accept_tlvs)) {
 		peer_failed_err(state->pps,
 				&state->channel_id,
@@ -515,6 +518,11 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
 							     OPT_LARGE_CHANNELS),
 					     /* Opener is local */
 					     LOCAL);
+
+    /* Move initial nonces into place FIXME pass into new_initial_eltoo_channel? */
+    state->channel->eltoo_keyset.other_next_nonce = state->their_init_nonce;
+    state->channel->eltoo_keyset.self_next_nonce = state->our_init_nonce;
+
 	/* We were supposed to do enough checks above, but just in case,
 	 * new_initial_channel will fail to create absurd channels */
 	if (!state->channel)
@@ -767,9 +775,6 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 	struct tlv_open_channel_eltoo_tlvs *open_tlvs;
 	struct wally_tx_output *direct_outputs[NUM_SIDES];
     struct partial_sig their_update_psig;
-    /* These never leave openingd, keep local. funding_* nonces go in keyset and propagated
-     * to eltoo_channeld! */
-    struct nonce their_opening_nonce, our_opening_nonce;
     /* Stored here before channel struct is made, then copied in */
     struct nonce their_second_nonce;
 
@@ -797,7 +802,7 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 			    &state->their_funding_pubkey,
 			    &state->their_settlement_pubkey,
 			    &channel_flags,
-                &their_opening_nonce,
+                &state->their_init_nonce,
 			    &open_tlvs))
 		    peer_failed_err(state->pps,
 				    &state->channel_id,
@@ -917,7 +922,7 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
     wire_sync_write(HSM_FD, take(msg));
 
 	msg = wire_sync_read(tmpctx, HSM_FD);
-    if (!fromwire_hsmd_gen_nonce_reply(msg, &our_opening_nonce)) {
+    if (!fromwire_hsmd_gen_nonce_reply(msg, &state->our_init_nonce)) {
 		peer_failed_err(state->pps,
 				&state->channel_id,
 				"Failed to get nonce for channel: %s", tal_hex(msg, msg));
@@ -935,7 +940,7 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 				    state->localconf.max_accepted_htlcs,
 				    &state->our_funding_pubkey,
 				    &state->our_settlement_pubkey,
-                    &our_opening_nonce,
+                    &state->our_init_nonce,
 				    accept_tlvs);
 	peer_write(state->pps, take(msg));
 
@@ -1012,6 +1017,10 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 							     OPT_LARGE_CHANNELS),
 					     REMOTE);
 
+    /* Move initial nonces into place FIXME pass into new_initial_eltoo_channel? */
+    state->channel->eltoo_keyset.other_next_nonce = state->their_init_nonce;
+    state->channel->eltoo_keyset.self_next_nonce = state->our_init_nonce;
+
 	/* We don't expect this to fail, but it does do some additional
 	 * internal sanity checks. */
 	if (!state->channel)
@@ -1074,7 +1083,7 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 						   update_tx,
                            settle_tx,
 						   &state->their_funding_pubkey,
-                           &their_opening_nonce);
+                           &state->channel->eltoo_keyset.other_next_nonce);
 	wire_sync_write(HSM_FD, take(msg));
 
 	status_debug("partial signature req on tx %s, using our key %s, their key %s, our nonce %s, their nonce %s",
@@ -1084,9 +1093,9 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
         type_to_string(tmpctx, struct pubkey,
                &state->their_funding_pubkey),
              type_to_string(tmpctx, struct nonce,
-                    &our_opening_nonce),
+                    &state->channel->eltoo_keyset.self_next_nonce),
             type_to_string(tmpctx, struct nonce,
-                   &their_opening_nonce));
+                   &state->channel->eltoo_keyset.other_next_nonce));
 
 	msg = wire_sync_read(tmpctx, HSM_FD);
     /* Reply puts next nonce into keyset and xmitted with funding_signed_eltoo */
