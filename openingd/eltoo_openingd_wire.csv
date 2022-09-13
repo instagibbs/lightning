@@ -28,14 +28,20 @@ msgdata,openingd_eltoo_init,dev_temporary_channel_id,?byte,32
 
 #include <common/penalty_base.h>
 # Openingd->master: we've successfully offered channel.
-# This gives their psig, means we can broadcast tx: we're done.
+# Although we have final txs in-hand, we send all signing info
+# to recover channel on reestablishment
 msgtype,openingd_eltoo_funder_reply,6601
 msgdata,openingd_eltoo_funder_reply,their_config,channel_config,
-msgdata,openingd_eltoo_funder_reply,first_commit,bitcoin_tx,
-msgdata,openingd_eltoo_funder_reply,first_update_sig,bip340sig,
+msgdata,openingd_eltoo_funder_reply,first_update,bitcoin_tx,
+msgdata,openingd_eltoo_funder_reply,first_settle,bitcoin_tx,
 msgdata,openingd_eltoo_funder_reply,minimum_depth,u32,
 msgdata,openingd_eltoo_funder_reply,remote_funding_key,pubkey,
 msgdata,openingd_eltoo_funder_reply,remote_settlement_key,pubkey,
+msgdata,openingd_eltoo_funder_reply,other_psig,partial_sig,
+msgdata,openingd_eltoo_funder_reply,self_psig,partial_sig,
+msgdata,openingd_eltoo_funder_reply,session,musig_session,
+msgdata,openingd_eltoo_funder_reply,their_next_nonce,nonce,
+msgdata,openingd_eltoo_funder_reply,our_next_nonce,nonce,
 msgdata,openingd_eltoo_funder_reply,funding,bitcoin_outpoint,
 msgdata,openingd_eltoo_funder_reply,shutdown_len,u16,
 msgdata,openingd_eltoo_funder_reply,shutdown_scriptpubkey,u8,shutdown_len
@@ -77,10 +83,15 @@ msgdata,openingd_eltoo_failed,reason,wirestring,
 # This gives their txid and info, means we can send funding_signed: we're done.
 msgtype,openingd_eltoo_fundee,6503
 msgdata,openingd_eltoo_fundee,their_config,channel_config,
-msgdata,openingd_eltoo_fundee,first_settlement,bitcoin_tx,
-msgdata,openingd_eltoo_fundee,first_update_sig,bip340sig,
+msgdata,openingd_eltoo_fundee,first_update,bitcoin_tx,
+msgdata,openingd_eltoo_fundee,first_settle,bitcoin_tx,
 msgdata,openingd_eltoo_fundee,remote_fundingkey,pubkey,
 msgdata,openingd_eltoo_fundee,remote_settlekey,pubkey,
+msgdata,openingd_eltoo_fundee,other_psig,partial_sig,
+msgdata,openingd_eltoo_fundee,self_psig,partial_sig,
+msgdata,openingd_eltoo_fundee,session,musig_session,
+msgdata,openingd_eltoo_fundee,their_next_nonce,nonce,
+msgdata,openingd_eltoo_fundee,our_next_nonce,nonce,
 msgdata,openingd_eltoo_fundee,funding,bitcoin_outpoint,
 msgdata,openingd_eltoo_fundee,funding_satoshis,amount_sat,
 msgdata,openingd_eltoo_fundee,push_msat,amount_msat,

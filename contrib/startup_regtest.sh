@@ -95,7 +95,7 @@ start_nodes() {
 			cat <<- EOF >> "/tmp/l$i-$network/config"
 			dev-fast-gossip
 			experimental-dual-fund
-			#dev-bitcoind-poll=120
+			dev-bitcoind-poll=5
 			funder-policy=match
 			funder-policy-mod=100
 			funder-min-their-funding=10000
@@ -155,10 +155,10 @@ setup_ln() {
     btcaddr=$(bt-cli getnewaddress)
     bt-cli sendtoaddress $l1addr 1
     l1-cli connect $l2id@localhost:7272
-    bt-cli generatetoaddress 101 $btcaddr
+    bt-cli generatetoaddress 6 $btcaddr
     sleep 5
     l1-cli fundchannel $l2id 10000 normal false
-    bt-cli generatetoaddress 7 $btcaddr
+    bt-cli generatetoaddress 6 $btcaddr
 }
 
 stop_nodes() {

@@ -71,10 +71,6 @@ struct eltoo_state {
 	struct pubkey their_funding_pubkey;
     struct pubkey their_settlement_pubkey;
 
-    /* FIXME  This seems necesssary for opening... move all keys here?
-      also need to "forward" the nonce for normal channel operation */
-    struct eltoo_keyset eltoo_keyset;
-
 	/* Initially temporary, then final channel id. */
 	struct channel_id channel_id;
 
@@ -330,7 +326,7 @@ static u8 *funder_channel_start(struct eltoo_state *state, u8 channel_flags)
 	wire_sync_write(HSM_FD, take(msg));
 
 	msg = wire_sync_read(tmpctx, HSM_FD);
-    if (!fromwire_hsmd_gen_nonce_reply(msg, &state->eltoo_keyset.self_next_nonce)) {
+    if (!fromwire_hsmd_gen_nonce_reply(msg, &state->channel->eltoo_keyset.self_next_nonce)) {
 		peer_failed_err(state->pps,
 				&state->channel_id,
 				"Failed to get nonce for channel: %s", tal_hex(msg, msg));
@@ -352,7 +348,7 @@ static u8 *funder_channel_start(struct eltoo_state *state, u8 channel_flags)
 				  &state->our_funding_pubkey,
 				  &state->our_settlement_pubkey, /* FIXME is this set?? */
 				  channel_flags,
-                  &state->eltoo_keyset.self_next_nonce,
+                  &state->channel->eltoo_keyset.self_next_nonce,
 				  open_tlvs);
 	peer_write(state->pps, take(msg));
 
@@ -382,7 +378,7 @@ static u8 *funder_channel_start(struct eltoo_state *state, u8 channel_flags)
 				     &state->remoteconf.max_accepted_htlcs,
 				     &state->their_funding_pubkey,
 				     &state->their_settlement_pubkey,
-                     &state->eltoo_keyset.other_next_nonce,
+                     &state->channel->eltoo_keyset.other_next_nonce,
 				     &accept_tlvs)) {
 		peer_failed_err(state->pps,
 				&state->channel_id,
@@ -456,15 +452,14 @@ static u8 *funder_channel_start(struct eltoo_state *state, u8 channel_flags)
 
 static bool funder_finalize_channel_setup(struct eltoo_state *state,
 					  struct amount_msat local_msat,
-					  struct bip340sig *update_sig,
-					  struct bitcoin_tx **update_tx)
+					  struct bitcoin_tx **update_tx,
+                      struct bitcoin_tx **settle_tx)
 {
 	u8 *msg;
 	struct channel_id id_in;
 	struct channel_id cid;
 	struct wally_tx_output *direct_outputs[NUM_SIDES];
-    struct bitcoin_tx *settle_tx;
-    struct partial_sig our_update_psig, their_update_psig;
+    struct bip340sig update_sig;
 
     /* Dummy fields since they're unused at time of channel creation */
     struct partial_sig dummy_self_psig, dummy_other_psig;
@@ -536,15 +531,15 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
 	 * peer's signature, via `funding_signed`, it will broadcast the funding
 	 * transaction.
 	 */
-	settle_tx = initial_settle_channel_tx(state, state->channel,
+	*settle_tx = initial_settle_channel_tx(state, state->channel,
                     direct_outputs);
-	if (!settle_tx) {
+	if (!*settle_tx) {
 		negotiation_failed(state,
 				   "Could not make settle tx???");
 		return false;
 	}
 
-    *update_tx = initial_update_channel_tx(state, settle_tx, state->channel);
+    *update_tx = initial_update_channel_tx(state, *settle_tx, state->channel);
 
 	if (!*update_tx) {
 		negotiation_failed(state,
@@ -558,51 +553,52 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
 	msg = towire_hsmd_psign_update_tx(NULL,
                            &state->channel_id,
 						   *update_tx,
-                           settle_tx,
+                           *settle_tx,
 						   &state->their_funding_pubkey,
-                           &state->eltoo_keyset.other_next_nonce);
+                           &state->channel->eltoo_keyset.other_next_nonce);
 	wire_sync_write(HSM_FD, take(msg));
 
 	status_debug("partial signature req on update tx %s, settlement tx %s, using our key %s, their key %s, our nonce %s, their nonce %s",
         type_to_string(tmpctx, struct bitcoin_tx, *update_tx),
-        type_to_string(tmpctx, struct bitcoin_tx, settle_tx),
+        type_to_string(tmpctx, struct bitcoin_tx, *settle_tx),
         type_to_string(tmpctx, struct pubkey,
                &state->our_funding_pubkey),
         type_to_string(tmpctx, struct pubkey,
                &state->their_funding_pubkey),
              type_to_string(tmpctx, struct nonce,
-                    &state->eltoo_keyset.self_next_nonce),
+                    &state->channel->eltoo_keyset.self_next_nonce),
             type_to_string(tmpctx, struct nonce,
-                   &state->eltoo_keyset.other_next_nonce));
+                   &state->channel->eltoo_keyset.other_next_nonce));
 
 	msg = wire_sync_read(tmpctx, HSM_FD);
-	if (!fromwire_hsmd_psign_update_tx_reply(msg, &our_update_psig, &state->eltoo_keyset.session, &state->eltoo_keyset.self_next_nonce, &state->eltoo_keyset.inner_pubkey))
+	if (!fromwire_hsmd_psign_update_tx_reply(msg, &state->channel->eltoo_keyset.self_psig,
+        &state->channel->eltoo_keyset.session, &state->channel->eltoo_keyset.self_next_nonce, &state->channel->eltoo_keyset.inner_pubkey))
 		status_failed(STATUS_FAIL_HSM_IO, "Bad sign_tx_reply %s",
 			      tal_hex(tmpctx, msg));
 
 	/* You can tell this has been a problem before, since there's a debug
 	 * message here: */
 	status_debug("partial signature %s on tx %s using our key %s, their key %s, inner pubkey %s, NEW our nonce %s, NEW their nonce %s",
-		     type_to_string(tmpctx, struct partial_sig, &our_update_psig),
+		     type_to_string(tmpctx, struct partial_sig, &state->channel->eltoo_keyset.self_psig),
 		     type_to_string(tmpctx, struct bitcoin_tx, *update_tx),
 		     type_to_string(tmpctx, struct pubkey,
 				    &state->our_funding_pubkey),
              type_to_string(tmpctx, struct pubkey,
                     &state->their_funding_pubkey),
              type_to_string(tmpctx, struct pubkey,
-                    &state->eltoo_keyset.inner_pubkey),
+                    &state->channel->eltoo_keyset.inner_pubkey),
              type_to_string(tmpctx, struct nonce,
-                    &state->eltoo_keyset.self_next_nonce),
+                    &state->channel->eltoo_keyset.self_next_nonce),
              type_to_string(tmpctx, struct nonce,
-                    &state->eltoo_keyset.other_next_nonce));
+                    &state->channel->eltoo_keyset.other_next_nonce));
 
 	/* Now we give our peer the partial signature for the first update
 	 * transaction. */
 	msg = towire_funding_created_eltoo(state, &state->channel_id,
 				     &state->funding.txid,
 				     state->funding.n,
-				     &our_update_psig,
-                     &state->eltoo_keyset.self_next_nonce);
+				     &state->channel->eltoo_keyset.self_psig,
+                     &state->channel->eltoo_keyset.self_next_nonce);
 	peer_write(state->pps, msg);
 
 	/* BOLT #2:
@@ -624,7 +620,7 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
 	if (!msg)
 		return false;
 
-	if (!fromwire_funding_signed_eltoo(msg, &id_in, &their_update_psig, &state->eltoo_keyset.other_next_nonce))
+	if (!fromwire_funding_signed_eltoo(msg, &id_in, &state->channel->eltoo_keyset.other_psig, &state->channel->eltoo_keyset.other_next_nonce))
 		peer_failed_err(state->pps, &state->channel_id,
 				"Parsing funding_signed_eltoo: %s", tal_hex(msg, msg));
 	/* BOLT #2:
@@ -672,15 +668,15 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
     /* Now that it's signed by both sides, we check if it's valid signature, get full sig back */
     msg = towire_hsmd_combine_psig(NULL,
                             &state->channel_id,
-                            &our_update_psig,
-                            &their_update_psig,
-                            &state->eltoo_keyset.session,
+                            &state->channel->eltoo_keyset.self_psig,
+                            &state->channel->eltoo_keyset.other_psig,
+                            &state->channel->eltoo_keyset.session,
                             *update_tx,
-                            settle_tx,
-                            &state->eltoo_keyset.inner_pubkey);
+                            *settle_tx,
+                            &state->channel->eltoo_keyset.inner_pubkey);
     wire_sync_write(HSM_FD, take(msg));
     msg = wire_sync_read(tmpctx, HSM_FD);
-    if (!fromwire_hsmd_combine_psig_reply(msg, update_sig)) {
+    if (!fromwire_hsmd_combine_psig_reply(msg, &update_sig)) {
         status_failed(STATUS_FAIL_HSM_IO,
                   "Bad combine_psig_reply_reply %s", tal_hex(tmpctx, msg));
     }
@@ -698,16 +694,17 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
     */
     /* For now: Re-bind, add final script/tapscript info into PSBT */
     bind_update_tx_to_funding_outpoint(*update_tx,
-                    settle_tx, 
+                    *settle_tx, 
                     &state->funding,
                     &state->channel->eltoo_keyset,
                     &state->channel->eltoo_keyset.inner_pubkey,
-                    update_sig);
+                    &update_sig);
+
 
     /* For debugging, remove later */
     status_debug("Signed update transaction 0: %s", psbt_to_b64(NULL, (*update_tx)->psbt));
 
-    status_debug("Settle transaction 0: %s", psbt_to_b64(NULL, settle_tx->psbt));
+    status_debug("Settle transaction 0: %s", psbt_to_b64(NULL, (*settle_tx)->psbt));
 
 	peer_billboard(false, "Funding channel: opening negotiation succeeded");
 
@@ -716,9 +713,8 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
 
 static u8 *funder_channel_complete(struct eltoo_state *state)
 {
-	/* Remote commitment tx */
-	struct bitcoin_tx *tx;
-	struct bip340sig sig;
+    /* These transactions are ready to broadcast once returned(minus fees!) */
+	struct bitcoin_tx *update_tx, *settle_tx;
 	struct amount_msat local_msat;
 
 	/* Update the billboard about what we're doing*/
@@ -736,16 +732,21 @@ static u8 *funder_channel_complete(struct eltoo_state *state)
 			      type_to_string(tmpctx, struct amount_sat,
 					     &state->funding_sats));
 
-	if (!funder_finalize_channel_setup(state, local_msat, &sig, &tx))
+	if (!funder_finalize_channel_setup(state, local_msat, &update_tx, &settle_tx))
 		return NULL;
 
 	return towire_openingd_eltoo_funder_reply(state,
 					   &state->remoteconf,
-					   tx,
-					   &sig,
+					   update_tx,
+                       settle_tx,
 					   state->minimum_depth,
-					   &state->their_funding_pubkey,
-					   &state->their_settlement_pubkey,
+					   &state->channel->eltoo_keyset.other_funding_key,
+					   &state->channel->eltoo_keyset.other_settle_key,
+                       &state->channel->eltoo_keyset.other_psig,
+                       &state->channel->eltoo_keyset.self_psig,
+                       &state->channel->eltoo_keyset.session,
+                       &state->channel->eltoo_keyset.other_next_nonce,
+                       &state->channel->eltoo_keyset.self_next_nonce,
 					   &state->funding,
 					   state->upfront_shutdown_script[REMOTE],
 					   state->channel_type);
@@ -765,13 +766,15 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 	struct tlv_accept_channel_eltoo_tlvs *accept_tlvs;
 	struct tlv_open_channel_eltoo_tlvs *open_tlvs;
 	struct wally_tx_output *direct_outputs[NUM_SIDES];
-    struct partial_sig our_update_psig, their_update_psig;
+    struct partial_sig their_update_psig;
     /* These never leave openingd, keep local. funding_* nonces go in keyset and propagated
      * to eltoo_channeld! */
     struct nonce their_opening_nonce, our_opening_nonce;
+    /* Stored here before channel struct is made, then copied in */
+    struct nonce their_second_nonce;
 
     /* Dummy fields since they're unused at time of channel creation */
-    struct partial_sig dummy_self_psig, dummy_other_psig;
+    struct partial_sig dummy_self_psig;
     struct musig_session dummy_session;
 
 	/* BOLT #2:
@@ -950,7 +953,7 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 				      &state->funding.txid,
 				      &funding_txout,
 				      &their_update_psig,
-                      &state->eltoo_keyset.other_next_nonce))
+                      &their_second_nonce))
 		peer_failed_err(state->pps, &state->channel_id,
 			    "Parsing funding_created");
 	/* We only allow 16 bits for this on the wire. */
@@ -1002,12 +1005,13 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 					     &state->our_settlement_pubkey,
 					     &state->their_settlement_pubkey,
                          &dummy_self_psig,
-                         &dummy_other_psig,
+                         &their_update_psig,
                          &dummy_session,
 					     state->channel_type,
 					     feature_offered(state->their_features,
 							     OPT_LARGE_CHANNELS),
 					     REMOTE);
+
 	/* We don't expect this to fail, but it does do some additional
 	 * internal sanity checks. */
 	if (!state->channel)
@@ -1086,33 +1090,35 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 
 	msg = wire_sync_read(tmpctx, HSM_FD);
     /* Reply puts next nonce into keyset and xmitted with funding_signed_eltoo */
-	if (!fromwire_hsmd_psign_update_tx_reply(msg, &our_update_psig, &state->eltoo_keyset.session, &state->eltoo_keyset.self_next_nonce, &state->eltoo_keyset.inner_pubkey))
+	if (!fromwire_hsmd_psign_update_tx_reply(msg,
+        &state->channel->eltoo_keyset.self_psig, &state->channel->eltoo_keyset.session,
+        &state->channel->eltoo_keyset.self_next_nonce, &state->channel->eltoo_keyset.inner_pubkey))
 		status_failed(STATUS_FAIL_HSM_IO,
 			      "Bad sign_tx_reply %s", tal_hex(tmpctx, msg));
 
 	status_debug("partial signature %s on tx %s using our key %s, their key %s, inner pubkey %s, NEW our nonce %s, NEW their nonce %s",
-		     type_to_string(tmpctx, struct partial_sig, &our_update_psig),
+		     type_to_string(tmpctx, struct partial_sig, &state->channel->eltoo_keyset.self_psig),
 		     type_to_string(tmpctx, struct bitcoin_tx, update_tx),
 		     type_to_string(tmpctx, struct pubkey,
 				    &state->our_funding_pubkey),
              type_to_string(tmpctx, struct pubkey,
                     &state->their_funding_pubkey),
              type_to_string(tmpctx, struct pubkey,
-                    &state->eltoo_keyset.inner_pubkey),
+                    &state->channel->eltoo_keyset.inner_pubkey),
              type_to_string(tmpctx, struct nonce,
-                    &state->eltoo_keyset.self_next_nonce),
+                    &state->channel->eltoo_keyset.self_next_nonce),
              type_to_string(tmpctx, struct nonce,
-                    &state->eltoo_keyset.other_next_nonce));
+                    &state->channel->eltoo_keyset.other_next_nonce));
 
     /* Now that it's signed by both sides, we check if it's valid signature, get full sig back */
     msg = towire_hsmd_combine_psig(NULL,
                             &state->channel_id,
-                            &our_update_psig,
+                            &state->channel->eltoo_keyset.self_psig,
                             &their_update_psig,
-                            &state->eltoo_keyset.session,
+                            &state->channel->eltoo_keyset.session,
                             update_tx,
                             settle_tx,
-                            &state->eltoo_keyset.inner_pubkey);
+                            &state->channel->eltoo_keyset.inner_pubkey);
 	wire_sync_write(HSM_FD, take(msg));
 	msg = wire_sync_read(tmpctx, HSM_FD);
     if (!fromwire_hsmd_combine_psig_reply(msg, &update_sig)) {
@@ -1122,14 +1128,28 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 
 	/* We don't send this ourselves: channeld does, because master needs
 	 * to save state to disk before doing so. */
-	msg = towire_funding_signed_eltoo(state, &state->channel_id, &our_update_psig, &state->eltoo_keyset.self_next_nonce);
+	msg = towire_funding_signed_eltoo(state, &state->channel_id, &state->channel->eltoo_keyset.self_psig, &state->channel->eltoo_keyset.self_next_nonce);
 
+    /* Stick full signature into tx, ready for brodcast(minus fees) */
+    bind_update_tx_to_funding_outpoint(update_tx,
+                    settle_tx, 
+                    &state->funding,
+                    &state->channel->eltoo_keyset,
+                    &state->channel->eltoo_keyset.inner_pubkey,
+                    &update_sig);
+
+    /* FIXME Report everything including both next nonces ala openingd_eltoo_funder_reply */
 	return towire_openingd_eltoo_fundee(state,
 				     &state->remoteconf,
 				     update_tx,
-				     &update_sig,
+                     settle_tx,
 				     &state->their_funding_pubkey,
 				     &state->their_settlement_pubkey,
+                     &state->channel->eltoo_keyset.other_psig,
+                     &state->channel->eltoo_keyset.self_psig,
+                     &state->channel->eltoo_keyset.session,
+                     &state->channel->eltoo_keyset.other_next_nonce,
+                     &state->channel->eltoo_keyset.self_next_nonce,
 				     &state->funding,
 				     state->funding_sats,
 				     state->push_msat,
