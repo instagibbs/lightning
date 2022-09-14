@@ -2180,6 +2180,79 @@ static void adjust_channel_feerate_bounds(struct channel *channel, u32 feerate)
 		channel->min_possible_feerate = feerate;
 }
 
+void peer_got_updatesig(struct channel *channel, const u8 *msg)
+{
+    abort();
+}
+
+void peer_got_ack(struct channel *channel, const u8 *msg)
+{
+    abort();
+}
+
+void peer_sending_updatesig(struct channel *channel, const u8 *msg)
+{
+	u64 update_num;
+	struct changed_htlc *changed_htlcs;
+	size_t i, maxid = 0, num_local_added = 0;
+	struct lightningd *ld = channel->peer->ld;
+
+    /* These are unused currently... */
+	struct partial_sig our_update_psig;
+    struct musig_session session;
+
+	if (!fromwire_channeld_sending_updatesig(msg, msg,
+						&update_num,
+						&changed_htlcs,
+						&our_update_psig, &session)) {
+		channel_internal_error(channel, "bad channel_sending_updatesig %s",
+				       tal_hex(channel, msg));
+		return;
+	}
+
+	for (i = 0; i < tal_count(changed_htlcs); i++) {
+		if (!changed_htlc(channel, changed_htlcs + i)) {
+			channel_internal_error(channel,
+				   "channel_sending_commitsig: update failed");
+			return;
+		}
+
+		/* While we're here, sanity check added ones are in
+		 * ascending order. */
+		if (changed_htlcs[i].newstate == SENT_ADD_COMMIT) {
+			num_local_added++;
+			if (changed_htlcs[i].id > maxid)
+				maxid = changed_htlcs[i].id;
+		}
+	}
+
+	if (num_local_added != 0) {
+		if (maxid != channel->next_htlc_id + num_local_added - 1) {
+			channel_internal_error(channel,
+				   "channel_sending_updatesig:"
+				   " Added %"PRIu64", maxid now %"PRIu64
+				   " from %"PRIu64,
+				   num_local_added, maxid, channel->next_htlc_id);
+			return;
+		}
+		channel->next_htlc_id += num_local_added;
+	}
+
+	if (!peer_save_commitsig_sent(channel, update_num))
+		return;
+
+	/* Last was commit. FIXME do we want to reuse these fields? maybe? */
+	channel->last_was_revoke = false;
+	tal_free(channel->last_sent_commit);
+	channel->last_sent_commit = tal_steal(channel, changed_htlcs);
+	wallet_channel_save(ld->wallet, channel);
+
+	/* Tell it we've got it, and to go ahead. */
+	subd_send_msg(channel->owner,
+		      take(towire_channeld_sending_updatesig_reply(msg)));
+}
+
+
 void peer_sending_commitsig(struct channel *channel, const u8 *msg)
 {
 	u64 commitnum;

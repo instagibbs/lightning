@@ -2057,6 +2057,7 @@ static void init_channel(struct eltoo_peer *peer)
 	struct pubkey funding_pubkey[NUM_SIDES];
 	struct pubkey settle_pubkey[NUM_SIDES];
     struct partial_sig psigs[NUM_SIDES];
+    struct nonce nonces[NUM_SIDES];
     struct musig_session session;
 	struct channel_config conf[NUM_SIDES];
 	struct bitcoin_outpoint funding;
@@ -2092,6 +2093,8 @@ static void init_channel(struct eltoo_peer *peer)
 				    &psigs[REMOTE],
 				    &psigs[LOCAL],
 				    &session,
+                    &nonces[REMOTE],
+                    &nonces[LOCAL],
 				    &funding_pubkey[REMOTE],
                     &settle_pubkey[REMOTE],
 				    &opener,
@@ -2189,6 +2192,10 @@ static void init_channel(struct eltoo_peer *peer)
 					 feature_offered(peer->their_features,
 							 OPT_LARGE_CHANNELS),
 					 opener);
+
+    /* FIXME new_full_eltoo_channel should take the nonces... */
+    peer->channel->eltoo_keyset.other_next_nonce = nonces[REMOTE];
+    peer->channel->eltoo_keyset.self_next_nonce = nonces[LOCAL];
 
 	if (!channel_force_htlcs(peer->channel,
 			 cast_const2(const struct existing_htlc **, htlcs)))
