@@ -1819,8 +1819,7 @@ bool peer_start_eltoo_channeld(struct channel *channel,
 				       &channel->our_last_psig,
 				       &channel->session,
 				       &channel->channel_info.remote_fundingkey,
-				       &channel->channel_info.remote_fundingkey,
-/*				       &channel->channel_info.theirbase.payment,*/
+				       &channel->channel_info.theirbase.payment, /* their_settle_pubkey */
 				       channel->opener,
 				       channel->feerate_base,
 				       channel->feerate_ppm,

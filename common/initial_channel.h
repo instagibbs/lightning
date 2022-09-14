@@ -72,6 +72,7 @@ struct channel {
 	struct height_states *blockheight_states;
 
 	/* What it looks like to each side. */
+    /* FIXME for eltoo, treating only LOCAL side as used... for now? */
 	struct channel_view view[NUM_SIDES];
 
 	/* Features which apply to this channel. */

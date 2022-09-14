@@ -17,6 +17,8 @@
 #include <sodium/utils.h>
 #include <wally_psbt.h>
 
+#include <stdio.h>
+
 #if DEVELOPER
 /* If they specify --dev-force-privkey it ends up in here. */
 struct privkey *dev_force_privkey;
@@ -1383,6 +1385,7 @@ static u8 *handle_combine_psig(struct hsmd_client *c, const u8 *msg_in)
     const secp256k1_musig_partial_sig *p_sig_ptrs[2];
     struct musig_session session;
 
+    int i;
     if (!fromwire_hsmd_combine_psig(tmpctx, msg_in,
                         &channel_id,
                         &p_sig_1,
@@ -1399,7 +1402,12 @@ static u8 *handle_combine_psig(struct hsmd_client *c, const u8 *msg_in)
 
     annex = make_eltoo_annex(tmpctx, settle_tx);
     bitcoin_tx_taproot_hash_for_sig(update_tx, /* input_index */ 0, SIGHASH_ANYPREVOUTANYSCRIPT|SIGHASH_SINGLE, /* non-NULL script signals bip342... */ annex, annex, &hash_out);
-
+    printf("validate taproot Sighash: ");
+    for (i = 0; i < 32; i++)
+    {
+        printf("%02X", hash_out.sha.u.u8[i]);
+    }
+    printf("\n");
 
     if (!bipmusig_partial_sigs_combine_verify(p_sig_ptrs,
                /* num_signers */ 2,
@@ -1437,6 +1445,8 @@ static u8 *handle_psign_update_tx(struct hsmd_client *c, const u8 *msg_in)
     u8 *annex;
     struct sha256_double hash_out;
 
+    int i;
+
 	if (!fromwire_hsmd_psign_update_tx(tmpctx, msg_in,
 					     &channel_id,
 					     &update_tx,
@@ -1472,6 +1482,12 @@ static u8 *handle_psign_update_tx(struct hsmd_client *c, const u8 *msg_in)
                /* n_pubkeys */ 2);
 
     bitcoin_tx_taproot_hash_for_sig(update_tx, /* input_index */ 0, SIGHASH_ANYPREVOUTANYSCRIPT|SIGHASH_SINGLE, /* non-NULL script signals bip342... */ annex, annex, &hash_out);
+    printf("sign taproot Sighash: ");
+    for (i = 0; i < 32; i++)
+    {
+        printf("%02X", hash_out.sha.u.u8[i]);
+    }
+    printf("\n");
 
     pubnonce_ptrs[0] = &remote_nonce.nonce;
     pubnonce_ptrs[1] = &secretstuff.pub_nonce.nonce;

@@ -566,17 +566,21 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
                            &state->channel->eltoo_keyset.other_next_nonce);
 	wire_sync_write(HSM_FD, take(msg));
 
-	status_debug("partial signature req on update tx %s, settlement tx %s, using our key %s, their key %s, our nonce %s, their nonce %s",
+	status_debug("partial signature req on update tx %s, settlement tx %s, using our keys %s:%s, their keys %s:%s, our nonce %s, their nonce %s",
         type_to_string(tmpctx, struct bitcoin_tx, *update_tx),
         type_to_string(tmpctx, struct bitcoin_tx, *settle_tx),
         type_to_string(tmpctx, struct pubkey,
-               &state->our_funding_pubkey),
+               &state->channel->eltoo_keyset.self_funding_key),
         type_to_string(tmpctx, struct pubkey,
-               &state->their_funding_pubkey),
-             type_to_string(tmpctx, struct nonce,
-                    &state->channel->eltoo_keyset.self_next_nonce),
-            type_to_string(tmpctx, struct nonce,
-                   &state->channel->eltoo_keyset.other_next_nonce));
+               &state->channel->eltoo_keyset.self_settle_key),
+        type_to_string(tmpctx, struct pubkey,
+               &state->channel->eltoo_keyset.other_funding_key),
+        type_to_string(tmpctx, struct pubkey,
+               &state->channel->eltoo_keyset.other_settle_key),
+        type_to_string(tmpctx, struct nonce,
+               &state->channel->eltoo_keyset.self_next_nonce),
+        type_to_string(tmpctx, struct nonce,
+               &state->channel->eltoo_keyset.other_next_nonce));
 
 	msg = wire_sync_read(tmpctx, HSM_FD);
 	if (!fromwire_hsmd_psign_update_tx_reply(msg, &state->channel->eltoo_keyset.self_psig,
@@ -586,7 +590,7 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
 
 	/* You can tell this has been a problem before, since there's a debug
 	 * message here: */
-	status_debug("partial signature %s on tx %s using our key %s, their key %s, inner pubkey %s, NEW our nonce %s, NEW their nonce %s",
+	status_debug("partial signature %s on tx %s using our key %s, their key %s, inner pubkey %s, NEW our nonce %s, OLD their nonce %s",
 		     type_to_string(tmpctx, struct partial_sig, &state->channel->eltoo_keyset.self_psig),
 		     type_to_string(tmpctx, struct bitcoin_tx, *update_tx),
 		     type_to_string(tmpctx, struct pubkey,
@@ -631,6 +635,13 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
 	if (!fromwire_funding_signed_eltoo(msg, &id_in, &state->channel->eltoo_keyset.other_psig, &state->channel->eltoo_keyset.other_next_nonce))
 		peer_failed_err(state->pps, &state->channel_id,
 				"Parsing funding_signed_eltoo: %s", tal_hex(msg, msg));
+
+	status_debug("NEW nonce from self: %s NEW nonce from peer: %s",
+             type_to_string(tmpctx, struct nonce,
+                    &state->channel->eltoo_keyset.self_next_nonce),
+             type_to_string(tmpctx, struct nonce,
+                    &state->channel->eltoo_keyset.other_next_nonce));
+
 	/* BOLT #2:
 	 *
 	 * This message introduces the `channel_id` to identify the channel.
@@ -1086,12 +1097,16 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
                            &state->channel->eltoo_keyset.other_next_nonce);
 	wire_sync_write(HSM_FD, take(msg));
 
-	status_debug("partial signature req on tx %s, using our key %s, their key %s, our nonce %s, their nonce %s",
+	status_debug("partial signature req on tx %s, using our keys %s:%s, their keys %s:%s, our nonce %s, their nonce %s",
         type_to_string(tmpctx, struct bitcoin_tx, update_tx),
         type_to_string(tmpctx, struct pubkey,
-               &state->our_funding_pubkey),
+               &state->channel->eltoo_keyset.self_funding_key),
         type_to_string(tmpctx, struct pubkey,
-               &state->their_funding_pubkey),
+               &state->channel->eltoo_keyset.self_settle_key),
+        type_to_string(tmpctx, struct pubkey,
+               &state->channel->eltoo_keyset.other_funding_key),
+        type_to_string(tmpctx, struct pubkey,
+               &state->channel->eltoo_keyset.other_settle_key),
              type_to_string(tmpctx, struct nonce,
                     &state->channel->eltoo_keyset.self_next_nonce),
             type_to_string(tmpctx, struct nonce,
@@ -1105,13 +1120,21 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 		status_failed(STATUS_FAIL_HSM_IO,
 			      "Bad sign_tx_reply %s", tal_hex(tmpctx, msg));
 
-	status_debug("partial signature %s on tx %s using our key %s, their key %s, inner pubkey %s, NEW our nonce %s, NEW their nonce %s",
+    /* We have our second nonce thanks to above, now copy their second nonce into place
+       so it makes it to the actual channel */
+    state->channel->eltoo_keyset.other_next_nonce = their_second_nonce;
+
+	status_debug("partial signature %s on tx %s using our keys %s:%s, their keys %s:%s, inner pubkey %s, NEW our nonce %s, NEW their nonce %s",
 		     type_to_string(tmpctx, struct partial_sig, &state->channel->eltoo_keyset.self_psig),
 		     type_to_string(tmpctx, struct bitcoin_tx, update_tx),
-		     type_to_string(tmpctx, struct pubkey,
-				    &state->our_funding_pubkey),
              type_to_string(tmpctx, struct pubkey,
-                    &state->their_funding_pubkey),
+                    &state->channel->eltoo_keyset.self_funding_key),
+             type_to_string(tmpctx, struct pubkey,
+                    &state->channel->eltoo_keyset.self_settle_key),
+             type_to_string(tmpctx, struct pubkey,
+                    &state->channel->eltoo_keyset.other_funding_key),
+             type_to_string(tmpctx, struct pubkey,
+                    &state->channel->eltoo_keyset.other_settle_key),
              type_to_string(tmpctx, struct pubkey,
                     &state->channel->eltoo_keyset.inner_pubkey),
              type_to_string(tmpctx, struct nonce,

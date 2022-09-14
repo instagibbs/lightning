@@ -247,23 +247,25 @@ struct bitcoin_tx **eltoo_channel_txs(const tal_t *ctx,
                 struct wally_tx_output *direct_outputs[NUM_SIDES],
                 const struct channel *channel,
                 u64 update_number,
-                enum side side)
+                enum side side) /* FIXME remove */
 {
+    assert(side == LOCAL);
     struct bitcoin_tx **txs;
     const struct htlc **committed;
 
     /* Figure out what @side will already be committed to. */
-    gather_htlcs(ctx, channel, side, &committed, NULL, NULL);
+    /* FIXME how does "side" work here? We're doing both sides. */
+    gather_htlcs(ctx, channel, LOCAL, &committed, NULL, NULL);
 
     txs = tal_arr(ctx, struct bitcoin_tx *, 2);
     /* settle txn has finalized witness data, just needs prevout rebinding */
     txs[1] = settle_tx(
         ctx, &channel->funding,
         channel->funding_sats,
-        channel->config[side].shared_delay,
+        channel->config[LOCAL].shared_delay,
         &channel->eltoo_keyset,
-        channel->config[side].dust_limit, channel->view[side].owed[side],
-        channel->view[side].owed[!side], committed, htlcmap, direct_outputs,
+        channel->config[LOCAL].dust_limit, channel->view[LOCAL].owed[LOCAL],
+        channel->view[LOCAL].owed[REMOTE], committed, htlcmap, direct_outputs,
         update_number);
 
     /* We only fill out witness data for update transactions for onchain events */
@@ -611,10 +613,10 @@ enum channel_remove_err channel_fail_htlc(struct channel *channel,
 
 static void htlc_incstate(struct channel *channel,
 			  struct htlc *htlc,
-			  enum side sidechanged,
 			  struct balance owed[NUM_SIDES])
 {
 	int preflags, postflags;
+    enum side sidechanged = LOCAL;
 	const int committed_f = HTLC_FLAG(sidechanged, HTLC_F_COMMITTED);
 
 	status_debug("htlc %"PRIu64": %s->%s", htlc->id,
@@ -651,7 +653,7 @@ static void htlc_incstate(struct channel *channel,
 
 /* Returns flags which were changed. */
 static int change_htlcs(struct channel *channel,
-			enum side sidechanged,
+			// FIXME not needed? enum side sidechanged,
 			const enum htlc_state *htlc_states,
 			size_t n_hstates,
 			const struct htlc ***htlcs,
@@ -664,14 +666,14 @@ static int change_htlcs(struct channel *channel,
 	struct balance owed[NUM_SIDES];
 
 	for (i = 0; i < NUM_SIDES; i++)
-		to_balance(&owed[i], channel->view[sidechanged].owed[i]);
+		to_balance(&owed[i], channel->view[LOCAL].owed[i]);
 
 	for (h = htlc_map_first(channel->htlcs, &it);
 	     h;
 	     h = htlc_map_next(channel->htlcs, &it)) {
 		for (i = 0; i < n_hstates; i++) {
 			if (h->state == htlc_states[i]) {
-				htlc_incstate(channel, h, sidechanged, owed);
+				htlc_incstate(channel, h, owed);
 				dump_htlc(h, prefix);
 				htlc_arr_append(htlcs, h);
 				cflags |= (eltoo_htlc_state_flags(htlc_states[i])
@@ -681,13 +683,13 @@ static int change_htlcs(struct channel *channel,
 	}
 
 	for (i = 0; i < NUM_SIDES; i++) {
-		if (!balance_ok(&owed[i], &channel->view[sidechanged].owed[i])) {
+		if (!balance_ok(&owed[i], &channel->view[LOCAL].owed[i])) {
 			status_failed(STATUS_FAIL_INTERNAL_ERROR,
 				      "%s: %s balance underflow: %s -> %"PRId64,
-				      side_to_str(sidechanged),
+				      side_to_str(LOCAL),
 				      side_to_str(i),
 				      type_to_string(tmpctx, struct amount_msat,
-						     &channel->view[sidechanged].owed[i]),
+						     &channel->view[LOCAL].owed[i]),
 				      owed[i].msat);
 		}
 	}
@@ -703,7 +705,7 @@ bool channel_sending_update(struct channel *channel,
 					   SENT_REMOVE_HTLC };
 	status_debug("Trying update");
 
-	change = change_htlcs(channel, REMOTE, states, ARRAY_SIZE(states),
+	change = change_htlcs(channel, states, ARRAY_SIZE(states),
 			      htlcs, "sending_commit");
 	if (!change)
 		return false;
@@ -719,7 +721,7 @@ bool channel_rcvd_update_sign_ack(struct channel *channel,
 					   SENT_REMOVE_UPDATE };
 
 	status_debug("Received update_sign_ack");
-	change = change_htlcs(channel, LOCAL, states, ARRAY_SIZE(states),
+	change = change_htlcs(channel, states, ARRAY_SIZE(states),
 			      htlcs, "rcvd_update_sign_ack");
 
 	/* FIXME what should this be? ... Their ack can queue changes on our side. */
@@ -735,7 +737,7 @@ bool channel_rcvd_update(struct channel *channel, const struct htlc ***htlcs)
 					   RCVD_REMOVE_UPDATE };
 
 	status_debug("Received Update");
-	change = change_htlcs(channel, LOCAL, states, ARRAY_SIZE(states),
+	change = change_htlcs(channel, states, ARRAY_SIZE(states),
 			      htlcs, "rcvd_update");
 	if (!change)
 		return false;

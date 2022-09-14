@@ -833,7 +833,7 @@ static void send_update(struct eltoo_peer *peer)
 
 	update_and_settle_txs = eltoo_channel_txs(tmpctx, &htlc_map, direct_outputs,
 			  peer->channel,
-			  peer->next_index, REMOTE);
+			  peer->next_index, LOCAL);
 
     msg = towire_hsmd_psign_update_tx(tmpctx,
             &peer->channel_id,
@@ -842,11 +842,42 @@ static void send_update(struct eltoo_peer *peer)
             &peer->channel->eltoo_keyset.other_funding_key,
             &peer->channel->eltoo_keyset.other_next_nonce);
 
+    status_debug("partial signature req %s on update tx %s, settle tx %s, using our key %s, their key %s, inner pubkey %s, OLD our nonce %s, OLD their nonce %s",
+             type_to_string(tmpctx, struct partial_sig, &peer->channel->eltoo_keyset.self_psig),
+             type_to_string(tmpctx, struct bitcoin_tx, update_and_settle_txs[0]),
+             type_to_string(tmpctx, struct bitcoin_tx, update_and_settle_txs[1]),
+             type_to_string(tmpctx, struct pubkey,
+                    &peer->channel->eltoo_keyset.self_funding_key),
+             type_to_string(tmpctx, struct pubkey,
+                    &peer->channel->eltoo_keyset.other_funding_key),
+             type_to_string(tmpctx, struct pubkey,
+                    &peer->channel->eltoo_keyset.inner_pubkey),
+             type_to_string(tmpctx, struct nonce,
+                    &peer->channel->eltoo_keyset.self_next_nonce),
+             type_to_string(tmpctx, struct nonce,
+                    &peer->channel->eltoo_keyset.other_next_nonce));
+
     hsmd_msg = hsm_req(tmpctx, take(msg));
     if (!fromwire_hsmd_psign_update_tx_reply(hsmd_msg, &peer->channel->eltoo_keyset.self_psig, &peer->channel->eltoo_keyset.session, &peer->channel->eltoo_keyset.self_next_nonce, &peer->channel->eltoo_keyset.inner_pubkey))
         status_failed(STATUS_FAIL_HSM_IO,
                   "Reading psign_update_tx reply: %s",
                   tal_hex(tmpctx, msg));
+
+    /* We don't learn their new nonce until we get ACK... */
+    status_debug("partial signature %s on update tx %s, settle tx %s, using our key %s, their key %s, inner pubkey %s, NEW our nonce %s, OLD their nonce %s",
+             type_to_string(tmpctx, struct partial_sig, &peer->channel->eltoo_keyset.self_psig),
+             type_to_string(tmpctx, struct bitcoin_tx, update_and_settle_txs[0]),
+             type_to_string(tmpctx, struct bitcoin_tx, update_and_settle_txs[1]),
+             type_to_string(tmpctx, struct pubkey,
+                    &peer->channel->eltoo_keyset.self_funding_key),
+             type_to_string(tmpctx, struct pubkey,
+                    &peer->channel->eltoo_keyset.other_funding_key),
+             type_to_string(tmpctx, struct pubkey,
+                    &peer->channel->eltoo_keyset.inner_pubkey),
+             type_to_string(tmpctx, struct nonce,
+                    &peer->channel->eltoo_keyset.self_next_nonce),
+             type_to_string(tmpctx, struct nonce,
+                    &peer->channel->eltoo_keyset.other_next_nonce));
 
 #if DEVELOPER
 	if (peer->dev_disable_commit) {
@@ -1018,6 +1049,7 @@ static void handle_peer_update_sig(struct eltoo_peer *peer, const u8 *msg)
 	struct bitcoin_tx **update_and_settle_txs;
     struct bip340sig update_sig;
 	const struct htlc **htlc_map, **changed_htlcs;
+    struct nonce their_next_nonce;
 
 	changed_htlcs = tal_arr(msg, const struct htlc *, 0);
     /* Does our counterparty offer any changes? */
@@ -1037,7 +1069,7 @@ static void handle_peer_update_sig(struct eltoo_peer *peer, const u8 *msg)
 	}
 
 	if (!fromwire_update_signed(msg,
-					&channel_id, &peer->channel->eltoo_keyset.other_psig, &peer->channel->eltoo_keyset.other_next_nonce))
+					&channel_id, &peer->channel->eltoo_keyset.other_psig, &their_next_nonce))
 		peer_failed_warn(peer->pps, &peer->channel_id,
 				 "Bad update_signed %s", tal_hex(msg, msg));
 
@@ -1055,11 +1087,45 @@ static void handle_peer_update_sig(struct eltoo_peer *peer, const u8 *msg)
                            update_and_settle_txs[1],
                            &peer->channel->eltoo_keyset.other_funding_key,
                            &peer->channel->eltoo_keyset.other_next_nonce);
+
+    status_debug("partial signature req %s on update tx %s, settle tx %s, using our key %s, their key %s, inner pubkey %s, OLD our nonce %s, OLD their nonce %s",
+             type_to_string(tmpctx, struct partial_sig, &peer->channel->eltoo_keyset.self_psig),
+             type_to_string(tmpctx, struct bitcoin_tx, update_and_settle_txs[0]),
+             type_to_string(tmpctx, struct bitcoin_tx, update_and_settle_txs[1]),
+             type_to_string(tmpctx, struct pubkey,
+                    &peer->channel->eltoo_keyset.self_funding_key),
+             type_to_string(tmpctx, struct pubkey,
+                    &peer->channel->eltoo_keyset.other_funding_key),
+             type_to_string(tmpctx, struct pubkey,
+                    &peer->channel->eltoo_keyset.inner_pubkey),
+             type_to_string(tmpctx, struct nonce,
+                    &peer->channel->eltoo_keyset.self_next_nonce),
+             type_to_string(tmpctx, struct nonce,
+                    &peer->channel->eltoo_keyset.other_next_nonce));
+
+    /* Slide their newest nonce into place after consuming it above */
+    peer->channel->eltoo_keyset.other_next_nonce = their_next_nonce;
+
     wire_sync_write(HSM_FD, take(msg));
     msg = wire_sync_read(tmpctx, HSM_FD);
     if (!fromwire_hsmd_psign_update_tx_reply(msg, &peer->channel->eltoo_keyset.self_psig, &peer->channel->eltoo_keyset.session, &peer->channel->eltoo_keyset.self_next_nonce, &peer->channel->eltoo_keyset.inner_pubkey))
         status_failed(STATUS_FAIL_HSM_IO, "Bad sign_tx_reply %s",
                   tal_hex(tmpctx, msg));
+
+    status_debug("partial signature %s on update tx %s, settle tx %s, using our key %s, their key %s, inner pubkey %s, NEW our nonce %s, NEW their nonce %s",
+             type_to_string(tmpctx, struct partial_sig, &peer->channel->eltoo_keyset.self_psig),
+             type_to_string(tmpctx, struct bitcoin_tx, update_and_settle_txs[0]),
+             type_to_string(tmpctx, struct bitcoin_tx, update_and_settle_txs[1]),
+             type_to_string(tmpctx, struct pubkey,
+                    &peer->channel->eltoo_keyset.self_funding_key),
+             type_to_string(tmpctx, struct pubkey,
+                    &peer->channel->eltoo_keyset.other_funding_key),
+             type_to_string(tmpctx, struct pubkey,
+                    &peer->channel->eltoo_keyset.inner_pubkey),
+             type_to_string(tmpctx, struct nonce,
+                    &peer->channel->eltoo_keyset.self_next_nonce),
+             type_to_string(tmpctx, struct nonce,
+                    &peer->channel->eltoo_keyset.other_next_nonce));
 
     /* Before replying, make sure signature is correct */
     msg = towire_hsmd_combine_psig(NULL,

@@ -51,7 +51,6 @@ struct channel *new_initial_eltoo_channel(const tal_t *ctx,
 	channel->eltoo_keyset.other_funding_key = *remote_funding_pubkey;
 	channel->eltoo_keyset.self_settle_key = *local_settle_pubkey;
 	channel->eltoo_keyset.other_settle_key = *remote_settle_pubkey;
-	channel->eltoo_keyset.other_settle_key = *remote_settle_pubkey;
 	channel->eltoo_keyset.self_psig = *self_psig;
 	channel->eltoo_keyset.other_psig = *other_psig;
 	channel->eltoo_keyset.session = *session;
