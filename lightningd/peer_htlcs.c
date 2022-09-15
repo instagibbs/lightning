@@ -2207,17 +2207,93 @@ static void adjust_channel_feerate_bounds(struct channel *channel, u32 feerate)
 
 void peer_got_ack(struct channel *channel, const u8 *msg)
 {
+	enum onion_wire *badonions;
+	u8 **failmsgs;
+	size_t i;
+	struct lightningd *ld = channel->peer->ld;
 	u64 update_num;
-	struct changed_htlc *changed_htlcs;
+	struct changed_htlc *changed;
     struct partial_sig their_psig, our_psig;
     struct musig_session session;
-    if (!fromwire_channeld_got_ack(msg, msg, &update_num, &changed_htlcs, &their_psig, &our_psig, &session)) {
+    if (!fromwire_channeld_got_ack(msg, msg, &update_num, &changed, &their_psig, &our_psig, &session)) {
 		channel_internal_error(channel, "bad channel_sending_updatesig_ack %s",
 				       tal_hex(channel, msg));
 		return;
     }
 
-    /* FIXME good to go... turn taking stuff goes here...? */
+	log_debug(channel->log,
+		  "got ack %"PRIu64": %zu changed",
+		  update_num, tal_count(changed));
+
+
+	/* Save any immediate failures for after we reply. */
+	badonions = tal_arrz(msg, enum onion_wire, tal_count(changed));
+	failmsgs = tal_arrz(msg, u8 *, tal_count(changed));
+	for (i = 0; i < tal_count(changed); i++) {
+		/* If we're doing final accept, we need to forward */
+		if (changed[i].newstate == SENT_ADD_ACK) {
+			peer_accepted_htlc(failmsgs,
+					   channel, changed[i].id, false,
+					   &badonions[i], &failmsgs[i]);
+		} else {
+			if (!changed_htlc(channel, &changed[i])) {
+				channel_internal_error(channel,
+						    "got_revoke: update failed");
+				return;
+			}
+		}
+	}
+
+	if (update_num >= (1ULL << 48)) {
+		channel_internal_error(channel, "got_ack: too many txs %"PRIu64,
+				    update_num);
+		return;
+	}
+
+
+    /* FIXME check if update_num is right? */
+
+    log_debug(channel->log, "Responding with CHANNEL_GOT_ACK_REPLY");
+	subd_send_msg(channel->owner,
+		      take(towire_channeld_got_ack_reply(msg)));
+
+
+	/* Now, any HTLCs we need to immediately fail? */
+	for (i = 0; i < tal_count(changed); i++) {
+		struct htlc_in *hin;
+
+		if (badonions[i]) {
+			hin = find_htlc_in(&ld->htlcs_in, channel,
+					   changed[i].id);
+			local_fail_in_htlc_badonion(hin, badonions[i]);
+		} else if (failmsgs[i]) {
+			hin = find_htlc_in(&ld->htlcs_in, channel,
+					   changed[i].id);
+			local_fail_in_htlc(hin, failmsgs[i]);
+		} else
+			continue;
+
+		// in fact, now we don't know if this htlc is a forward or localpay!
+		wallet_forwarded_payment_add(ld->wallet,
+					 hin, FORWARD_STYLE_UNKNOWN, NULL, NULL,
+					 FORWARD_LOCAL_FAILED,
+					 badonions[i] ? badonions[i]
+					     : fromwire_peektype(failmsgs[i]));
+	}
+	wallet_channel_save(ld->wallet, channel);
+
+    /* FIXME ???
+	if (penalty_tx == NULL)
+		return;
+
+	payload = tal(tmpctx, struct commitment_revocation_payload);
+	payload->commitment_txid = pbase->txid;
+	payload->penalty_tx = tal_steal(payload, penalty_tx);
+	payload->wallet = ld->wallet;
+	payload->channel_dbid = channel->dbid;
+	payload->commitnum = pbase->commitment_num;
+	payload->channel_id = channel->cid;
+	plugin_hook_call_commitment_revocation(ld, payload); */
 }
 
 void peer_sending_updatesig(struct channel *channel, const u8 *msg)

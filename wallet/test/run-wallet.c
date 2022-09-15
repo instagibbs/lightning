@@ -689,6 +689,9 @@ u8 *towire_channeld_fail_htlc(const tal_t *ctx UNNEEDED, const struct failed_htl
 /* Generated stub for towire_channeld_fulfill_htlc */
 u8 *towire_channeld_fulfill_htlc(const tal_t *ctx UNNEEDED, const struct fulfilled_htlc *fulfilled_htlc UNNEEDED)
 { fprintf(stderr, "towire_channeld_fulfill_htlc called!\n"); abort(); }
+/* Generated stub for towire_channeld_got_ack_reply */
+u8 *towire_channeld_got_ack_reply(const tal_t *ctx UNNEEDED)
+{ fprintf(stderr, "towire_channeld_got_ack_reply called!\n"); abort(); }
 /* Generated stub for towire_channeld_got_commitsig_reply */
 u8 *towire_channeld_got_commitsig_reply(const tal_t *ctx UNNEEDED)
 { fprintf(stderr, "towire_channeld_got_commitsig_reply called!\n"); abort(); }

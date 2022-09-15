@@ -1078,6 +1078,8 @@ static void handle_peer_update_sig(struct eltoo_peer *peer, const u8 *msg)
 		peer_failed_warn(peer->pps, &peer->channel_id,
 				 "Bad update_signed %s", tal_hex(msg, msg));
 
+    peer->updates_received++;
+
 	status_debug("Received update_sig");
 
 	update_and_settle_txs =
@@ -1207,6 +1209,8 @@ static void handle_peer_update_sig_ack(struct eltoo_peer *peer, const u8 *msg)
 		peer_failed_warn(peer->pps, &peer->channel_id,
 				 "Bad update_signed_ack %s", tal_hex(msg, msg));
 	}
+
+    peer->updates_received++;
 
     status_debug("partial signature combine req on update tx %s, settle tx %s, our_psig: %s,"
                 " their_psig: %s, session %s, OLD our nonce %s, OLD their nonce %s",
