@@ -463,7 +463,9 @@ msgdata,channeld_got_ack,updatenum,u64,
 # RCVD_ADD_ACK, RCVD_REMOVE_ACK
 msgdata,channeld_got_ack,num_changed,u16,
 msgdata,channeld_got_ack,changed,changed_htlc,num_changed
-msgdata,channeld_got_ack,update_sig,bip340sig,
+msgdata,channeld_got_ack,their_psig,partial_sig,
+msgdata,channeld_got_ack,our_psig,partial_sig,
+msgdata,channeld_got_ack,session,musig_session,
 # Wait for reply, to make sure it's on disk before we continue
 # (eg. if we sent another commitment_signed, that would implicitly ack).
 msgtype,channeld_got_ack_reply,1182

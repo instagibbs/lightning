@@ -92,6 +92,10 @@ struct channel {
 	/* Mask for obscuring the encoding of the update number. */
 	u64 update_number_obscurer;
 
+    /* Cached transactions waiting for counter-sign via `update_signed_ack` */
+    struct bitcoin_tx *last_unsigned_update;
+    struct bitcoin_tx *last_unsigned_settle;
+
     /* End Eltoo fields*/
 
 };

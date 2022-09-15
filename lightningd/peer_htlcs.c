@@ -2207,7 +2207,17 @@ static void adjust_channel_feerate_bounds(struct channel *channel, u32 feerate)
 
 void peer_got_ack(struct channel *channel, const u8 *msg)
 {
-    abort();
+	u64 update_num;
+	struct changed_htlc *changed_htlcs;
+    struct partial_sig their_psig, our_psig;
+    struct musig_session session;
+    if (!fromwire_channeld_got_ack(msg, msg, &update_num, &changed_htlcs, &their_psig, &our_psig, &session)) {
+		channel_internal_error(channel, "bad channel_sending_updatesig_ack %s",
+				       tal_hex(channel, msg));
+		return;
+    }
+
+    /* FIXME good to go... turn taking stuff goes here...? */
 }
 
 void peer_sending_updatesig(struct channel *channel, const u8 *msg)

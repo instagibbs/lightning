@@ -298,6 +298,9 @@ u64 forward_index_update_status(struct lightningd *ld UNNEEDED,
 /* Generated stub for fromwire_channeld_dev_memleak_reply */
 bool fromwire_channeld_dev_memleak_reply(const void *p UNNEEDED, bool *leak UNNEEDED)
 { fprintf(stderr, "fromwire_channeld_dev_memleak_reply called!\n"); abort(); }
+/* Generated stub for fromwire_channeld_got_ack */
+bool fromwire_channeld_got_ack(const tal_t *ctx UNNEEDED, const void *p UNNEEDED, u64 *updatenum UNNEEDED, struct changed_htlc **changed UNNEEDED, struct partial_sig *their_psig UNNEEDED, struct partial_sig *our_psig UNNEEDED, struct musig_session *session UNNEEDED)
+{ fprintf(stderr, "fromwire_channeld_got_ack called!\n"); abort(); }
 /* Generated stub for fromwire_channeld_got_commitsig */
 bool fromwire_channeld_got_commitsig(const tal_t *ctx UNNEEDED, const void *p UNNEEDED, u64 *commitnum UNNEEDED, struct fee_states **fee_states UNNEEDED, struct height_states **blockheight_states UNNEEDED, struct bitcoin_signature *signature UNNEEDED, struct bitcoin_signature **htlc_signature UNNEEDED, struct added_htlc ***added UNNEEDED, struct fulfilled_htlc **fulfilled UNNEEDED, struct failed_htlc ***failed UNNEEDED, struct changed_htlc **changed UNNEEDED, struct bitcoin_tx **tx UNNEEDED, struct commitsig ***inflight_commitsigs UNNEEDED)
 { fprintf(stderr, "fromwire_channeld_got_commitsig called!\n"); abort(); }

@@ -1418,7 +1418,6 @@ static u8 *handle_combine_psig(struct hsmd_client *c, const u8 *msg_in)
         /* FIXME better complaint from hsmd */
         return hsmd_status_malformed_request(c, msg_in);
     }
-
     return towire_hsmd_combine_psig_reply(NULL, &sig);
 }
 
