@@ -304,6 +304,9 @@ bool fromwire_channeld_got_commitsig(const tal_t *ctx UNNEEDED, const void *p UN
 /* Generated stub for fromwire_channeld_got_revoke */
 bool fromwire_channeld_got_revoke(const tal_t *ctx UNNEEDED, const void *p UNNEEDED, u64 *revokenum UNNEEDED, struct secret *per_commitment_secret UNNEEDED, struct pubkey *next_per_commit_point UNNEEDED, struct fee_states **fee_states UNNEEDED, struct height_states **blockheight_states UNNEEDED, struct changed_htlc **changed UNNEEDED, struct penalty_base **pbase UNNEEDED, struct bitcoin_tx **penalty_tx UNNEEDED)
 { fprintf(stderr, "fromwire_channeld_got_revoke called!\n"); abort(); }
+/* Generated stub for fromwire_channeld_got_updatesig */
+bool fromwire_channeld_got_updatesig(const tal_t *ctx UNNEEDED, const void *p UNNEEDED, u32 *update_num UNNEEDED, struct partial_sig *our_p_sig UNNEEDED, struct partial_sig *their_p_sig UNNEEDED, struct musig_session *session UNNEEDED, struct added_htlc **added UNNEEDED, struct fulfilled_htlc **fulfilled UNNEEDED, struct failed_htlc ***failed UNNEEDED, struct changed_htlc **changed UNNEEDED, struct bitcoin_tx **update_tx UNNEEDED, struct bitcoin_tx **settle_tx UNNEEDED)
+{ fprintf(stderr, "fromwire_channeld_got_updatesig called!\n"); abort(); }
 /* Generated stub for fromwire_channeld_offer_htlc_reply */
 bool fromwire_channeld_offer_htlc_reply(const tal_t *ctx UNNEEDED, const void *p UNNEEDED, u64 *id UNNEEDED, u8 **failuremsg UNNEEDED, wirestring **failurestr UNNEEDED)
 { fprintf(stderr, "fromwire_channeld_offer_htlc_reply called!\n"); abort(); }
@@ -689,6 +692,9 @@ u8 *towire_channeld_got_commitsig_reply(const tal_t *ctx UNNEEDED)
 /* Generated stub for towire_channeld_got_revoke_reply */
 u8 *towire_channeld_got_revoke_reply(const tal_t *ctx UNNEEDED)
 { fprintf(stderr, "towire_channeld_got_revoke_reply called!\n"); abort(); }
+/* Generated stub for towire_channeld_got_updatesig_reply */
+u8 *towire_channeld_got_updatesig_reply(const tal_t *ctx UNNEEDED)
+{ fprintf(stderr, "towire_channeld_got_updatesig_reply called!\n"); abort(); }
 /* Generated stub for towire_channeld_offer_htlc */
 u8 *towire_channeld_offer_htlc(const tal_t *ctx UNNEEDED, struct amount_msat amount_msat UNNEEDED, u32 cltv_expiry UNNEEDED, const struct sha256 *payment_hash UNNEEDED, const u8 onion_routing_packet[1366] UNNEEDED, const struct pubkey *path_key UNNEEDED, const u8 *extra_tlvs UNNEEDED)
 { fprintf(stderr, "towire_channeld_offer_htlc called!\n"); abort(); }

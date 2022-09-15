@@ -2127,6 +2127,31 @@ static bool valid_commitment_tx(struct channel *channel,
 	return true;
 }
 
+static bool peer_save_updatesig_received(struct channel *channel, u64 update_num,
+					 struct bitcoin_tx *update_tx,
+					 struct bitcoin_tx *settle_tx,
+                     struct partial_sig *their_psig,
+                     struct partial_sig *our_psig,
+                     struct musig_session *session)
+{
+	if (update_num != channel->next_index[LOCAL]) {
+		channel_internal_error(channel,
+			   "channel_got_updatesig: expected update_num %"PRIu64
+			   " got %"PRIu64,
+			   channel->next_index[LOCAL], update_num);
+		return false;
+	}
+
+	/* FIXME ? Basic sanity check */
+
+	channel->next_index[LOCAL]++;
+
+	/* Update transactions before saving to db */
+	channel_set_last_eltoo_txs(channel, update_tx, settle_tx, their_psig, our_psig, session, TX_CHANNEL_UNILATERAL);
+
+	return true;
+}
+
 static bool peer_save_commitsig_received(struct channel *channel, u64 commitnum,
 					 struct bitcoin_tx *tx,
 					 const struct bitcoin_signature *commit_sig)
@@ -2178,11 +2203,6 @@ static void adjust_channel_feerate_bounds(struct channel *channel, u32 feerate)
 		channel->max_possible_feerate = feerate;
 	if (feerate < channel->min_possible_feerate)
 		channel->min_possible_feerate = feerate;
-}
-
-void peer_got_updatesig(struct channel *channel, const u8 *msg)
-{
-    abort();
 }
 
 void peer_got_ack(struct channel *channel, const u8 *msg)
@@ -2438,12 +2458,121 @@ struct deferred_commitsig {
 	const u8 *msg;
 };
 
+static void retry_deferred_updatesig(struct chain_topology *topo,
+				     struct deferred_commitsig *d)
+{
+	peer_got_updatesig(d->channel, d->msg);
+	tal_free(d);
+}
+
 static void retry_deferred_commitsig(struct chain_topology *topo,
 				     struct deferred_commitsig *d)
 {
 	peer_got_commitsig(d->channel, d->msg);
 	tal_free(d);
 }
+
+void peer_got_updatesig(struct channel *channel, const u8 *msg)
+{
+	u32 update_num;
+    struct partial_sig our_psig, their_psig;
+    struct musig_session session;
+	struct added_htlc *added;
+	struct fulfilled_htlc *fulfilled;
+	struct failed_htlc **failed;
+	struct changed_htlc *changed;
+	struct bitcoin_tx *update_tx, *settle_tx;
+	size_t i;
+	struct lightningd *ld = channel->peer->ld;
+
+	if (!fromwire_channeld_got_updatesig(msg, msg,
+					    &update_num,
+					    &our_psig,
+					    &their_psig,
+                        &session,
+					    &added,
+					    &fulfilled,
+					    &failed,
+					    &changed,
+					    &update_tx,
+                        &settle_tx)) {
+		channel_internal_error(channel,
+				    "bad fromwire_channeld_got_commitsig %s",
+				    tal_hex(channel, msg));
+		return;
+	}
+
+	/* If we're not synced with bitcoin network, we can't accept
+	 * any new HTLCs.  We stall at this point, in the hope that it
+	 * won't take long! */
+	if (added && !topology_synced(ld->topology)) {
+		struct deferred_commitsig *d;
+
+		log_unusual(channel->log,
+			    "Deferring incoming commit until we sync");
+
+		/* If subdaemon dies, we want to forget this. */
+		d = tal(channel->owner, struct deferred_commitsig);
+		d->channel = channel;
+		d->msg = tal_dup_talarr(d, u8, msg);
+		topology_add_sync_waiter(d, ld->topology,
+					 retry_deferred_updatesig, d);
+		return;
+	}
+
+	update_tx->chainparams = chainparams;
+	settle_tx->chainparams = chainparams;
+
+	log_debug(channel->log,
+		  "got updatesig %"PRIu32
+		  ": %zu added, %zu fulfilled, %zu failed, %zu changed",
+		  update_num,
+		  tal_count(added), tal_count(fulfilled),
+		  tal_count(failed), tal_count(changed));
+
+	/* New HTLCs */
+	for (i = 0; i < tal_count(added); i++) {
+		if (!channel_added_their_htlc(channel, &added[i]))
+			return;
+	}
+
+	/* Save information now for fulfilled & failed HTLCs */
+	for (i = 0; i < tal_count(fulfilled); i++) {
+		if (!peer_fulfilled_our_htlc(channel, &fulfilled[i]))
+			return;
+	}
+
+	for (i = 0; i < tal_count(failed); i++) {
+		if (!peer_failed_our_htlc(channel, failed[i]))
+			return;
+	}
+
+	for (i = 0; i < tal_count(changed); i++) {
+		if (!changed_htlc(channel, &changed[i])) {
+			channel_internal_error(channel,
+					    "got_commitsig: update failed");
+			return;
+		}
+	}
+
+	/* Since we're about to send revoke, bump state again. */
+    /* FIXME do we need something like this?
+	if (!peer_sending_revocation(channel, added, fulfilled, failed, changed))
+		return;
+    */
+
+    /* Stores fully signed transactions, and partial sigs for reestablishment! */
+	if (!peer_save_updatesig_received(channel, update_num, update_tx, settle_tx, &their_psig, &our_psig, &session))
+		return;
+
+    /* Now save to db */
+	wallet_channel_save(ld->wallet, channel);
+
+	/* Tell it we've committed, and to go ahead with ACK. */
+	msg = towire_channeld_got_updatesig_reply(msg);
+	subd_send_msg(channel->owner, take(msg));
+}
+
 
 /* This also implies we're sending revocation */
 void peer_got_commitsig(struct channel *channel, const u8 *msg)

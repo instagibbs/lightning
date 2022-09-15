@@ -991,8 +991,7 @@ static void send_update_sign_ack(struct eltoo_peer *peer,
 			    const struct partial_sig *their_update_psig,
                 const struct musig_session *session,
 			    const struct bitcoin_tx *update_tx,
-			    const struct bitcoin_tx *settle_tx,
-                const struct nonce *our_next_nonce)
+			    const struct bitcoin_tx *settle_tx)
 {
 	struct changed_htlc *changed;
 	struct fulfilled_htlc *fulfilled;
@@ -1143,15 +1142,16 @@ static void handle_peer_update_sig(struct eltoo_peer *peer, const u8 *msg)
                   "Bad combine_psig reply %s", tal_hex(tmpctx, msg));
     }
 
-    /* Tell master about this exchange, then the peer */
+    /* Tell master about this exchange, then the peer.
+       Note: We do not persist nonces, as they will not outlive
+       a single connection to peer! */
 	send_update_sign_ack(peer,
         changed_htlcs,
         &peer->channel->eltoo_keyset.self_psig,
         &peer->channel->eltoo_keyset.other_psig,
         &peer->channel->eltoo_keyset.session,
         update_and_settle_txs[0],
-        update_and_settle_txs[1],
-        &peer->channel->eltoo_keyset.self_next_nonce);
+        update_and_settle_txs[1]);
 
 	/* We may now be quiescent on our side. */
 	maybe_send_stfu(peer);
