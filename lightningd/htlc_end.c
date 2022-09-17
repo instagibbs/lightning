@@ -106,8 +106,9 @@ struct htlc_in *htlc_in_check(const struct htlc_in *hin, const char *abortstr)
 	/* Can't have a resolution while still being added. */
 	if (hin->hstate >= RCVD_ADD_HTLC
 	    && hin->hstate <= RCVD_ADD_ACK_REVOCATION) {
-		if (hin->preimage)
-			return corrupt(abortstr, "Still adding, has preimage");
+        /* FIXME This is fine for eltoo. Figure out proper switching for it */
+		//if (hin->preimage)
+		//	return corrupt(abortstr, "Still adding, has preimage");
 		if (hin->failonion)
 			return corrupt(abortstr, "Still adding, has failmsg");
 		if (hin->badonion)

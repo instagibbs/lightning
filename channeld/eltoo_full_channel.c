@@ -535,7 +535,7 @@ enum channel_remove_err channel_fulfill_htlc(struct channel *channel,
 	 *       `error` and fail the channel.
 	 */
 	if (!eltoo_htlc_has(htlc, HTLC_FLAG(!htlc_owner(htlc), HTLC_F_COMMITTED))) {
-		status_unusual("channel_fulfill_htlc: %"PRIu64" in state %s",
+		status_unusual("channel_fulfill_htlc: %"PRIu64" in state %s, uncommitted",
 			     htlc->id, htlc_state_name(htlc->state));
 		return CHANNEL_ERR_HTLC_UNCOMMITTED;
 	}
@@ -551,12 +551,18 @@ enum channel_remove_err channel_fulfill_htlc(struct channel *channel,
 	 *    - MUST NOT send an `update_fulfill_htlc`, `update_fail_htlc`, or
 	 *      `update_fail_malformed_htlc`.
 	 */
-	if (htlc->state == RCVD_ADD_ACK)
+    /* RCVD_ADD_COMMIT == RCVD_ADD_UPDATE is irrevocable */
+    /* FIXME really gotta think about these transitions.... */
+	if (htlc->state == RCVD_ADD_ACK /* RCVD_ADD_REVOCATION */)
 		htlc->state = RCVD_REMOVE_HTLC;
-	else if (htlc->state == SENT_ADD_ACK)
-		htlc->state = SENT_REMOVE_HTLC;
+//	else if (htlc->state == SENT_ADD_ACK)
+//		htlc->state = SENT_REMOVE_HTLC;
+    else if (htlc->state == RCVD_ADD_UPDATE)
+        htlc->state = SENT_REMOVE_HTLC;
+    else if (htlc->state == SENT_ADD_UPDATE)
+        htlc->state = RCVD_REMOVE_HTLC;
 	else {
-		status_unusual("channel_fulfill_htlc: %"PRIu64" in state %s",
+		status_unusual("channel_fulfill_htlc: %"PRIu64" in state %s, not irrevocable",
 			     htlc->id, htlc_state_name(htlc->state));
 		return CHANNEL_ERR_HTLC_NOT_IRREVOCABLE;
 	}
@@ -675,6 +681,7 @@ static int change_htlcs(struct channel *channel,
 			if (h->state == htlc_states[i]) {
 				htlc_incstate(channel, h, owed);
 				dump_htlc(h, prefix);
+                /* Adds to changed htlcs */
 				htlc_arr_append(htlcs, h);
 				cflags |= (eltoo_htlc_state_flags(htlc_states[i])
 					   ^ eltoo_htlc_state_flags(h->state));
@@ -701,11 +708,11 @@ bool channel_sending_update(struct channel *channel,
 			    const struct htlc ***htlcs)
 {
 	int change;
-	const enum htlc_state states[] = { SENT_ADD_HTLC,
+	const enum htlc_state states_to_inc[] = { SENT_ADD_HTLC,
 					   SENT_REMOVE_HTLC };
 	status_debug("Trying update");
 
-	change = change_htlcs(channel, states, ARRAY_SIZE(states),
+	change = change_htlcs(channel, states_to_inc, ARRAY_SIZE(states_to_inc),
 			      htlcs, "sending_commit");
 	if (!change)
 		return false;

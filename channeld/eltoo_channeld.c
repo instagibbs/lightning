@@ -1046,6 +1046,7 @@ static void send_update_sign_ack(struct eltoo_peer *peer,
 
 	/* Now we can finally send update_signed_ack to peer */
 	peer_write(peer->pps, take(msg));
+
 }
 
 static void handle_peer_update_sig(struct eltoo_peer *peer, const u8 *msg)
@@ -1252,7 +1253,7 @@ static void handle_peer_update_sig_ack(struct eltoo_peer *peer, const u8 *msg)
     }
 
 	/* Tell master about things this locks in(and final signature), wait for response */
-	msg = got_signed_ack_msg(peer, peer->next_index++,
+	msg = got_signed_ack_msg(peer, peer->next_index,
 			     changed_htlcs, &peer->channel->eltoo_keyset.other_psig, &peer->channel->eltoo_keyset.self_psig,
                  &peer->channel->eltoo_keyset.session);
 	master_wait_sync_reply(tmpctx, peer, take(msg),
