@@ -720,6 +720,20 @@ bool channel_sending_update(struct channel *channel,
 	return true;
 }
 
+bool channel_rcvd_update(struct channel *channel, const struct htlc ***htlcs)
+{
+	int change;
+	const enum htlc_state states[] = {RCVD_REMOVE_HTLC,
+					   RCVD_ADD_HTLC};
+
+	status_debug("Received Update");
+	change = change_htlcs(channel, states, ARRAY_SIZE(states),
+			      htlcs, "rcvd_update");
+	if (!change)
+		return false;
+	return true;
+}
+
 bool channel_rcvd_update_sign_ack(struct channel *channel,
 				 const struct htlc ***htlcs)
 {
@@ -733,22 +747,6 @@ bool channel_rcvd_update_sign_ack(struct channel *channel,
 
 	/* FIXME what should this be? ... Their ack can queue changes on our side. */
 	return (change & HTLC_LOCAL_F_PENDING);
-}
-
-bool channel_rcvd_update(struct channel *channel, const struct htlc ***htlcs)
-{
-	int change;
-	const enum htlc_state states[] = { RCVD_ADD_UPDATE,
-					   RCVD_REMOVE_HTLC,
-					   RCVD_ADD_HTLC,
-					   RCVD_REMOVE_UPDATE };
-
-	status_debug("Received Update");
-	change = change_htlcs(channel, states, ARRAY_SIZE(states),
-			      htlcs, "rcvd_update");
-	if (!change)
-		return false;
-	return true;
 }
 
 size_t num_channel_htlcs(const struct channel *channel)

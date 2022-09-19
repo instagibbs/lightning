@@ -982,7 +982,8 @@ static void marshall_htlc_info(const tal_t *ctx,
 		} else {
 			struct changed_htlc c;
 			assert(htlc->state == RCVD_REMOVE_ACK
-			       || htlc->state == RCVD_ADD_ACK);
+			       || htlc->state == RCVD_ADD_ACK
+                   || htlc->state == SENT_REMOVE_REVOCATION /* SENT_REMOVE_ACK */);
 
 			c.id = htlc->id;
 			c.newstate = htlc->state;
@@ -1183,7 +1184,7 @@ static u8 *got_signed_ack_msg(struct eltoo_peer *peer,
 		struct changed_htlc c;
 		const struct htlc *htlc = changed_htlcs[i];
 
-		status_debug("HTLC %"PRIu64"[%s] => %s",
+		status_debug("got_signed_ack HTLC %"PRIu64"[%s] => %s",
 			     htlc->id, side_to_str(htlc_owner(htlc)),
 			     htlc_state_name(htlc->state));
 
