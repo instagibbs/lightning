@@ -161,6 +161,16 @@ setup_ln() {
     bt-cli generatetoaddress 6 $btcaddr
     invoice=$(l2-cli invoice 10000 hi "test" | jq -r .bolt11)
     l1-cli pay $invoice
+
+    invoice=$(l2-cli invoice 10000 hi2 "test" | jq -r .bolt11)
+    l1-cli pay $invoice
+
+    invoice=$(l2-cli invoice 1000000 hi3 "test" | jq -r .bolt11)
+    l1-cli pay $invoice
+
+    sleep 0.5
+    invoice=$(l1-cli invoice 1000000 hi! "test" | jq -r .bolt11)
+    l2-cli pay $invoice
 }
 
 stop_nodes() {
