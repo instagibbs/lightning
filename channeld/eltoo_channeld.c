@@ -1048,6 +1048,8 @@ static void send_update_sign_ack(struct eltoo_peer *peer,
 	/* Now we can finally send update_signed_ack to peer */
 	peer_write(peer->pps, take(msg));
 
+    /* FIXME Update HTLC states to reflect this and tell master? */
+
 }
 
 static void handle_peer_update_sig(struct eltoo_peer *peer, const u8 *msg)
@@ -1153,6 +1155,13 @@ static void handle_peer_update_sig(struct eltoo_peer *peer, const u8 *msg)
         status_failed(STATUS_FAIL_HSM_IO,
                   "Bad combine_psig reply %s", tal_hex(tmpctx, msg));
     }
+
+    
+    /* FIXME do we just bump on lightningd side? We are about to send an update, increment HTLCs to sent state
+        this was aping peer_sending_revocation
+    if (!channel_sending_sign_ack(peer->channel, &changed_htlcs)) {
+        status_debug("Failed to increment HTLC state after sending ACK...");
+    }*/
 
     /* Tell master about this exchange, then the peer.
        Note: We do not persist nonces, as they will not outlive

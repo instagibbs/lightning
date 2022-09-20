@@ -38,23 +38,24 @@ enum htlc_state {
 	HTLC_STATE_INVALID
 };
 
-/* Eltoo: Only first three states in htlc_state are used */
+/* Eltoo: Only first two amd last states in htlc_state are used */
 
 /* SENT_ADD_HTLC is same*/
 #define SENT_ADD_UPDATE (SENT_ADD_COMMIT)
-#define RCVD_ADD_ACK (RCVD_ADD_REVOCATION)
-
-/* SENT_REMOVE_HTLC is same */
-#define SENT_REMOVE_UPDATE (SENT_REMOVE_COMMIT)
-#define RCVD_REMOVE_ACK (RCVD_REMOVE_REVOCATION)
-
-/* RCVD_ADD_HTLC is same*/
-#define RCVD_ADD_UPDATE (RCVD_ADD_COMMIT)
-#define SENT_ADD_ACK (SENT_ADD_REVOCATION)
+#define RCVD_ADD_ACK (SENT_ADD_ACK_REVOCATION)
 
 /* RCVD_REMOVE_HTLC is same */
 #define RCVD_REMOVE_UPDATE (RCVD_REMOVE_COMMIT)
-#define SENT_REMOVE_ACK (SENT_REMOVE_REVOCATION)
+#define SENT_REMOVE_ACK (RCVD_REMOVE_ACK_REVOCATION)
+
+/* RCVD_ADD_HTLC is same*/
+#define RCVD_ADD_UPDATE (RCVD_ADD_COMMIT)
+#define SENT_ADD_ACK (RCVD_ADD_ACK_REVOCATION)
+
+/* SENT_REMOVE_HTLC is same */
+#define SENT_REMOVE_UPDATE (SENT_REMOVE_COMMIT)
+#define RCVD_REMOVE_ACK (SENT_REMOVE_ACK_REVOCATION)
+
 
 /* HTLC_STATE_INVALID is same */
 

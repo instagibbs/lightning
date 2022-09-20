@@ -174,6 +174,15 @@ bool channel_rcvd_update(struct channel *channel,
 			 const struct htlc ***htlcs);
 
 /**
+ * channel_sending_sign_ack: commit changed when sending ACK
+ * @channel: the channel
+ * @htlcs: initially-empty tal_arr() for htlcs which changed state.
+ *
+ */
+//bool channel_sending_sign_ack(struct channel *channel,
+//             const struct htlc ***htlcs):
+
+/**
  * num_channel_htlcs: how many (live) HTLCs at all in channel?
  * @channel: the channel
  */

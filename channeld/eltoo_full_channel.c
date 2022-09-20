@@ -624,18 +624,20 @@ static void htlc_incstate(struct channel *channel,
 	int preflags, postflags;
     enum side sidechanged = LOCAL;
 	const int committed_f = HTLC_FLAG(sidechanged, HTLC_F_COMMITTED);
+    /* We need to jump to real terminal state for eltoo, step 1(index 0) goes to 4 */
+    int state_gap = (channel->config[LOCAL].is_eltoo && (htlc->state % 5 == 1)) ? 3 : 1;
 
 	status_debug("htlc %"PRIu64": %s->%s", htlc->id,
 		     htlc_state_name(htlc->state),
-		     htlc_state_name(htlc->state+1));
+		     htlc_state_name(htlc->state+state_gap));
 
 	preflags = eltoo_htlc_state_flags(htlc->state);
-	postflags = eltoo_htlc_state_flags(htlc->state + 1);
+	postflags = eltoo_htlc_state_flags(htlc->state + state_gap);
 	/* You can't change sides. */
 	assert((preflags & (HTLC_LOCAL_F_OWNER|HTLC_REMOTE_F_OWNER))
 	       == (postflags & (HTLC_LOCAL_F_OWNER|HTLC_REMOTE_F_OWNER)));
 
-	htlc->state++;
+	htlc->state += state_gap;
 
 	/* If we've added or removed, adjust balances. */
 	if (!(preflags & committed_f) && (postflags & committed_f)) {
@@ -713,7 +715,7 @@ bool channel_sending_update(struct channel *channel,
 	status_debug("Trying update");
 
 	change = change_htlcs(channel, states_to_inc, ARRAY_SIZE(states_to_inc),
-			      htlcs, "sending_commit");
+			      htlcs, "sending_update");
 	if (!change)
 		return false;
 
@@ -733,6 +735,21 @@ bool channel_rcvd_update(struct channel *channel, const struct htlc ***htlcs)
 		return false;
 	return true;
 }
+
+/*
+bool channel_sending_sign_ack(struct channel *channel, const struct htlc ***htlcs)
+{
+	int change;
+	const enum htlc_state states[] = {RCVD_REMOVE_UPDATE,
+					   RCVD_ADD_UPDATE};
+
+	status_debug("Sending Signed ACK");
+	change = change_htlcs(channel, states, ARRAY_SIZE(states),
+			      htlcs, "sending_sign_ack");
+	if (!change)
+		return false;
+}
+*/	
 
 bool channel_rcvd_update_sign_ack(struct channel *channel,
 				 const struct htlc ***htlcs)

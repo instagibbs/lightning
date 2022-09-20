@@ -1,0 +1,22 @@
+crypto_scalarmult/curve25519/libsodium_la-scalarmult_curve25519.lo: \
+ ../../../../libsodium/src/libsodium/crypto_scalarmult/curve25519/scalarmult_curve25519.c \
+ /usr/include/stdc-predef.h \
+ ../../../../libsodium/src/libsodium/include/sodium/crypto_scalarmult_curve25519.h \
+ /usr/lib/gcc/x86_64-linux-gnu/13/include/stddef.h \
+ ../../../../libsodium/src/libsodium/include/sodium/export.h \
+ ../../../../libsodium/src/libsodium/include/sodium/private/implementations.h \
+ ../../../../libsodium/src/libsodium/crypto_scalarmult/curve25519/scalarmult_curve25519.h \
+ ../../../../libsodium/src/libsodium/include/sodium/runtime.h \
+ ../../../../libsodium/src/libsodium/crypto_scalarmult/curve25519/sandy2x/curve25519_sandy2x.h \
+ ../../../../libsodium/src/libsodium/crypto_scalarmult/curve25519/ref10/x25519_ref10.h \
+ ../../../../libsodium/src/libsodium/crypto_scalarmult/curve25519/ref10/../scalarmult_curve25519.h
+/usr/include/stdc-predef.h:
+../../../../libsodium/src/libsodium/include/sodium/crypto_scalarmult_curve25519.h:
+/usr/lib/gcc/x86_64-linux-gnu/13/include/stddef.h:
+../../../../libsodium/src/libsodium/include/sodium/export.h:
+../../../../libsodium/src/libsodium/include/sodium/private/implementations.h:
+../../../../libsodium/src/libsodium/crypto_scalarmult/curve25519/scalarmult_curve25519.h:
+../../../../libsodium/src/libsodium/include/sodium/runtime.h:
+../../../../libsodium/src/libsodium/crypto_scalarmult/curve25519/sandy2x/curve25519_sandy2x.h:
+../../../../libsodium/src/libsodium/crypto_scalarmult/curve25519/ref10/x25519_ref10.h:
+../../../../libsodium/src/libsodium/crypto_scalarmult/curve25519/ref10/../scalarmult_curve25519.h:
