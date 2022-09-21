@@ -1,11 +1,14 @@
 #include "config.h"
 #include <bitcoin/script.h>
 #include <ccan/crypto/hkdf_sha256/hkdf_sha256.h>
+#include <ccan/crypto/siphash24/siphash24.h>
+#include <ccan/htable/htable_type.h>
 #include <ccan/tal/str/str.h>
 #include <common/bolt12_merkle.h>
 #include <common/hash_u5.h>
 #include <common/key_derive.h>
 #include <common/lease_rates.h>
+#include <common/pseudorand.h>
 #include <common/type_to_string.h>
 #include <common/update_tx.h>
 #include <hsmd/capabilities.h>
@@ -26,20 +29,41 @@ struct privkey *dev_force_privkey;
 struct secret *dev_force_bip32_seed;
 #endif
 
+struct musig_state {
+    struct channel_id channel_id;
+    secp256k1_musig_secnonce sec_nonce;
+};
+
+size_t channel_id_key(const struct channel_id *id)
+{   
+    struct siphash24_ctx ctx;
+    siphash24_init(&ctx, siphash_seed());
+    /* channel doesn't move while in this hash, so we just hash pointer. */
+    siphash24_update(&ctx, id->id, sizeof(id->id));
+
+    return siphash24_done(&ctx);
+}
+
+static inline const struct channel_id *keyof_musig_state(const struct musig_state *state)
+{
+    return &state->channel_id;
+}
+
+static inline bool musig_state_eq(const struct musig_state *state, const struct channel_id *id)
+{   
+    return channel_id_eq(&state->channel_id, id);
+} 
+
+HTABLE_DEFINE_TYPE(struct musig_state, keyof_musig_state, channel_id_key, musig_state_eq,
+           musig_state_map);
+
 /*~ Nobody will ever find it here!  hsm_secret is our root secret, the bip32
  * tree and bolt12 payer_id keys are derived from that, and cached here. */
 struct {
 	struct secret hsm_secret;
 	struct ext_key bip32;
 	secp256k1_keypair bolt12;
-    /*
-     * FIXME HACK: We only support on eltoo channel, to avoid unbounded state.
-     * What's the best architecture to support unbounded numbers of channels?
-     * We're just going to blindly assume this is the nonce for the eltoo channel
-     * signature operation....
-     */
-    struct channel_id musig_channel;
-    secp256k1_musig_secnonce sec_nonce;
+    struct musig_state_map musig_map;
 } secretstuff;
 
 /* Have we initialized the secretstuff? */
@@ -111,6 +135,7 @@ bool hsmd_check_client_capabilities(struct hsmd_client *client,
 	case WIRE_HSMD_VALIDATE_COMMITMENT_TX:
 	case WIRE_HSMD_VALIDATE_REVOCATION:
     case WIRE_HSMD_GEN_NONCE:
+    case WIRE_HSMD_MIGRATE_NONCE:
     case WIRE_HSMD_PSIGN_UPDATE_TX:
     case WIRE_HSMD_COMBINE_PSIG:
     case WIRE_HSMD_READY_ELTOO_CHANNEL:
@@ -167,6 +192,7 @@ bool hsmd_check_client_capabilities(struct hsmd_client *client,
     case WIRE_HSMD_COMBINE_PSIG_REPLY:
     case WIRE_HSMD_VALIDATE_UPDATE_TX_PSIG_REPLY:
     case WIRE_HSMD_GEN_NONCE_REPLY:
+    case WIRE_HSMD_MIGRATE_NONCE_REPLY:
 		break;
 	}
 	return false;
@@ -798,27 +824,59 @@ static u8 *handle_get_channel_basepoints(struct hsmd_client *c,
 static u8 *handle_gen_nonce(struct hsmd_client *c,
 					 const u8 *msg_in)
 {
-    struct channel_id channel_id;
 	struct secret channel_seed;
 	struct secrets secrets;
     struct nonce local_pub_nonce;
+    struct channel_id channel_id;
+    struct musig_state *new_musig_state;
 
 	if (!fromwire_hsmd_gen_nonce(msg_in, &channel_id))
 		return hsmd_status_malformed_request(c, msg_in);
+
+    /* Shouldn't need to be freed, aside from channel teardown */
+    new_musig_state = tal(NULL, struct musig_state);
+    new_musig_state->channel_id = channel_id;
 
     /* Generate privkey for additional nonce entropy */
 	get_channel_seed(&c->id, c->dbid, &channel_seed);
 	derive_basepoints(&channel_seed,
 			  NULL, NULL, &secrets, NULL);
 
-    /* Fill and return own next_nonce FIXME add in more entropy */
-    bipmusig_gen_nonce(&secretstuff.sec_nonce,
+    /* Fill and return own next_nonce */
+    bipmusig_gen_nonce(&new_musig_state->sec_nonce,
            &local_pub_nonce.nonce,
            &secrets.funding_privkey,
            NULL /* keyagg_cache */,
            NULL /* msg32 */);
 
+    /* Store secret nonce in hash table */
+    musig_state_map_add(&secretstuff.musig_map, new_musig_state);
+
 	return towire_hsmd_gen_nonce_reply(NULL, &local_pub_nonce);
+}
+
+/* This is called after handle_gen_nonce, once channel id is permanently set */
+static u8 *handle_migrate_nonce(struct hsmd_client *c,
+					 const u8 *msg_in)
+{
+    struct channel_id temp_id, perm_id;
+    struct musig_state *musig_lookup;
+
+	if (!fromwire_hsmd_migrate_nonce(msg_in, &temp_id, &perm_id))
+		return hsmd_status_malformed_request(c, msg_in);
+
+    musig_lookup = musig_state_map_get(&secretstuff.musig_map, &temp_id);
+    if (!musig_lookup) {
+		return hsmd_status_bad_request_fmt(c, msg_in,
+						   "Nonce for channel migration not found");
+    }
+
+    /* Update channel id, move keys */
+    musig_lookup->channel_id = perm_id;
+    musig_state_map_add(&secretstuff.musig_map, musig_lookup);
+    musig_state_map_delkey(&secretstuff.musig_map, &temp_id);
+
+	return towire_hsmd_migrate_nonce_reply(NULL);
 }
 
 /*~ The client has asked us to extract the shared secret from an EC Diffie
@@ -1443,6 +1501,7 @@ static u8 *handle_psign_update_tx(struct hsmd_client *c, const u8 *msg_in)
     const secp256k1_musig_pubnonce *pubnonce_ptrs[2];
     u8 *annex;
     struct sha256_double hash_out;
+    struct musig_state *musig_state_lookup;
 
     int i;
 
@@ -1494,8 +1553,15 @@ static u8 *handle_psign_update_tx(struct hsmd_client *c, const u8 *msg_in)
 
     /* FIXME assert we have secnonce already... though if we don't this call will already crash... */
 
+    /* Find secnonce in map */
+    musig_state_lookup = musig_state_map_get(&secretstuff.musig_map, &channel_id);
+    if (!musig_state_lookup) {
+		return hsmd_status_bad_request(c, msg_in,
+					       "No secret nonce found for this musig request");
+    }
+
     bipmusig_partial_sign(&secrets.funding_privkey,
-           &secretstuff.sec_nonce,
+           &musig_state_lookup->sec_nonce,
            pubnonce_ptrs,
            /* num_signers */ 2,
            &hash_out,
@@ -1504,7 +1570,7 @@ static u8 *handle_psign_update_tx(struct hsmd_client *c, const u8 *msg_in)
            &p_sig.p_sig);
 
     /* Refill and return own next_nonce, using RNG+extra stuff for more security */
-    bipmusig_gen_nonce(&secretstuff.sec_nonce,
+    bipmusig_gen_nonce(&musig_state_lookup->sec_nonce,
            &local_nonce.nonce,
            &secrets.funding_privkey,
            &keyagg_cache,
@@ -1835,6 +1901,8 @@ u8 *hsmd_handle_client_message(const tal_t *ctx, struct hsmd_client *client,
         break;
     case WIRE_HSMD_GEN_NONCE:
         return handle_gen_nonce(client, msg);
+    case WIRE_HSMD_MIGRATE_NONCE:
+        return handle_migrate_nonce(client, msg);
     /* Eltoo stuff ends */
 	case WIRE_HSMD_DEV_MEMLEAK:
 	case WIRE_HSMD_ECDH_RESP:
@@ -1865,6 +1933,7 @@ u8 *hsmd_handle_client_message(const tal_t *ctx, struct hsmd_client *client,
     case WIRE_HSMD_COMBINE_PSIG_REPLY:
     case WIRE_HSMD_VALIDATE_UPDATE_TX_PSIG_REPLY:
     case WIRE_HSMD_GEN_NONCE_REPLY:
+    case WIRE_HSMD_MIGRATE_NONCE_REPLY:
 		break;
 	}
 	return hsmd_status_bad_request(client, msg, "Unknown request");
@@ -1984,6 +2053,9 @@ u8 *hsmd_init(struct secret hsm_secret,
 				     child_extkey.priv_key+1) != 1)
 		hsmd_status_failed(STATUS_FAIL_INTERNAL_ERROR,
 				   "Can't derive bolt12 keypair");
+
+    /* Finally, initialize a hash table for music state, one entry per channel */
+    musig_state_map_init(&secretstuff.musig_map);
 
 	/* Now we can consider ourselves initialized, and we won't get
 	 * upset if we get a non-init message. */

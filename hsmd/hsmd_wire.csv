@@ -586,10 +586,16 @@ msgdata,hsmd_combine_psig,inner_pubkey,pubkey,
 msgtype,hsmd_combine_psig_reply,192
 msgdata,hsmd_combine_psig_reply,sig,bip340sig,
 
-# Get musig public nonce for channel... FIXME channel_id completely
-# ignored for now until storage model is figured
+# Get musig public nonce for channel this is temporary id
 msgtype,hsmd_gen_nonce,96
 msgdata,hsmd_gen_nonce,channel_id,channel_id,
 
 msgtype,hsmd_gen_nonce_reply,196
 msgdata,hsmd_gen_nonce_reply,pubnonce,nonce,
+
+# Migrates over secret nonce as soon as channel id becomes stable
+msgtype,hsmd_migrate_nonce,97
+msgdata,hsmd_migrate_nonce,temp_id,channel_id,
+msgdata,hsmd_migrate_nonce,final_id,channel_id,
+
+msgtype,hsmd_migrate_nonce_reply,197

@@ -498,6 +498,17 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
 	 * `channeld` which lives in channeld/full_channel. */
 	derive_channel_id(&cid, &state->funding);
 
+    /* Inform HSM we know of final channel id immediately before any attempts to sign */
+	msg = towire_hsmd_migrate_nonce(NULL,
+						   &state->channel_id,
+                           &cid);
+	wire_sync_write(HSM_FD, take(msg));
+
+	msg = wire_sync_read(tmpctx, HSM_FD);
+	if (!fromwire_hsmd_migrate_nonce_reply(msg))
+		status_failed(STATUS_FAIL_HSM_IO, "Bad migrate_nonce_reply %s",
+			      tal_hex(tmpctx, msg));
+
 	state->channel = new_initial_eltoo_channel(state,
 					     &cid,
 					     &state->funding,
@@ -559,7 +570,7 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
 	 * our funding key, it just needs the remote funding key to create the
 	 * tapscripts. */
 	msg = towire_hsmd_psign_update_tx(NULL,
-                           &state->channel_id,
+                           &cid, /* We track signature sessions via "final" channel id only */
 						   *update_tx,
                            *settle_tx,
 						   &state->their_funding_pubkey,
@@ -1073,6 +1084,18 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 	 */
 	derive_channel_id(&state->channel_id, &state->funding);
 
+    /* Inform HSM we know of final channel id immediately before any attempts to sign */
+	msg = towire_hsmd_migrate_nonce(NULL,
+                           &id_in, /* temp id */
+						   &state->channel_id);
+	wire_sync_write(HSM_FD, take(msg));
+
+	msg = wire_sync_read(tmpctx, HSM_FD);
+	if (!fromwire_hsmd_migrate_nonce_reply(msg))
+		status_failed(STATUS_FAIL_HSM_IO, "Bad migrate_nonce_reply %s",
+			      tal_hex(tmpctx, msg));
+
+
 	/*~ We generate the `funding_signed` message here, since we have all
 	 * the data and it's only applicable in the fundee case.
 	 *
@@ -1091,7 +1114,7 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 
 	/* Make HSM sign it */
 	msg = towire_hsmd_psign_update_tx(NULL,
-                           &state->channel_id,
+                           &state->channel_id, /* Final channel_id just derived above */
 						   update_tx,
                            settle_tx,
 						   &state->their_funding_pubkey,
