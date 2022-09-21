@@ -150,7 +150,7 @@ start_ln() {
 
 setup_ln() {
     l2id=$(l2-cli getinfo | jq -r .id)
-    #l3id=$(l3-cli getinfo | jq -r .id)
+    l3id=$(l3-cli getinfo | jq -r .id)
     l1addr=$(l1-cli newaddr | jq -r .bech32)
     l2addr=$(l2-cli newaddr | jq -r .bech32)
     bt-cli loadwallet "default"
@@ -158,11 +158,11 @@ setup_ln() {
     bt-cli sendtoaddress $l1addr 1
     bt-cli sendtoaddress $l2addr 1
     l1-cli connect $l2id@localhost:7272
-    #l2-cli connect $l3id@localhost:7373
+    l2-cli connect $l3id@localhost:7373
     bt-cli generatetoaddress 6 $btcaddr
     sleep 5
     l1-cli fundchannel $l2id 10000 normal false
-    #l2-cli fundchannel $l3id 10000 normal false
+    l2-cli fundchannel $l3id 10000 normal false
     bt-cli generatetoaddress 6 $btcaddr
 
     invoice=$(l2-cli invoice 10000 hi "test" | jq -r .bolt11)
@@ -182,7 +182,7 @@ setup_ln() {
     #invoice=$(l3-cli invoice 100000 hi "test" | jq -r .bolt11)
     #l2-cli pay $invoice
 
-    #invoice=$(l3-cli invoice 10000 hi "test" | jq -r .bolt11)
+    #invoice=$(l3-cli invoice 10000 hi2 "test" | jq -r .bolt11)
     #l1-cli pay $invoice
 }
 
