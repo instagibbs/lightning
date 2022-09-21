@@ -840,7 +840,8 @@ static void send_update(struct eltoo_peer *peer)
             update_and_settle_txs[0],
             update_and_settle_txs[1],
             &peer->channel->eltoo_keyset.other_funding_key,
-            &peer->channel->eltoo_keyset.other_next_nonce);
+            &peer->channel->eltoo_keyset.other_next_nonce,
+            &peer->channel->eltoo_keyset.self_next_nonce);
 
     status_debug("partial signature req %s on update tx %s, settle tx %s, using our key %s, their key %s, inner pubkey %s, OLD our nonce %s, OLD their nonce %s",
              type_to_string(tmpctx, struct partial_sig, &peer->channel->eltoo_keyset.self_psig),
@@ -1097,7 +1098,8 @@ static void handle_peer_update_sig(struct eltoo_peer *peer, const u8 *msg)
                            update_and_settle_txs[0],
                            update_and_settle_txs[1],
                            &peer->channel->eltoo_keyset.other_funding_key,
-                           &peer->channel->eltoo_keyset.other_next_nonce);
+                           &peer->channel->eltoo_keyset.other_next_nonce,
+                           &peer->channel->eltoo_keyset.self_next_nonce);
 
     status_debug("partial signature req %s on update tx %s, settle tx %s, using our key %s, their key %s, inner pubkey %s, OLD our nonce %s, OLD their nonce %s",
              type_to_string(tmpctx, struct partial_sig, &peer->channel->eltoo_keyset.self_psig),

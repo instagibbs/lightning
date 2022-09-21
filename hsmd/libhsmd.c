@@ -40,7 +40,6 @@ struct {
      */
     struct channel_id musig_channel;
     secp256k1_musig_secnonce sec_nonce;
-    struct nonce pub_nonce;
 } secretstuff;
 
 /* Have we initialized the secretstuff? */
@@ -802,6 +801,7 @@ static u8 *handle_gen_nonce(struct hsmd_client *c,
     struct channel_id channel_id;
 	struct secret channel_seed;
 	struct secrets secrets;
+    struct nonce local_pub_nonce;
 
 	if (!fromwire_hsmd_gen_nonce(msg_in, &channel_id))
 		return hsmd_status_malformed_request(c, msg_in);
@@ -813,12 +813,12 @@ static u8 *handle_gen_nonce(struct hsmd_client *c,
 
     /* Fill and return own next_nonce FIXME add in more entropy */
     bipmusig_gen_nonce(&secretstuff.sec_nonce,
-           &secretstuff.pub_nonce.nonce,
+           &local_pub_nonce.nonce,
            &secrets.funding_privkey,
            NULL /* keyagg_cache */,
            NULL /* msg32 */);
 
-	return towire_hsmd_gen_nonce_reply(NULL, &secretstuff.pub_nonce);
+	return towire_hsmd_gen_nonce_reply(NULL, &local_pub_nonce);
 }
 
 /*~ The client has asked us to extract the shared secret from an EC Diffie
@@ -1432,7 +1432,7 @@ static u8 *handle_psign_update_tx(struct hsmd_client *c, const u8 *msg_in)
 	struct bitcoin_tx *update_tx, *settle_tx;
 	struct partial_sig p_sig;
 	struct secrets secrets;
-    struct nonce remote_nonce;
+    struct nonce remote_nonce, local_nonce;
     struct channel_id channel_id;
     struct musig_session session;
 
@@ -1451,7 +1451,8 @@ static u8 *handle_psign_update_tx(struct hsmd_client *c, const u8 *msg_in)
 					     &update_tx,
                          &settle_tx,
 					     &remote_funding_pubkey,
-                         &remote_nonce))
+                         &remote_nonce,
+                         &local_nonce))
 		return hsmd_status_malformed_request(c, msg_in);
 
 	update_tx->chainparams = c->chainparams;
@@ -1489,7 +1490,7 @@ static u8 *handle_psign_update_tx(struct hsmd_client *c, const u8 *msg_in)
     printf("\n");
 
     pubnonce_ptrs[0] = &remote_nonce.nonce;
-    pubnonce_ptrs[1] = &secretstuff.pub_nonce.nonce;
+    pubnonce_ptrs[1] = &local_nonce.nonce;
 
     /* FIXME assert we have secnonce already... though if we don't this call will already crash... */
 
@@ -1504,12 +1505,12 @@ static u8 *handle_psign_update_tx(struct hsmd_client *c, const u8 *msg_in)
 
     /* Refill and return own next_nonce, using RNG+extra stuff for more security */
     bipmusig_gen_nonce(&secretstuff.sec_nonce,
-           &secretstuff.pub_nonce.nonce,
+           &local_nonce.nonce,
            &secrets.funding_privkey,
            &keyagg_cache,
            hash_out.sha.u.u8);
 
-	return towire_hsmd_psign_update_tx_reply(NULL, &p_sig, &session, &secretstuff.pub_nonce, &inner_pubkey);
+	return towire_hsmd_psign_update_tx_reply(NULL, &p_sig, &session, &local_nonce, &inner_pubkey);
 }
 
 

@@ -557,6 +557,7 @@ msgdata,hsmd_psign_update_tx,update_tx,bitcoin_tx,
 msgdata,hsmd_psign_update_tx,settle_tx,bitcoin_tx,
 msgdata,hsmd_psign_update_tx,remote_funding_key,pubkey,
 msgdata,hsmd_psign_update_tx,remote_nonce,nonce,
+msgdata,hsmd_psign_update_tx,local_nonce,nonce,
 
 msgtype,hsmd_psign_update_tx_reply,162
 msgdata,hsmd_psign_update_tx_reply,update_psig,partial_sig,

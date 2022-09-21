@@ -563,7 +563,8 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
 						   *update_tx,
                            *settle_tx,
 						   &state->their_funding_pubkey,
-                           &state->channel->eltoo_keyset.other_next_nonce);
+                           &state->channel->eltoo_keyset.other_next_nonce,
+                           &state->channel->eltoo_keyset.self_next_nonce);
 	wire_sync_write(HSM_FD, take(msg));
 
 	status_debug("partial signature req on update tx %s, settlement tx %s, using our keys %s:%s, their keys %s:%s, our nonce %s, their nonce %s",
@@ -1094,7 +1095,8 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 						   update_tx,
                            settle_tx,
 						   &state->their_funding_pubkey,
-                           &state->channel->eltoo_keyset.other_next_nonce);
+                           &state->channel->eltoo_keyset.other_next_nonce,
+                           &state->channel->eltoo_keyset.self_next_nonce);
 	wire_sync_write(HSM_FD, take(msg));
 
 	status_debug("partial signature req on tx %s, using our keys %s:%s, their keys %s:%s, our nonce %s, their nonce %s",
