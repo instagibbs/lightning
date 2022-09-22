@@ -109,7 +109,7 @@ start_nodes() {
 
 		# Start the lightning nodes
 		test -f "/tmp/l$i-$network/lightningd-$network.pid" || \
-			"$LIGHTNINGD" "--lightning-dir=/tmp/l$i-$network" & #"--dev-debugger=eltoo_channeld" &
+			"$LIGHTNINGD" "--lightning-dir=/tmp/l$i-$network" & # "--dev-debugger=" &
 		# shellcheck disable=SC2139 disable=SC2086
 		alias l$i-cli="$LCLI --lightning-dir=/tmp/l$i-$network"
 		# shellcheck disable=SC2139 disable=SC2086
@@ -159,6 +159,7 @@ setup_ln() {
     bt-cli sendtoaddress $l2addr 1
     l1-cli connect $l2id@localhost:7272
     l2-cli connect $l3id@localhost:7373
+    l1-cli connect $l3id@localhost:7373
     bt-cli generatetoaddress 6 $btcaddr
     sleep 5
     l1-cli fundchannel $l2id 10000 normal false
@@ -179,11 +180,15 @@ setup_ln() {
     l2-cli pay $invoice
 
 
-    #invoice=$(l3-cli invoice 100000 hi "test" | jq -r .bolt11)
-    #l2-cli pay $invoice
+    invoice=$(l3-cli invoice 100000 hi "test" | jq -r .bolt11)
+    l2-cli pay $invoice
 
-    #invoice=$(l3-cli invoice 10000 hi2 "test" | jq -r .bolt11)
-    #l1-cli pay $invoice
+    # We aren't announcing channels, yet, we're considered a "dead
+    # end", so shove in routehint
+    l3scid=$(l3-cli listchannels | jq -r .channels[0].short_channel_id)
+
+    invoice=$(l3-cli -k invoice msatoshi=10000 label=hi2 description="test" exposeprivatechannels="[${l3scid}]" | jq -r .bolt11)
+    l1-cli pay $invoice
 }
 
 stop_nodes() {
