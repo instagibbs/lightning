@@ -148,6 +148,28 @@ start_ln() {
 	echo "	bt-cli, stop_ln"
 }
 
+onchain_ln() {
+    # Test eltoo_onchaind handling
+    l1addr=$(l1-cli newaddr | jq -r .bech32)
+    l2id=$(l2-cli getinfo | jq -r .id)
+    bt-cli loadwallet "default"
+    btcaddr=$(bt-cli getnewaddress)
+    bt-cli sendtoaddress $l1addr 1
+    l1-cli connect $l2id@localhost:7272
+    bt-cli generatetoaddress 6 $btcaddr
+    sleep 5
+    l1-cli fundchannel $l2id 10000 normal false
+    bt-cli generatetoaddress 6 $btcaddr
+    sleep 2
+    invoice=$(l2-cli invoice 10000 hi "test" | jq -r .bolt11)
+    l1-cli pay $invoice
+
+    UPDATE_HEX=FIXME get this from rpc endpoint with things re-bound
+    txid=$(bt-cli decoderawtransaction $UPDATE_HEX | jq -r .txid)
+    bt-cli prioritisetransaction $txid 0 100000000
+    bt-cli sendrawtransaction $UPDATE_HEX
+}
+
 setup_ln() {
     l2id=$(l2-cli getinfo | jq -r .id)
     l3id=$(l3-cli getinfo | jq -r .id)

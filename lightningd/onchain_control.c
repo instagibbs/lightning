@@ -164,6 +164,30 @@ static void handle_onchain_init_reply(struct channel *channel, const u8 *msg)
 	onchaind_tell_fulfill(channel);
 }
 
+static void handle_eltoo_onchain_init_reply(struct channel *channel, const u8 *msg)
+{
+
+    /* FIXME any information required in reply? */
+	if (!fromwire_eltoo_onchaind_init_reply(msg)) {
+		channel_internal_error(channel, "Invalid eltoo_onchaind_init_reply %s",
+				       tal_hex(tmpctx, msg));
+		return;
+	}
+
+	/* FIXME: We may already be ONCHAIN state when we implement restart! */
+	channel_set_state(channel,
+			  FUNDING_SPEND_SEEN,
+			  ONCHAIN,
+			  REASON_UNKNOWN,
+			  "Onchain init reply");
+
+    /* Send eltoo_onchaind any other mesages required */
+
+	/* Tell it about any preimages we know. */
+	onchaind_tell_fulfill(channel);
+}
+
+
 /**
  * Notify onchaind about the depth change of the watched tx.
  */
@@ -1715,10 +1739,54 @@ static unsigned int onchain_msg(struct subd *sd, const u8 *msg, const int *fds U
 	case WIRE_ONCHAIND_DEV_MEMLEAK_REPLY:
 	case WIRE_ONCHAIND_SPENT_REPLY:
 		break;
+    /* These are illegal */
+    case WIRE_ELTOO_ONCHAIND_INIT:
+    case WIRE_ELTOO_ONCHAIND_INIT_REPLY:
+        abort();
 	}
 
 	return 0;
 }
+
+static unsigned int eltoo_onchain_msg(struct subd *sd, const u8 *msg, const int *fds UNUSED)
+{
+	enum onchaind_wire t = fromwire_peektype(msg);
+
+	switch (t) {
+	case WIRE_ELTOO_ONCHAIND_INIT_REPLY:
+		handle_eltoo_onchain_init_reply(sd->channel, msg);
+		break;
+
+	case WIRE_ONCHAIND_BROADCAST_TX:
+   	case WIRE_ONCHAIND_UNWATCH_TX:
+ 	case WIRE_ONCHAIND_EXTRACTED_PREIMAGE:
+	case WIRE_ONCHAIND_MISSING_HTLC_OUTPUT:
+	case WIRE_ONCHAIND_HTLC_TIMEOUT:
+	case WIRE_ONCHAIND_ALL_IRREVOCABLY_RESOLVED:
+	case WIRE_ONCHAIND_ADD_UTXO:
+	case WIRE_ONCHAIND_ANNOTATE_TXIN:
+	case WIRE_ONCHAIND_ANNOTATE_TXOUT:
+	case WIRE_ONCHAIND_NOTIFY_COIN_MVT:
+        /* FIXME implement */
+        abort();
+	/* We send these, not receive them */
+	case WIRE_ONCHAIND_INIT:
+	case WIRE_ONCHAIND_SPENT:
+	case WIRE_ONCHAIND_DEPTH:
+	case WIRE_ONCHAIND_HTLCS:
+	case WIRE_ONCHAIND_KNOWN_PREIMAGE:
+	case WIRE_ONCHAIND_DEV_MEMLEAK:
+	case WIRE_ONCHAIND_DEV_MEMLEAK_REPLY:
+    case WIRE_ELTOO_ONCHAIND_INIT:
+		break;
+    /* These are illegal */
+    case WIRE_ONCHAIND_INIT_REPLY:
+        abort();
+	}
+
+	return 0;
+}
+
 
 /* Only error onchaind can get is if it dies. */
 static void onchain_error(struct channel *channel,
@@ -1745,6 +1813,10 @@ enum watch_result onchaind_funding_spent(struct channel *channel,
 					 const struct bitcoin_tx *tx,
 					 u32 blockheight)
 {
+    if (channel->our_config.is_eltoo) {
+        return eltoo_onchaind_funding_spent(channel, tx, blockheight);
+    }
+
 	u8 *msg;
 	struct bitcoin_txid our_last_txid;
 	struct lightningd *ld = channel->peer->ld;
@@ -1878,6 +1950,67 @@ enum watch_result onchaind_funding_spent(struct channel *channel,
 	} else {
 		watch_tx_and_outputs(channel, tx);
 	}
+
+	/* We keep watching until peer finally deleted, for reorgs. */
+	return KEEP_WATCHING;
+}
+
+/* With a reorg, this can get called multiple times; each time we'll kill
+ * onchaind (like any other owner), and restart */
+enum watch_result eltoo_onchaind_funding_spent(struct channel *channel,
+					 const struct bitcoin_tx *tx,
+					 u32 blockheight)
+{
+	u8 *msg;
+	struct lightningd *ld = channel->peer->ld;
+	int hsmfd;
+	enum state_change reason;
+
+	/* use REASON_ONCHAIN or closer's reason, if known */
+	reason = REASON_ONCHAIN;
+	if (channel->closer != NUM_SIDES)
+		reason = REASON_UNKNOWN;  /* will use last cause as reason */
+
+	channel_fail_permanent(channel, reason, "Funding transaction spent");
+
+	/* We could come from almost any state. */
+	/* NOTE(mschmoock) above comment is wrong, since we failed above! */
+	channel_set_state(channel,
+			  channel->state,
+			  FUNDING_SPEND_SEEN,
+			  reason,
+			  "Onchain funding spend");
+
+	hsmfd = hsm_get_client_fd(ld, &channel->peer->id,
+				  channel->dbid,
+				  HSM_CAP_SIGN_ONCHAIN_TX
+				  | HSM_CAP_COMMITMENT_POINT);
+
+
+	channel_set_owner(channel, new_channel_subd(channel, ld,
+						    "lightning_eltoo_onchaind",
+						    channel,
+						    &channel->peer->id,
+						    channel->log, false,
+						    onchaind_wire_name, /* N.B. Reusing onchaind */
+						    eltoo_onchain_msg,
+						    onchain_error,
+						    channel_set_billboard,
+						    take(&hsmfd),
+						    NULL));
+
+	if (!channel->owner) {
+		log_broken(channel->log, "Could not subdaemon onchain: %s",
+			   strerror(errno));
+		return KEEP_WATCHING;
+	}
+
+    /* Hello World :) */
+	msg = towire_eltoo_onchaind_init(channel,
+                    tx_parts_from_wally_tx(tmpctx, tx->wtx, -1, -1));
+	subd_send_msg(channel->owner, take(msg));
+
+	watch_tx_and_outputs(channel, tx);
 
 	/* We keep watching until peer finally deleted, for reorgs. */
 	return KEEP_WATCHING;
