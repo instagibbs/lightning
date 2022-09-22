@@ -164,10 +164,13 @@ onchain_ln() {
     invoice=$(l2-cli invoice 10000 hi "test" | jq -r .bolt11)
     l1-cli pay $invoice
 
-    UPDATE_HEX=FIXME get this from rpc endpoint with things re-bound
+    # For now, grab first update tx that is fully signed in logs
+    # "Signed update transaction" and "Settle transaction 0"
+    # UPDATE_HEX=FIXME get this from rpc endpoint with things re-bound
     txid=$(bt-cli decoderawtransaction $UPDATE_HEX | jq -r .txid)
     bt-cli prioritisetransaction $txid 0 100000000
     bt-cli sendrawtransaction $UPDATE_HEX
+    bt-cli generatetoaddress 1 $btcaddr
 }
 
 setup_ln() {

@@ -1246,7 +1246,6 @@ static void handle_peer_update_sig_ack(struct eltoo_peer *peer, const u8 *msg)
                             peer->channel->last_unsigned_update,
                             peer->channel->last_unsigned_settle,
                             &peer->channel->eltoo_keyset.inner_pubkey);
-                           
     wire_sync_write(HSM_FD, take(comb_msg));
     comb_msg = wire_sync_read(tmpctx, HSM_FD);
 
