@@ -166,27 +166,27 @@ setup_ln() {
     l2-cli fundchannel $l3id 10000 normal false
     bt-cli generatetoaddress 6 $btcaddr
 
+    sleep 0.5
     invoice=$(l2-cli invoice 10000 hi "test" | jq -r .bolt11)
     l1-cli pay $invoice
-
+    sleep 0.5
     invoice=$(l2-cli invoice 10000 hi2 "test" | jq -r .bolt11)
     l1-cli pay $invoice
-
+    sleep 0.5
     invoice=$(l2-cli invoice 1000000 hi3 "test" | jq -r .bolt11)
     l1-cli pay $invoice
-
     sleep 0.5
     invoice=$(l1-cli invoice 500000 hi "test" | jq -r .bolt11)
     l2-cli pay $invoice
-
-
+    sleep 0.5
     invoice=$(l3-cli invoice 100000 hi "test" | jq -r .bolt11)
     l2-cli pay $invoice
 
     # We aren't announcing channels, yet, we're considered a "dead
     # end", so shove in routehint
+    sleep 0.5
     l3scid=$(l3-cli listchannels | jq -r .channels[0].short_channel_id)
-
+    echo $l3scid
     invoice=$(l3-cli -k invoice msatoshi=10000 label=hi2 description="test" exposeprivatechannels="[${l3scid}]" | jq -r .bolt11)
     l1-cli pay $invoice
 }
