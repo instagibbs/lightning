@@ -2006,7 +2006,7 @@ enum watch_result eltoo_onchaind_funding_spent(struct channel *channel,
 	}
 
     /* Hello World :) */
-	msg = towire_eltoo_onchaind_init(channel,
+	msg = towire_eltoo_onchaind_init(channel, chainparams,
                     tx_parts_from_wally_tx(tmpctx, tx->wtx, -1, -1));
 	subd_send_msg(channel->owner, take(msg));
 

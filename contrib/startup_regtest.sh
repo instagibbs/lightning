@@ -109,7 +109,7 @@ start_nodes() {
 
 		# Start the lightning nodes
 		test -f "/tmp/l$i-$network/lightningd-$network.pid" || \
-			"$LIGHTNINGD" "--lightning-dir=/tmp/l$i-$network" & # "--dev-debugger=" &
+			"$LIGHTNINGD" "--lightning-dir=/tmp/l$i-$network" "--dev-debugger=eltoo_onchaind" &
 		# shellcheck disable=SC2139 disable=SC2086
 		alias l$i-cli="$LCLI --lightning-dir=/tmp/l$i-$network"
 		# shellcheck disable=SC2139 disable=SC2086
@@ -160,13 +160,15 @@ onchain_ln() {
     sleep 5
     l1-cli fundchannel $l2id 10000 normal false
     bt-cli generatetoaddress 6 $btcaddr
-    sleep 2
+    sleep 5
     invoice=$(l2-cli invoice 10000 hi "test" | jq -r .bolt11)
     l1-cli pay $invoice
 
     # For now, grab first update tx that is fully signed in logs
     # "Signed update transaction" and "Settle transaction 0"
     # UPDATE_HEX=FIXME get this from rpc endpoint with things re-bound
+    # UPDATE_PSBT=FIXME
+    UPDATE_HEX=$(bt-cli finalizepsbt $UPDATE_PSBT | jq -r .hex )
     txid=$(bt-cli decoderawtransaction $UPDATE_HEX | jq -r .txid)
     bt-cli prioritisetransaction $txid 0 100000000
     bt-cli sendrawtransaction $UPDATE_HEX
