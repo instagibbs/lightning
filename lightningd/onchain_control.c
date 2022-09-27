@@ -1971,7 +1971,10 @@ enum watch_result eltoo_onchaind_funding_spent(struct channel *channel,
 	if (channel->closer != NUM_SIDES)
 		reason = REASON_UNKNOWN;  /* will use last cause as reason */
 
+    /* FIXME need to figure out what part of this to do vs delegate to onchaind...
+        currently this crashes hard trying to "sign and submit" last tx
 	channel_fail_permanent(channel, reason, "Funding transaction spent");
+    */ 
 
 	/* We could come from almost any state. */
 	/* NOTE(mschmoock) above comment is wrong, since we failed above! */
@@ -2007,7 +2010,7 @@ enum watch_result eltoo_onchaind_funding_spent(struct channel *channel,
 
     /* Hello World :) */
 	msg = towire_eltoo_onchaind_init(channel, chainparams,
-                    tx_parts_from_wally_tx(tmpctx, tx->wtx, -1, -1));
+                    tx_parts_from_wally_tx(tmpctx, tx->wtx, -1, -1), channel->last_tx, channel->last_settle_tx);
 	subd_send_msg(channel->owner, take(msg));
 
 	watch_tx_and_outputs(channel, tx);

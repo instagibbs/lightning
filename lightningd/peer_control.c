@@ -1304,7 +1304,18 @@ static void NON_NULL_ARGS(1, 2, 4, 5) json_add_channel(struct command *cmd,
 			     "out_fulfilled_msat",
 			     channel->stats.out_msatoshi_fulfilled);
 
+
 	json_add_htlcs(ld, response, channel);
+
+    /* FIXME add latest update_tx and settle_tx, ideally re-bound */
+    if (channel->last_tx) {
+        json_add_tx(response, "last_update_tx", channel->last_tx);
+    }
+
+    if (channel->last_settle_tx) {
+        json_add_tx(response, "last_settle_tx", channel->last_settle_tx);
+    }
+
 	json_object_end(response);
 }
 

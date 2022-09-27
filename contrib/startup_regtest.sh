@@ -163,12 +163,10 @@ onchain_ln() {
     sleep 5
     invoice=$(l2-cli invoice 10000 hi "test" | jq -r .bolt11)
     l1-cli pay $invoice
-
-    # For now, grab first update tx that is fully signed in logs
-    # "Signed update transaction" and "Settle transaction 0"
-    # UPDATE_HEX=FIXME get this from rpc endpoint with things re-bound
-    # UPDATE_PSBT=FIXME
-    UPDATE_HEX=$(bt-cli finalizepsbt $UPDATE_PSBT | jq -r .hex )
+    sleep 0.2
+    # Only funding tx is bound already, subsequent must be re-bound
+    UPDATE_HEX=$(l1-cli listpeers | jq -r .peers[0].channels[0].last_update_tx )
+    SETTLE_HEX=$(l1-cli listpeers | jq -r .peers[0].channels[0].last_settle_tx )
     txid=$(bt-cli decoderawtransaction $UPDATE_HEX | jq -r .txid)
     bt-cli prioritisetransaction $txid 0 100000000
     bt-cli sendrawtransaction $UPDATE_HEX
