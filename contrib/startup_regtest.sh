@@ -164,12 +164,20 @@ onchain_ln() {
     invoice=$(l2-cli invoice 10000 hi "test" | jq -r .bolt11)
     l1-cli pay $invoice
     sleep 0.2
-    # Only funding tx is bound already, subsequent must be re-bound
+
+    # Should be bound to funding output!
     UPDATE_HEX=$(l1-cli listpeers | jq -r .peers[0].channels[0].last_update_tx )
     SETTLE_HEX=$(l1-cli listpeers | jq -r .peers[0].channels[0].last_settle_tx )
     txid=$(bt-cli decoderawtransaction $UPDATE_HEX | jq -r .txid)
     bt-cli prioritisetransaction $txid 0 100000000
     bt-cli sendrawtransaction $UPDATE_HEX
+    bt-cli generatetoaddress 1 $btcaddr
+
+    # Settle tx can be broadcast after shared_delay
+    bt-cli generatetoaddress 6 $btcaddr
+    txid=$(bt-cli decoderawtransaction $SETTLE_HEX | jq -r .txid)
+    bt-cli prioritisetransaction $txid 0 100000000
+    bt-cli sendrawtransaction $SETTLE_HEX
     bt-cli generatetoaddress 1 $btcaddr
 }
 

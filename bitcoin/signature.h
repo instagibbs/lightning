@@ -203,6 +203,18 @@ bool bipmusig_partial_sigs_combine_verify(const secp256k1_musig_partial_sig * co
            struct bip340sig *sig);
 
 /**
+ * bipmusig_partial_sigs_combine - Same as bipmusig_partial_sigs_combine_verify but
+ * no verification. Should only be used on trusted data!
+ * @p_sigs: partial signatures to combine and validate
+ * @num_signers: number of partial signatures to combine
+ * @sig: final BIP340 signature to output
+ */
+bool bipmusig_partial_sigs_combine(const secp256k1_musig_partial_sig * const *p_sigs,
+           size_t num_signers,
+           const secp256k1_musig_session *session,
+           struct bip340sig *sig);
+
+/**
  * check_signed_hash - check a raw secp256k1 signature.
  * @h: hash which was signed.
  * @signature: signature.

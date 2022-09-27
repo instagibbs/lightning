@@ -124,7 +124,7 @@ void bind_update_tx_to_funding_outpoint(struct bitcoin_tx *update_tx,
     update_witness[0] = final_sig;
     update_witness[1] = update_tapscript[0];
     update_witness[2] = compute_control_block(tmpctx, /* other_script */ NULL, /* annex_hint */ NULL, psbt_inner_pubkey, pubkey_parity(&taproot_pk));
-    update_witness[3] = make_eltoo_annex(tmpctx, settle_tx);;
+    update_witness[3] = make_eltoo_annex(tmpctx, settle_tx);
     bitcoin_tx_input_set_witness(update_tx, /* input_num */ 0, update_witness);
 }
 

@@ -335,6 +335,14 @@ bool bipmusig_partial_sigs_combine_verify(const secp256k1_musig_partial_sig * co
     return secp256k1_schnorrsig_verify(secp256k1_ctx, sig->u8, hash->sha.u.u8, sizeof(hash->sha.u.u8), &xonly_inner_pubkey);
 }
 
+bool bipmusig_partial_sigs_combine(const secp256k1_musig_partial_sig * const *p_sigs,
+           size_t num_signers,
+           const secp256k1_musig_session *session,
+           struct bip340sig *sig)
+{
+    return secp256k1_musig_partial_sig_agg(secp256k1_ctx, sig->u8, session, p_sigs, num_signers);
+}
+
 void bitcoin_tx_hash_for_sig(const struct bitcoin_tx *tx, unsigned int in,
 			     const u8 *script,
 			     enum sighash_type sighash_type,
