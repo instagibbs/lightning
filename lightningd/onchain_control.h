@@ -9,11 +9,14 @@ struct block;
 
 enum watch_result onchaind_funding_spent(struct channel *channel,
 					 const struct bitcoin_tx *tx,
+                     size_t input_num,
 					 u32 blockheight);
 
 enum watch_result eltoo_onchaind_funding_spent(struct channel *channel,
                      const struct bitcoin_tx *tx,
+                     size_t input_num,
                      u32 blockheight);
+
 
 void onchaind_replay_channels(struct lightningd *ld);
 
