@@ -172,16 +172,17 @@ onchain_ln() {
     # Should be bound to funding output!
     UPDATE_HEX=$(l1-cli listpeers | jq -r .peers[0].channels[0].last_update_tx )
     SETTLE_HEX=$(l1-cli listpeers | jq -r .peers[0].channels[0].last_settle_tx )
-    txid=$(bt-cli decoderawtransaction $UPDATE_HEX | jq -r .txid)
+    txid=$(bt-cli decoderawtransaction $FIRST_UPDATE_HEX | jq -r .txid)
     bt-cli prioritisetransaction $txid 0 100000000
-    bt-cli sendrawtransaction $UPDATE_HEX
+    bt-cli sendrawtransaction $FIRST_UPDATE_HEX
     bt-cli generatetoaddress 1 $btcaddr
 
-    # Settle tx can be broadcast after shared_delay
+    # Settle tx can be broadcast after shared_delay, onchaind should
+    # be trying to spend the update tx output itself!
     bt-cli generatetoaddress 6 $btcaddr
     txid=$(bt-cli decoderawtransaction $SETTLE_HEX | jq -r .txid)
     bt-cli prioritisetransaction $txid 0 100000000
-    bt-cli sendrawtransaction $SETTLE_HEX
+    bt-cli sendrawtransaction $FIRST_SETTLE_HEX
     bt-cli generatetoaddress 1 $btcaddr
 }
 
