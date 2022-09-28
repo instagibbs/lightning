@@ -712,30 +712,7 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
                   "Bad combine_psig_reply_reply %s", tal_hex(tmpctx, msg));
     }
 
-	/* We save their sig to our first update tx */
-
-    status_debug("Rebinding update transaction 0");
-    /* FIXME Store as taproot signature in PSBT once updated
-        or should we just sneak it in same way for now?
-	if (!psbt_input_set_signature((*update_tx)->psbt, 0,
-				      &state->their_funding_pubkey,
-				      sig))
-		status_failed(STATUS_FAIL_INTERNAL_ERROR,
-			      "Unable to set signature internally");
-    */
-    /* For now: Re-bind, add final script/tapscript info into PSBT */
-    bind_tx_to_funding_outpoint(*update_tx,
-                    *settle_tx, 
-                    &state->funding,
-                    &state->channel->eltoo_keyset,
-                    &state->channel->eltoo_keyset.inner_pubkey,
-                    &update_sig);
-
-
-    /* For debugging, remove later */
-    status_debug("Signed update transaction 0: %s", psbt_to_b64(NULL, (*update_tx)->psbt));
-
-    status_debug("Settle transaction 0: %s", psbt_to_b64(NULL, (*settle_tx)->psbt));
+    /* State is sent back to master later */
 
 	peer_billboard(false, "Funding channel: opening negotiation succeeded");
 

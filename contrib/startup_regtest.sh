@@ -163,6 +163,8 @@ onchain_ln() {
     sleep 5
     FIRST_UPDATE_HEX=$(l1-cli listpeers | jq -r .peers[0].channels[0].last_update_tx )
     FIRST_SETTLE_HEX=$(l1-cli listpeers | jq -r .peers[0].channels[0].last_settle_tx )
+    FIRST_UNBOUND_UPDATE_HEX=$(l1-cli listpeers | jq -r .peers[0].channels[0].unbound_update_tx )
+    FIRST_UNBOUND_SETTLE_HEX=$(l1-cli listpeers | jq -r .peers[0].channels[0].unbound_settle_tx )
     invoice=$(l2-cli invoice 10000 hi "test" | jq -r .bolt11)
     l1-cli pay $invoice
     sleep 0.2
