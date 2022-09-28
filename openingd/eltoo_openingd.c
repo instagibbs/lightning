@@ -724,7 +724,7 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
 			      "Unable to set signature internally");
     */
     /* For now: Re-bind, add final script/tapscript info into PSBT */
-    bind_update_tx_to_funding_outpoint(*update_tx,
+    bind_tx_to_funding_outpoint(*update_tx,
                     *settle_tx, 
                     &state->funding,
                     &state->channel->eltoo_keyset,
@@ -1188,14 +1188,14 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 	msg = towire_funding_signed_eltoo(state, &state->channel_id, &state->channel->eltoo_keyset.self_psig, &state->channel->eltoo_keyset.self_next_nonce);
 
     /* Stick full signature into tx, ready for brodcast(minus fees) */
-    bind_update_tx_to_funding_outpoint(update_tx,
+    /* FIXME binding should only be done last-minute */
+    bind_tx_to_funding_outpoint(update_tx,
                     settle_tx, 
                     &state->funding,
                     &state->channel->eltoo_keyset,
                     &state->channel->eltoo_keyset.inner_pubkey,
                     &update_sig);
 
-    /* FIXME Report everything including both next nonces ala openingd_eltoo_funder_reply */
 	return towire_openingd_eltoo_fundee(state,
 				     &state->remoteconf,
 				     update_tx,

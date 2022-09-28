@@ -62,8 +62,8 @@ void tx_add_unbound_input(struct bitcoin_tx *update_tx, struct amount_sat fundin
     assert(input_num == 0);
 }
 
-void bind_update_tx_to_funding_outpoint(struct bitcoin_tx *update_tx,
-                    const struct bitcoin_tx *settle_tx,
+void bind_tx_to_funding_outpoint(struct bitcoin_tx *update_tx,
+                    struct bitcoin_tx *settle_tx,
                     const struct bitcoin_outpoint *funding_outpoint,
                     const struct eltoo_keyset *eltoo_keyset,
                     const struct pubkey *psbt_inner_pubkey,
@@ -117,8 +117,6 @@ void bind_update_tx_to_funding_outpoint(struct bitcoin_tx *update_tx,
                  /* scriptSig */ NULL, funding_sats, script_pubkey, /* input_wscript */ NULL, /* inner_pubkey */ NULL, /* tap_tree */ NULL);
     assert(input_num == 0);
 
-    /* FIXME we can now rebind settle_tx's prevout */
-
     /* Witness stack, bottom to top:  MuSig2 sig + tapscript + control block + Annex data */
     update_witness = tal_arr(tmpctx, u8 *, 4);
     update_witness[0] = final_sig;
@@ -126,6 +124,17 @@ void bind_update_tx_to_funding_outpoint(struct bitcoin_tx *update_tx,
     update_witness[2] = compute_control_block(tmpctx, /* other_script */ NULL, /* annex_hint */ NULL, psbt_inner_pubkey, pubkey_parity(&taproot_pk));
     update_witness[3] = make_eltoo_annex(tmpctx, settle_tx);
     bitcoin_tx_input_set_witness(update_tx, /* input_num */ 0, update_witness);
+}
+
+void bind_settle_tx(const struct bitcoin_tx *update_tx,
+                    int output_index,
+                    struct bitcoin_tx *settle_tx)
+{
+    struct bitcoin_txid txid;
+    /* Really direct txid surgery... libwally routine better to modify PSBT input! */
+    bitcoin_txid(update_tx, &txid);
+    assert(settle_tx->wtx->num_inputs == 1); /* We don't craft anything else */
+    memcpy(settle_tx->wtx->inputs[0].txhash, &txid, 32);
 }
 
 void bind_update_tx_to_update_outpoint(struct bitcoin_tx *update_tx,

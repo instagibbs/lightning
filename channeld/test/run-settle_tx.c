@@ -581,7 +581,7 @@ static int test_invalid_update_tx(void)
     sig = musig_sign(update_tx, annex_0, &alice_funding_privkey, &bob_funding_privkey, &inner_pubkey, keyagg_cache);
 
     /* Re-bind, add final script/tapscript info into PSBT */
-    bind_update_tx_to_funding_outpoint(update_tx,
+    bind_tx_to_funding_outpoint(update_tx,
                     tx,
                     &update_output,
                     &eltoo_keyset,
@@ -625,7 +625,7 @@ static int test_invalid_update_tx(void)
     sig = musig_sign(update_tx_1_A, annex_1, &alice_funding_privkey, &bob_funding_privkey, &inner_pubkey, keyagg_cache);
 
     /* This can RBF the first update tx */
-    bind_update_tx_to_funding_outpoint(update_tx_1_A,
+    bind_tx_to_funding_outpoint(update_tx_1_A,
                     settle_tx_1,
                     &update_output,
                     &eltoo_keyset,
@@ -752,7 +752,7 @@ static int test_initial_settlement_tx(void)
     /* We want to close the channel without cooperation... time to rebind and finalize */
 
     /* Re-bind, add final script/tapscript info into PSBT */
-    bind_update_tx_to_funding_outpoint(update_tx,
+    bind_tx_to_funding_outpoint(update_tx,
                     tx,
                     &update_output,
                     &eltoo_keyset,

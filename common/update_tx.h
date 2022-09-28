@@ -21,8 +21,20 @@ void tx_add_unbound_input(struct bitcoin_tx *update_tx,
                     struct amount_sat funding_sats,
                     const struct pubkey *inner_pubkey);
 
+/* Called just in time before broadcasting to spend expired
+   update output.
+ * @update_tx: the update transaction that has reached enough
+ * confirmations to spend via settle path
+ * @output_index: which output index is to be spent
+ * @settle_tx: the settlement transaction to rebind
+ **/
+void bind_settle_tx(const struct bitcoin_tx *update_tx,
+                    int output_index,
+                    struct bitcoin_tx *settle_tx);
+
 /* Used to bind the update transaction to the funding outpoint
- * of the eltoo contract. This is the expected (non-malicious)
+ * of the eltoo contract, and also re-binds the settle transaction.
+ * This is the expected (non-malicious)
  * failure mode of a channel. Also finalizes the witness data.
  * @update_tx: The transaction being re-binded
  * @settle_tx: The corresponding settlement transaction, also re-binded
@@ -31,8 +43,8 @@ void tx_add_unbound_input(struct bitcoin_tx *update_tx,
  * @psbt_inner_pubkey: Inner pubkey for the state input
  * @sig: bip340 signature to be put into witness
  */
-void bind_update_tx_to_funding_outpoint(struct bitcoin_tx *update_tx,
-                    const struct bitcoin_tx *settle_tx,
+void bind_tx_to_funding_outpoint(struct bitcoin_tx *update_tx,
+                    struct bitcoin_tx *settle_tx,
                     const struct bitcoin_outpoint *funding_outpoint,
                     const struct eltoo_keyset *eltoo_keyset,
                     const struct pubkey *psbt_inner_pubkey,
