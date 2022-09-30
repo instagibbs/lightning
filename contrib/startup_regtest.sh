@@ -180,7 +180,7 @@ onchain_ln() {
     # Settle tx can be broadcast after shared_delay, onchaind should
     # be trying to spend the update tx output itself!
     bt-cli generatetoaddress 6 $btcaddr
-    txid=$(bt-cli decoderawtransaction $SETTLE_HEX | jq -r .txid)
+    txid=$(bt-cli decoderawtransaction $FIRST_SETTLE_HEX | jq -r .txid)
     bt-cli prioritisetransaction $txid 0 100000000
     bt-cli sendrawtransaction $FIRST_SETTLE_HEX
     bt-cli generatetoaddress 1 $btcaddr

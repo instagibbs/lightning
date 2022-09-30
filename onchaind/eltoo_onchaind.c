@@ -1519,17 +1519,25 @@ static struct htlcs_info *eltoo_init_reply(const tal_t *ctx, const char *what)
     return htlcs_info;
 }
 
-/* This is not directly copied and pasted */
 static void eltoo_handle_mutual_close(struct tracked_output **outs,
-                const struct tx_parts *tx,
-                size_t input_num)
+                const struct tx_parts *tx)
 {
+    int i;
+
     /* In this case, we don't care about htlcs: there are none. */
     eltoo_init_reply(tmpctx, "Tracking mutual close transaction");
 
-    /* Annotate the first input as close. We can currently only have a
+    /* Annotate the input that matches the funding outpoint as close. We can currently only have a
      * single input for these. */
-    onchain_annotate_txin(&tx->txid, input_num, TX_CHANNEL_CLOSE);
+    for (i=0; i<tal_count(tx->inputs); i++) {
+        if (tx->inputs[i]->index == outs[0]->outpoint.n &&
+            !memcmp(tx->inputs[i]->txhash, &outs[0]->outpoint.txid, 32)) {
+            break;
+        }
+    }
+    assert(i != tal_count(tx->inputs));
+
+    onchain_annotate_txin(&tx->txid, i, TX_CHANNEL_CLOSE);
 
     /* BOLT #5:
      *
@@ -1552,7 +1560,6 @@ int main(int argc, char *argv[])
     struct bitcoin_tx *unbound_update_tx, *unbound_settle_tx;
     struct tracked_output **outs;
     struct bitcoin_outpoint funding;
-    u32 input_num;
     struct amount_sat funding_sats;
     u32 locktime, tx_blockheight;
     u8 *scriptpubkey[NUM_SIDES];
@@ -1565,10 +1572,10 @@ int main(int argc, char *argv[])
 	if (!fromwire_eltoo_onchaind_init(tmpctx,
         msg,
         &chainparams,
+        &funding,
         &funding_sats,
         &spending_tx,
         &locktime,
-        &input_num,
         &unbound_update_tx,
         &unbound_settle_tx,
         &tx_blockheight,
@@ -1591,10 +1598,6 @@ int main(int argc, char *argv[])
     /* These are the utxos we are interested in */
     outs = tal_arr(ctx, struct tracked_output *, 0);
 
-    assert(tal_count(spending_tx->inputs) > input_num);
-    wally_tx_input_get_txid(spending_tx->inputs[0], &funding.txid);
-    funding.n = spending_tx->inputs[input_num]->index;
-
     /* Tracking funding output which is spent already */
     new_tracked_output(&outs, &funding,
                0, /* We don't care about funding blockheight */
@@ -1613,16 +1616,29 @@ int main(int argc, char *argv[])
         status_debug("Handling mutual close!");
         record_mutual_close(spending_tx, scriptpubkey[REMOTE],
                     tx_blockheight);
-        eltoo_handle_mutual_close(outs, spending_tx, input_num);
+        eltoo_handle_mutual_close(outs, spending_tx);
     } else {
-        status_debug("NI: Handling unilateral close!");
-        /* FIXME commit_num should just be our latest tx, since we only need latest */
+        status_debug("Handling unilateral close!");
+        if (locktime > unbound_update_tx->wtx->locktime) {
+            status_debug("Uh-oh, please be nice Mr Counterparty :(");
+            /* Might as well track the state output, see if it ends up in a settlement tx
+             * So `to_node` values can be harvested, HTLCs rescued OOB with counterparty's help?
+             */
+        } else if (locktime == unbound_update_tx->wtx->locktime) {
+            status_debug("Unilateral close of last state detected");
+            /* Someday we could maybe negotiate with peer to life back into channel
+             * For now we just deal with it by submitting settle transaction.
+             * If we know it's counter-party, maybe they'll pay for us :)
+             * or maybe we paid a watchtower already...
+             *
+             * Either way, this also happens in the "cheating" below, and we handle this identically.
+             */
+        } else {
+            status_debug("Cheater!");
+        }
     }
 
-    /* FIXME Now that we see the transaction in block, and our latest versions,
-      re-bind our transactions and submit them to the mempool */
-
-    	/* We're done! */
+ 	/* We're done! */
 	tal_free(ctx);
 	daemon_shutdown();
 
