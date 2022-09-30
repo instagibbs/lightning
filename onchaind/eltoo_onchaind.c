@@ -27,7 +27,7 @@
 #define REQ_FD STDIN_FILENO
 #define HSM_FD 3
 
-/* FIXME Everything copy/pasted bc static */
+/* FIXME Everything copy/pasted bc static. Deduplicate later */
 
 /* Required in various places: keys for commitment transaction. */
 static const struct keyset *keyset;
@@ -1095,6 +1095,7 @@ static void onchain_annotate_txin(const struct bitcoin_txid *txid, u32 innum,
 }
 
 /* An output has been spent: see if it resolves something we care about. */
+/* FIXME FRIDAY: work through this tracking logic */
 static void output_spent(struct tracked_output ***outs,
 			 const struct tx_parts *tx_parts,
 			 u32 input_num,
@@ -1447,14 +1448,12 @@ static void wait_for_resolved(struct tracked_output **outs)
 
 struct htlcs_info {
 	struct htlc_stub *htlcs;
-    /* FIXME remove? */
 	bool *tell_if_missing;
 	bool *tell_immediately;
 };
 
 struct htlc_with_tells {
 	struct htlc_stub htlc;
-    /* FIXME remove? */
 	bool tell_if_missing, tell_immediately;
 };
 
@@ -1468,23 +1467,26 @@ static int cmp_htlc_with_tells_cltv(const struct htlc_with_tells *a,
     return 0; 
 }
 
+/* sends eltoo reply to be handled properly, otherwise the same */
 static struct htlcs_info *eltoo_init_reply(const tal_t *ctx, const char *what)
 {
     struct htlcs_info *htlcs_info = tal(ctx, struct htlcs_info);
     u8 *msg;
     struct htlc_with_tells *htlcs;
-    
+
     /* Send init_reply first, so billboard gets credited to ONCHAIND */
     wire_sync_write(REQ_FD,
             take(towire_eltoo_onchaind_init_reply(NULL)));
-        
+
     peer_billboard(true, what);
-        
+
     /* Read in htlcs */
     for (;;) {
         msg = wire_sync_read(queued_msgs, REQ_FD);
-        if (fromwire_eltoo_onchaind_htlcs(tmpctx, msg,
-                        &htlcs_info->htlcs)) {
+        if (fromwire_onchaind_htlcs(tmpctx, msg,
+                        &htlcs_info->htlcs,
+                        &htlcs_info->tell_if_missing,
+                        &htlcs_info->tell_immediately)) {
             tal_free(msg);
             break;
         }
@@ -1492,20 +1494,26 @@ static struct htlcs_info *eltoo_init_reply(const tal_t *ctx, const char *what)
         /* Process later */
         tal_arr_expand(&queued_msgs, msg);
     }
-    
+
     /* One convenient structure, so we sort them together! */
     htlcs = tal_arr(tmpctx, struct htlc_with_tells, tal_count(htlcs_info->htlcs));
     for (size_t i = 0; i < tal_count(htlcs); i++) {
         htlcs[i].htlc = htlcs_info->htlcs[i];
-    }   
-    
+        htlcs[i].tell_if_missing = htlcs_info->tell_if_missing[i];
+        htlcs[i].tell_immediately = htlcs_info->tell_immediately[i];
+    }
+
     /* Sort by CLTV, so matches are in CLTV order (and easy to skip dups) */
     asort(htlcs, tal_count(htlcs), cmp_htlc_with_tells_cltv, NULL);
-        
+
     /* Now put them back (prev were allocated off tmpctx) */
     htlcs_info->htlcs = tal_arr(htlcs_info, struct htlc_stub, tal_count(htlcs));
+    htlcs_info->tell_if_missing = tal_arr(htlcs_info, bool, tal_count(htlcs));
+    htlcs_info->tell_immediately = tal_arr(htlcs_info, bool, tal_count(htlcs));
     for (size_t i = 0; i < tal_count(htlcs); i++) {
         htlcs_info->htlcs[i] = htlcs[i].htlc;
+        htlcs_info->tell_if_missing[i] = htlcs[i].tell_if_missing;
+        htlcs_info->tell_immediately[i] = htlcs[i].tell_immediately;
     }
 
     return htlcs_info;
