@@ -1748,25 +1748,44 @@ static unsigned int onchain_msg(struct subd *sd, const u8 *msg, const int *fds U
 	return 0;
 }
 
+/* FIXME if init is the only difference let's de-duplicate */
 static unsigned int eltoo_onchain_msg(struct subd *sd, const u8 *msg, const int *fds UNUSED)
 {
 	enum onchaind_wire t = fromwire_peektype(msg);
 
 	switch (t) {
+    /* Only things changed... */
 	case WIRE_ELTOO_ONCHAIND_INIT_REPLY:
 		handle_eltoo_onchain_init_reply(sd->channel, msg);
 		break;
-
-	case WIRE_ONCHAIND_BROADCAST_TX:
-   	case WIRE_ONCHAIND_UNWATCH_TX:
- 	case WIRE_ONCHAIND_EXTRACTED_PREIMAGE:
-	case WIRE_ONCHAIND_MISSING_HTLC_OUTPUT:
-	case WIRE_ONCHAIND_HTLC_TIMEOUT:
+    /* End Eltoo-related changes */
 	case WIRE_ONCHAIND_ALL_IRREVOCABLY_RESOLVED:
-	case WIRE_ONCHAIND_ADD_UTXO:
-	case WIRE_ONCHAIND_ANNOTATE_TXIN:
-	case WIRE_ONCHAIND_ANNOTATE_TXOUT:
+		handle_irrevocably_resolved(sd->channel, msg);
+		break;
 	case WIRE_ONCHAIND_NOTIFY_COIN_MVT:
+		handle_onchain_log_coin_move(sd->channel, msg);
+		break;
+	case WIRE_ONCHAIND_BROADCAST_TX:
+		handle_onchain_broadcast_tx(sd->channel, msg);
+		break;
+	case WIRE_ONCHAIND_UNWATCH_TX:
+		handle_onchain_unwatch_tx(sd->channel, msg);
+		break;
+	case WIRE_ONCHAIND_ANNOTATE_TXIN:
+		onchain_annotate_txin(sd->channel, msg);
+		break;
+	case WIRE_ONCHAIND_ANNOTATE_TXOUT:
+		onchain_annotate_txout(sd->channel, msg);
+		break;
+	case WIRE_ONCHAIND_HTLC_TIMEOUT:
+        /* FIXME what needs to change for handling? */
+		handle_onchain_htlc_timeout(sd->channel, msg);
+		break;
+ 	case WIRE_ONCHAIND_EXTRACTED_PREIMAGE:
+		handle_extracted_preimage(sd->channel, msg);
+		break;
+	case WIRE_ONCHAIND_MISSING_HTLC_OUTPUT:
+	case WIRE_ONCHAIND_ADD_UTXO:
         /* FIXME implement */
         abort();
 	/* We send these, not receive them */

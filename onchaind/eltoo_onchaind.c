@@ -77,11 +77,11 @@ struct proposed_resolution {
 struct resolution {
 	struct bitcoin_txid txid;
 	unsigned int depth;
-	enum tx_type tx_type;
+	enum eltoo_tx_type tx_type;
 };
 
 struct tracked_output {
-	enum tx_type tx_type;
+	enum eltoo_tx_type tx_type;
 	struct bitcoin_outpoint outpoint;
 	u32 tx_blockheight;
 	/* FIXME: Convert all depths to blocknums, then just get new blk msgs */
@@ -126,13 +126,6 @@ static const char *output_type_name(enum output_type output_type)
 	return "unknown";
 }
 
-/* helper to compare output script with our tal'd script */
-static bool wally_tx_output_scripteq(const struct wally_tx_output *out,
-				     const u8 *script)
-{
-	return memeq(out->script, out->script_len, script, tal_bytelen(script));
-}
-
 static void send_coin_mvt(struct chain_coin_mvt *mvt TAKES)
 {
 	wire_sync_write(REQ_FD,
@@ -140,177 +133,6 @@ static void send_coin_mvt(struct chain_coin_mvt *mvt TAKES)
 
 	if (taken(mvt))
 		tal_free(mvt);
-}
-
-static void record_channel_withdrawal(const struct bitcoin_txid *tx_txid,
-				      struct tracked_output *out,
-				      u32 blockheight,
-				      enum mvt_tag tag)
-{
-	send_coin_mvt(take(new_onchaind_withdraw(NULL, &out->outpoint, tx_txid,
-						 blockheight, out->sat, tag)));
-}
-
-static void record_external_spend(const struct bitcoin_txid *txid,
-				  struct tracked_output *out,
-				  u32 blockheight,
-				  enum mvt_tag tag)
-{
-	send_coin_mvt(take(new_coin_external_spend(NULL, &out->outpoint,
-						   txid, blockheight,
-						   out->sat, tag)));
-}
-
-static void record_external_output(const struct bitcoin_outpoint *out,
-				   struct amount_sat amount,
-				   u32 blockheight,
-				   enum mvt_tag tag)
-{
-	send_coin_mvt(take(new_coin_external_deposit(NULL, out, blockheight,
-						     amount, tag)));
-}
-
-static void record_external_deposit(const struct tracked_output *out,
-				    u32 blockheight,
-				    enum mvt_tag tag)
-{
-	record_external_output(&out->outpoint, out->sat, blockheight, tag);
-}
-
-static void record_mutual_close(const struct tx_parts *tx,
-				const u8 *remote_scriptpubkey,
-				u32 blockheight)
-{
-	/* FIXME: if we ever change how closes happen, this will
-	 * need to be updated as there's no longer 1 output
-	 * per peer */
-	for (size_t i = 0; i < tal_count(tx->outputs); i++) {
-		struct bitcoin_outpoint out;
-
-		if (!wally_tx_output_scripteq(tx->outputs[i],
-					      remote_scriptpubkey))
-			continue;
-
-		out.n = i;
-		out.txid = tx->txid;
-		record_external_output(&out,
-				       amount_sat(tx->outputs[i]->satoshi),
-				       blockheight,
-				       TO_THEM);
-		break;
-	}
-}
-
-
-static void record_channel_deposit(struct tracked_output *out,
-				   u32 blockheight, enum mvt_tag tag)
-{
-	send_coin_mvt(take(new_onchaind_deposit(NULL,
-						&out->outpoint,
-						blockheight, out->sat,
-						tag)));
-}
-
-static void record_to_us_htlc_fulfilled(struct tracked_output *out,
-					u32 blockheight)
-{
-	send_coin_mvt(take(new_onchain_htlc_deposit(NULL,
-						    &out->outpoint,
-						    blockheight,
-						    out->sat,
-						    &out->payment_hash)));
-}
-
-static void record_to_them_htlc_fulfilled(struct tracked_output *out,
-					  u32 blockheight)
-{
-
-	send_coin_mvt(take(new_onchain_htlc_withdraw(NULL,
-						     &out->outpoint,
-						     blockheight,
-						     out->sat,
-						     &out->payment_hash)));
-}
-
-static void record_ignored_wallet_deposit(struct tracked_output *out)
-{
-	struct bitcoin_outpoint outpoint;
-
-	/* Every spend tx we construct has a single output. */
-	bitcoin_txid(out->proposal->tx, &outpoint.txid);
-	outpoint.n = 0;
-
-	enum mvt_tag tag = TO_WALLET;
-	if (out->tx_type == OUR_HTLC_TIMEOUT_TX
-	    || out->tx_type == OUR_HTLC_SUCCESS_TX)
-		tag = HTLC_TX;
-	else if (out->tx_type == THEIR_REVOKED_UNILATERAL)
-		tag = PENALTY;
-	else if (out->tx_type == OUR_UNILATERAL
-		|| out->tx_type == THEIR_UNILATERAL) {
-		if (out->output_type == OUR_HTLC)
-			tag = HTLC_TIMEOUT;
-	}
-	if (out->output_type == DELAYED_OUTPUT_TO_US)
-		tag = CHANNEL_TO_US;
-
-	/* Record the in/out through the channel */
-	record_channel_deposit(out, out->tx_blockheight, tag);
-	record_channel_withdrawal(&outpoint.txid, out, 0, IGNORED);
-}
-
-static void record_coin_movements(struct tracked_output *out,
-				  u32 blockheight,
-				  const struct bitcoin_tx *tx,
-				  const struct bitcoin_txid *txid)
-{
-	/* For 'timeout' htlcs, we re-record them as a deposit
-	 * before we withdraw them again. When the channel closed,
-	 * we reported this as withdrawn (since we didn't know the
-	 * total amount of pending htlcs that are to-them). So
-	 * we have to "deposit" it again before we withdraw it.
-	 * This is just to make the channel account close out nicely
-	 * AND so we can accurately calculate our on-chain fee burden */
-	if (out->tx_type == OUR_HTLC_TIMEOUT_TX
-	    || out->tx_type == OUR_HTLC_SUCCESS_TX)
-		record_channel_deposit(out, blockheight, HTLC_TX);
-
-	if (out->resolved->tx_type == OUR_HTLC_TIMEOUT_TO_US)
-		record_channel_deposit(out, blockheight, HTLC_TIMEOUT);
-
-	/* there is a case where we've fulfilled an htlc onchain,
-	 * in which case we log a deposit to the channel */
-	if (out->resolved->tx_type == THEIR_HTLC_FULFILL_TO_US
-	    || out->resolved->tx_type == OUR_HTLC_SUCCESS_TX)
-		record_to_us_htlc_fulfilled(out, blockheight);
-
-	/* If it's our to-us and our close, we publish *another* tx
-	 * which spends the output when the timeout ends */
-	if (out->tx_type == OUR_UNILATERAL) {
-		if (out->output_type == DELAYED_OUTPUT_TO_US)
-			record_channel_deposit(out, blockheight, CHANNEL_TO_US);
-		else if (out->output_type == OUR_HTLC) {
-			record_channel_deposit(out, blockheight, HTLC_TIMEOUT);
-			record_channel_withdrawal(txid, out, blockheight, HTLC_TIMEOUT);
-		} else if (out->output_type == THEIR_HTLC)
-			record_channel_withdrawal(txid, out, blockheight, HTLC_FULFILL);
-	}
-
-	if (out->tx_type == THEIR_REVOKED_UNILATERAL
-	    || out->resolved->tx_type == OUR_PENALTY_TX)
-		record_channel_deposit(out, blockheight, PENALTY);
-
-	if (out->resolved->tx_type == OUR_DELAYED_RETURN_TO_WALLET
-	    || out->resolved->tx_type == THEIR_HTLC_FULFILL_TO_US
-	    || out->output_type == DELAYED_OUTPUT_TO_US
-	    || out->resolved->tx_type == OUR_HTLC_TIMEOUT_TO_US
-	    || out->resolved->tx_type == OUR_PENALTY_TX) {
-		/* penalty rbf cases, the amount might be zero */
-		if (amount_sat_zero(out->sat))
-			record_channel_withdrawal(txid, out, blockheight, TO_MINER);
-		else
-			record_channel_withdrawal(txid, out, blockheight, TO_WALLET);
-	}
 }
 
 static u8 *penalty_to_us(const tal_t *ctx,
@@ -545,7 +367,7 @@ static struct tracked_output *
 new_tracked_output(struct tracked_output ***outs,
 		   const struct bitcoin_outpoint *outpoint,
 		   u32 tx_blockheight,
-		   enum tx_type tx_type,
+		   enum eltoo_tx_type tx_type,
 		   struct amount_sat sat,
 		   enum output_type output_type,
 		   const struct htlc_stub *htlc,
@@ -741,10 +563,6 @@ static void proposal_meets_depth(struct tracked_output *out)
 	if (!out->proposal->tx) {
 		ignore_output(out);
 
-		if (out->proposal->tx_type == THEIR_HTLC_TIMEOUT_TO_THEM)
-			record_external_deposit(out, out->tx_blockheight,
-						HTLC_TIMEOUT);
-
 		return;
 	}
 
@@ -768,7 +586,6 @@ static void proposal_meets_depth(struct tracked_output *out)
 	/* Don't wait for this if we're ignoring the tiny payment. */
 	if (out->proposal->tx_type == IGNORING_TINY_PAYMENT) {
 		ignore_output(out);
-		record_ignored_wallet_deposit(out);
 	}
 
 	/* Otherwise we will get a callback when it's in a block. */
@@ -856,7 +673,7 @@ static bool resolved_by_proposal(struct tracked_output *out,
 /* Otherwise, we figure out what happened and then call this. */
 static void resolved_by_other(struct tracked_output *out,
 			      const struct bitcoin_txid *txid,
-			      enum tx_type tx_type)
+			      enum eltoo_tx_type tx_type)
 {
 	out->resolved = tal(out, struct resolution);
 	out->resolved->txid = *txid;
@@ -868,21 +685,6 @@ static void resolved_by_other(struct tracked_output *out,
 		     output_type_name(out->output_type),
 		     tx_type_name(tx_type),
 		     type_to_string(tmpctx, struct bitcoin_txid, txid));
-}
-
-static void unknown_spend(struct tracked_output *out,
-			  const struct tx_parts *tx_parts)
-{
-	out->resolved = tal(out, struct resolution);
-	out->resolved->txid = tx_parts->txid;
-	out->resolved->depth = 0;
-	out->resolved->tx_type = UNKNOWN_TXTYPE;
-
-	status_broken("Unknown spend of %s/%s by %s",
-		     tx_type_name(out->tx_type),
-		     output_type_name(out->output_type),
-		     type_to_string(tmpctx, struct bitcoin_txid,
-				    &tx_parts->txid));
 }
 
 static bool is_mutual_close(u32 locktime)
@@ -984,7 +786,7 @@ static void unwatch_txid(const struct bitcoin_txid *txid)
 	wire_sync_write(REQ_FD, take(msg));
 }
 
-static void handle_htlc_onchain_fulfill(struct tracked_output *out,
+static void handle_eltoo_htlc_onchain_fulfill(struct tracked_output *out,
 					const struct tx_parts *tx_parts,
 					const struct bitcoin_outpoint *htlc_outpoint)
 {
@@ -994,37 +796,21 @@ static void handle_htlc_onchain_fulfill(struct tracked_output *out,
 	struct ripemd160 ripemd;
 
 	/* Our HTLC, they filled (must be an HTLC-success tx). */
-	if (out->tx_type == THEIR_UNILATERAL
-		|| out->tx_type == THEIR_REVOKED_UNILATERAL) {
-		/* BOLT #3:
-		 *
-		 * ## HTLC-Timeout and HTLC-Success Transactions
-		 *
-		 * ...  `txin[0]` witness stack: `0 <remotehtlcsig> <localhtlcsig>
-		 * <payment_preimage>` for HTLC-success
-		 */
-		if (tx_parts->inputs[htlc_outpoint->n]->witness->num_items != 5) /* +1 for wscript */
+	if (out->tx_type == ELTOO_SETTLE
+		|| out->tx_type == ELTOO_INVALIDATED_SETTLE) {
+        /* BOLTXX
+         *   The recipient node can redeem the HTLC with the witness:
+         *
+         *      <recipient_settlement_pubkey_signature> <payment_preimage>
+         */
+		if (tx_parts->inputs[htlc_outpoint->n]->witness->num_items != 4) /* +2 for script/control block */
 			status_failed(STATUS_FAIL_INTERNAL_ERROR,
 				      "%s/%s spent with weird witness %zu",
 				      tx_type_name(out->tx_type),
 				      output_type_name(out->output_type),
 				      tx_parts->inputs[htlc_outpoint->n]->witness->num_items);
 
-		preimage_item = &tx_parts->inputs[htlc_outpoint->n]->witness->items[3];
-	} else if (out->tx_type == OUR_UNILATERAL) {
-		/* BOLT #3:
-		 *
-		 * The remote node can redeem the HTLC with the witness:
-		 *
-		 *    <remotehtlcsig> <payment_preimage>
-		 */
-		if (tx_parts->inputs[htlc_outpoint->n]->witness->num_items != 3) /* +1 for wscript */
-			status_failed(STATUS_FAIL_INTERNAL_ERROR,
-				      "%s/%s spent with weird witness %zu",
-				      tx_type_name(out->tx_type),
-				      output_type_name(out->output_type),
-				      tx_parts->inputs[htlc_outpoint->n]->witness->num_items);
-
+        /* FIXME figure out proper index */
 		preimage_item = &tx_parts->inputs[htlc_outpoint->n]->witness->items[1];
 	} else
 		status_failed(STATUS_FAIL_INTERNAL_ERROR,
@@ -1032,27 +818,6 @@ static void handle_htlc_onchain_fulfill(struct tracked_output *out,
 			      tx_type_name(out->tx_type),
 			      output_type_name(out->output_type));
 
-	/* cppcheck-suppress uninitvar - doesn't know status_failed exits? */
-	if (preimage_item->witness_len != sizeof(preimage)) {
-		/* It's possible something terrible happened and we broadcast
-		 * an old commitment state, which they're now cleaning up.
-		 *
-		 * We stumble along.
-		 */
-		if (out->tx_type == OUR_UNILATERAL
-		    && preimage_item->witness_len == PUBKEY_CMPR_LEN) {
-			status_unusual("Our cheat attempt failed, they're "
-				       "taking our htlc out (%s)",
-				       type_to_string(tmpctx, struct amount_sat,
-						      &out->sat));
-			return;
-		}
-		status_failed(STATUS_FAIL_INTERNAL_ERROR,
-			      "%s/%s spent with bad witness length %zu",
-			      tx_type_name(out->tx_type),
-			      output_type_name(out->output_type),
-			      preimage_item->witness_len);
-	}
 	memcpy(&preimage, preimage_item->witness, sizeof(preimage));
 	sha256(&sha, &preimage, sizeof(preimage));
 	ripemd160(&ripemd, &sha, sizeof(sha));
@@ -1095,7 +860,6 @@ static void onchain_annotate_txin(const struct bitcoin_txid *txid, u32 innum,
 }
 
 /* An output has been spent: see if it resolves something we care about. */
-/* FIXME FRIDAY: work through this tracking logic */
 static void output_spent(struct tracked_output ***outs,
 			 const struct tx_parts *tx_parts,
 			 u32 input_num,
@@ -1114,16 +878,6 @@ static void output_spent(struct tracked_output ***outs,
 
 		/* Was this our resolution? */
 		if (resolved_by_proposal(out, tx_parts)) {
-			/* If it's our htlc tx, we need to resolve that, too. */
-            /* FIXME we can spend htlc immediately?
-			if (out->resolved->tx_type == OUR_HTLC_SUCCESS_TX
-			    || out->resolved->tx_type == OUR_HTLC_TIMEOUT_TX)
-				resolve_htlc_tx(outs, i, tx_parts, input_num,
-						tx_blockheight);*/
-
-			record_coin_movements(out, tx_blockheight,
-					      out->proposal->tx,
-					      &tx_parts->txid);
 			return;
 		}
 
@@ -1132,69 +886,44 @@ static void output_spent(struct tracked_output ***outs,
 
 		switch (out->output_type) {
 		case OUTPUT_TO_US:
+            /* FIXME I'm gonna call this the state output, post-funding */
+        /* There is no delayed to us... it just goes into our wallet
 		case DELAYED_OUTPUT_TO_US:
 			unknown_spend(out, tx_parts);
-			record_external_deposit(out, tx_blockheight, PENALIZED);
 			break;
-
+        */
 		case THEIR_HTLC:
-			record_external_deposit(out, out->tx_blockheight,
-						HTLC_TIMEOUT);
-			record_external_spend(&tx_parts->txid, out,
-					      tx_blockheight, HTLC_TIMEOUT);
-
-			if (out->tx_type == THEIR_REVOKED_UNILATERAL) {
-                /* FIXME impossible state, no such thing as revoked */
-				/* we've actually got a 'new' output here */
-			} else {
-				/* We ignore this timeout tx, since we should
-				 * resolve by ignoring once we reach depth. */
-				onchain_annotate_txout(
-				    &htlc_outpoint,
-				    TX_CHANNEL_HTLC_TIMEOUT | TX_THEIRS);
-			}
+            /* We ignore this timeout tx, since we should
+             * resolve by ignoring once we reach depth. */
+            onchain_annotate_txout(
+                &htlc_outpoint,
+                TX_CHANNEL_HTLC_TIMEOUT | TX_THEIRS);
 			break;
 
 		case OUR_HTLC:
 			/* The only way	they can spend this: fulfill; even
 			 * if it's revoked: */
-			/* BOLT #5:
-			 *
-			 * ## HTLC Output Handling: Local Commitment, Local Offers
-			 *...
-			 *    - MUST extract the payment preimage from the
-			 *      transaction input witness.
-			 *...
-			 * ## HTLC Output Handling: Remote Commitment, Local Offers
-			 *...
-			 *     - MUST extract the payment preimage from the
-			 *       HTLC-success transaction input witness.
-			 */
-			handle_htlc_onchain_fulfill(out, tx_parts,
+			handle_eltoo_htlc_onchain_fulfill(out, tx_parts,
 						    &htlc_outpoint);
 
-			record_to_them_htlc_fulfilled(out, tx_blockheight);
-			record_external_spend(&tx_parts->txid, out,
-					      tx_blockheight, HTLC_FULFILL);
+            /* FIXME this is impossible, commenting out */
+//			if (out->tx_type == THEIR_REVOKED_UNILATERAL) {
+//			} else {
+            /* BOLT #5:
+             *
+             * ## HTLC Output Handling: Local Commitment,
+             *    Local Offers
+             *...
+             *  - if the commitment transaction HTLC output
+             *    is spent using the payment preimage, the
+             *    output is considered *irrevocably resolved*
+             */
+            ignore_output(out);
 
-			if (out->tx_type == THEIR_REVOKED_UNILATERAL) {
-                /* FIXME no such thing as revoked */
-			} else {
-				/* BOLT #5:
-				 *
-				 * ## HTLC Output Handling: Local Commitment,
-				 *    Local Offers
-				 *...
-				 *  - if the commitment transaction HTLC output
-				 *    is spent using the payment preimage, the
-				 *    output is considered *irrevocably resolved*
-				 */
-				ignore_output(out);
-
-				onchain_annotate_txout(
-				    &htlc_outpoint,
-				    TX_CHANNEL_HTLC_SUCCESS | TX_THEIRS);
-			}
+            onchain_annotate_txout(
+                &htlc_outpoint,
+                TX_CHANNEL_HTLC_SUCCESS | TX_THEIRS);
+//			}
 			break;
 
 		case FUNDING_OUTPUT:
@@ -1202,17 +931,11 @@ static void output_spent(struct tracked_output ***outs,
 			 * that our old tx was unspent. */
 			status_failed(STATUS_FAIL_INTERNAL_ERROR,
 				      "Funding output spent again!");
-
-		case DELAYED_CHEAT_OUTPUT_TO_THEM:
-			/* They successfully spent a delayed revoked output */
-			resolved_by_other(out, &tx_parts->txid,
-					  THEIR_DELAYED_CHEAT);
-
-			record_external_deposit(out, tx_blockheight, STOLEN);
-			break;
 		/* Um, we don't track these! */
 		case OUTPUT_TO_THEM:
 		case DELAYED_OUTPUT_TO_THEM:
+        case DELAYED_CHEAT_OUTPUT_TO_THEM:
+        case DELAYED_OUTPUT_TO_US:
 		case ELEMENTS_FEE:
 		case ANCHOR_TO_US:
 		case ANCHOR_TO_THEM:
@@ -1248,18 +971,19 @@ static void update_resolution_depth(struct tracked_output *out, u32 depth)
 	reached_reasonable_depth = (out->resolved->depth < reasonable_depth
 				    && depth >= reasonable_depth);
 
-	/* BOLT #5:
-	 *
-	 *   - if the commitment transaction HTLC output has *timed out* and
-	 *     hasn't been *resolved*:
-	 *    - MUST *resolve* the output by spending it using the HTLC-timeout
-	 *      transaction.
-	 *    - once the resolving transaction has reached reasonable depth:
-	 *      - MUST fail the corresponding incoming HTLC (if any).
-	 */
-	if ((out->resolved->tx_type == OUR_HTLC_TIMEOUT_TX
-	     || out->resolved->tx_type == OUR_HTLC_TIMEOUT_TO_US)
-	    && reached_reasonable_depth) {
+	/* BOLT #XX:
+     *
+     *  - if the settlement transaction HTLC output has *timed out* and hasn't been
+     *    *resolved*:
+     *    - MUST *resolve* the output by spending it using their own `settlement_pubkey` to
+     *     any address deemed necessary.
+     *    - once the resolving transaction has reached reasonable depth:
+     *      - MUST fail the corresponding incoming HTLC (if any).
+     *    - for any committed HTLC that has been trimmed:
+     *      - once the update transaction that spent the funding output has reached reasonable depth:
+     *        - MUST fail the corresponding incoming HTLC (if any).
+     */
+	if (out->resolved->tx_type == ELTOO_SWEEP && reached_reasonable_depth) {
 		u8 *msg;
 		status_debug("%s/%s reached reasonable depth %u",
 			     tx_type_name(out->tx_type),
@@ -1271,22 +995,29 @@ static void update_resolution_depth(struct tracked_output *out, u32 depth)
 	out->resolved->depth = depth;
 }
 
-static void tx_new_depth(struct tracked_output **outs,
+static void eltoo_tx_new_depth(struct tracked_output **outs,
 			 const struct bitcoin_txid *txid, u32 depth)
 {
 	size_t i;
 
-	/* Special handling for commitment tx reaching depth */
-	if (bitcoin_txid_eq(&outs[0]->resolved->txid, txid)
-	    && depth >= reasonable_depth
-	    && missing_htlc_msgs) {
-		status_debug("Sending %zu missing htlc messages",
-			     tal_count(missing_htlc_msgs));
-		for (i = 0; i < tal_count(missing_htlc_msgs); i++)
-			wire_sync_write(REQ_FD, missing_htlc_msgs[i]);
-		/* Don't do it again. */
-		missing_htlc_msgs = tal_free(missing_htlc_msgs);
-	}
+    /* FIXME React to final update tx getting shared_delay old */
+
+    /* FIXME React to settlement transaction being mined */
+
+    /* Special handling for funding-spending update tx reaching depth */
+    /* FIXME re-add note_missing_htlcs for TRIMMED ONLY here... should this b
+     * done immediately, not at "reasonable depth"?
+     */
+    if (bitcoin_txid_eq(&outs[0]->resolved->txid, txid)
+        && depth >= reasonable_depth
+        && missing_htlc_msgs) {
+        status_debug("Sending %zu missing htlc messages",
+                 tal_count(missing_htlc_msgs));
+        for (i = 0; i < tal_count(missing_htlc_msgs); i++)
+            wire_sync_write(REQ_FD, missing_htlc_msgs[i]);
+        /* Don't do it again. */
+        missing_htlc_msgs = tal_free(missing_htlc_msgs);
+    }
 
 	for (i = 0; i < tal_count(outs); i++) {
 		/* Update output depth. */
@@ -1305,7 +1036,9 @@ static void tx_new_depth(struct tracked_output **outs,
 		 * resolution for? */
 		if (outs[i]->proposal
 		    && bitcoin_txid_eq(&outs[i]->outpoint.txid, txid)
-		    && depth >= outs[i]->proposal->depth_required) {
+            && depth >= outs[i]->proposal->depth_required) {
+            /* ELTOO: We don't need any delays anywhere */
+            assert(outs[i]->proposal->depth_required == 0);
 			proposal_meets_depth(outs[i]);
 		}
 
@@ -1354,7 +1087,7 @@ static void eltoo_handle_preimage(struct tracked_output **outs,
 		 * could be due to multiple identical rhashes in tx. */
 		outs[i]->proposal = tal_free(outs[i]->proposal);
 
-        /* FIXME Actually do something with them by looking for an output I can spend immediately */
+        /* FIXME now that we know this output exists, we should resolve it */
 	}
 }
 
@@ -1398,15 +1131,6 @@ static bool handle_dev_memleak(struct tracked_output **outs, const u8 *msg)
 }
 #endif /* !DEVELOPER */
 
-/* BOLT #5:
- *
- * A node:
- *  - once it has broadcast a funding transaction OR sent a commitment signature
- *  for a commitment transaction that contains an HTLC output:
- *    - until all outputs are *irrevocably resolved*:
- *      - MUST monitor the blockchain for transactions that spend any output that
- *      is NOT *irrevocably resolved*.
- */
 static void wait_for_resolved(struct tracked_output **outs)
 {
 	billboard_update(outs);
@@ -1427,12 +1151,16 @@ static void wait_for_resolved(struct tracked_output **outs)
 		status_debug("Got new message %s",
 			     onchaind_wire_name(fromwire_peektype(msg)));
 
-		if (fromwire_onchaind_depth(msg, &txid, &depth))
-			tx_new_depth(outs, &txid, depth);
+		if (fromwire_onchaind_depth(msg, &txid, &depth)) {
+			eltoo_tx_new_depth(outs, &txid, depth);
+        }
 		else if (fromwire_onchaind_spent(msg, msg, &tx_parts, &input_num,
 						&tx_blockheight)) {
+            /* FIXME walk through logic with someone who knows what's going on  */
 			output_spent(&outs, tx_parts, input_num, tx_blockheight);
 		} else if (fromwire_onchaind_known_preimage(msg, &preimage))
+            /* FIXME Somehow we should be watching out settlement outputs
+               even if they haven't entered utxo set. */
 			eltoo_handle_preimage(outs, &preimage);
 		else if (!handle_dev_memleak(outs, msg))
 			master_badmsg(-1, msg);
@@ -1519,14 +1247,10 @@ static struct htlcs_info *eltoo_init_reply(const tal_t *ctx, const char *what)
     return htlcs_info;
 }
 
-static void eltoo_handle_mutual_close(struct tracked_output **outs,
-                const struct tx_parts *tx)
+/* We always assume funding input is first index in outs */
+static int funding_input_num(struct tracked_output **outs, const struct tx_parts *tx)
 {
     int i;
-
-    /* In this case, we don't care about htlcs: there are none. */
-    eltoo_init_reply(tmpctx, "Tracking mutual close transaction");
-
     /* Annotate the input that matches the funding outpoint as close. We can currently only have a
      * single input for these. */
     for (i=0; i<tal_count(tx->inputs); i++) {
@@ -1536,8 +1260,17 @@ static void eltoo_handle_mutual_close(struct tracked_output **outs,
         }
     }
     assert(i != tal_count(tx->inputs));
+    return i;
+}
 
-    onchain_annotate_txin(&tx->txid, i, TX_CHANNEL_CLOSE);
+static void eltoo_handle_mutual_close(struct tracked_output **outs,
+                const struct tx_parts *tx)
+{
+
+    /* In this case, we don't care about htlcs: there are none. */
+    eltoo_init_reply(tmpctx, "Tracking mutual close transaction");
+
+    onchain_annotate_txin(&tx->txid, funding_input_num(outs, tx), TX_CHANNEL_CLOSE);
 
     /* BOLT #5:
      *
@@ -1547,6 +1280,41 @@ static void eltoo_handle_mutual_close(struct tracked_output **outs,
      * already agreed to the output, which is sent to its specified `scriptpubkey`
      */
     resolved_by_other(outs[0], &tx->txid, MUTUAL_CLOSE);
+    wait_for_resolved(outs);
+}
+
+static void handle_latest_update(const struct tx_parts *tx,
+                  u32 tx_blockheight,
+                  struct tracked_output **outs)
+{
+    struct htlcs_info *htlcs_info;
+    struct bitcoin_outpoint outpoint;
+    struct amount_asset asset;
+    struct amount_sat amt;
+    /* State output will match index */
+    int state_index = funding_input_num(outs, tx);
+
+    outpoint.txid = tx->txid;
+    outpoint.n = state_index;
+
+    asset = wally_tx_output_get_amount(tx->outputs[state_index]);
+    amt = amount_asset_to_sat(&asset);
+
+    htlcs_info = eltoo_init_reply(tmpctx, "Tracking latest update transaction");
+    /* FIXME do something with htlcs_info ? */
+    assert(htlcs_info);
+    onchain_annotate_txin(&tx->txid, state_index, TX_CHANNEL_UNILATERAL);
+
+    resolved_by_other(outs[0], &tx->txid, UPDATE);
+
+    new_tracked_output(&outs,
+                 &outpoint, tx_blockheight,
+                 UPDATE,
+                 amt,
+                 DELAYED_OUTPUT_TO_US,
+                 NULL /* htlc */, NULL /* wscript */, NULL /* remote_htlc_sig */);
+
+    /* Wait until we get shared_delay confirms for this output */
     wait_for_resolved(outs);
 }
 
@@ -1585,6 +1353,9 @@ int main(int argc, char *argv[])
 		master_badmsg(WIRE_ELTOO_ONCHAIND_INIT, msg);
 	}
 
+    // It's not configurable for ln-penalty, just set it here?
+    reasonable_depth = 3;
+
 	status_debug("lightningd_eltoo_onchaind is alive!");
 	/* We need to keep tx around, but there's only one: not really a leak */
 	tal_steal(ctx, notleak(spending_tx));
@@ -1614,16 +1385,15 @@ int main(int argc, char *argv[])
 
     if (is_mutual_close(locktime)) {
         status_debug("Handling mutual close!");
-        record_mutual_close(spending_tx, scriptpubkey[REMOTE],
-                    tx_blockheight);
         eltoo_handle_mutual_close(outs, spending_tx);
     } else {
         status_debug("Handling unilateral close!");
         if (locktime > unbound_update_tx->wtx->locktime) {
-            status_debug("Uh-oh, please be nice Mr Counterparty :(");
             /* Might as well track the state output, see if it ends up in a settlement tx
-             * So `to_node` values can be harvested, HTLCs rescued OOB with counterparty's help?
+             * So `to_node` values can be harvested, HTLCs rescued with counterparty's help?
+             * Or we should immediately report all HTLCs as missing, failing these?
              */
+            status_debug("Uh-oh, please be nice Mr Counterparty :(");
         } else if (locktime == unbound_update_tx->wtx->locktime) {
             status_debug("Unilateral close of last state detected");
             /* Someday we could maybe negotiate with peer to life back into channel
@@ -1633,6 +1403,7 @@ int main(int argc, char *argv[])
              *
              * Either way, this also happens in the "cheating" below, and we handle this identically.
              */
+            handle_latest_update(spending_tx, tx_blockheight, outs);
         } else {
             status_debug("Cheater!");
         }
