@@ -24,9 +24,8 @@ struct channel *new_initial_eltoo_channel(const tal_t *ctx,
 				    const struct pubkey *remote_funding_pubkey,
 				    const struct pubkey *local_settle_pubkey,
 				    const struct pubkey *remote_settle_pubkey,
-                    const struct partial_sig *self_psig,
-                    const struct partial_sig *other_psig,
-                    const struct musig_session *session,
+                    const struct eltoo_sign *complete_state,
+                    const struct eltoo_sign *committed_state,
 				    const struct channel_type *type TAKES,
 				    bool option_wumbo,
 				    enum side opener)
@@ -51,10 +50,8 @@ struct channel *new_initial_eltoo_channel(const tal_t *ctx,
 	channel->eltoo_keyset.other_funding_key = *remote_funding_pubkey;
 	channel->eltoo_keyset.self_settle_key = *local_settle_pubkey;
 	channel->eltoo_keyset.other_settle_key = *remote_settle_pubkey;
-	channel->eltoo_keyset.self_psig = *self_psig;
-	channel->eltoo_keyset.other_psig = *other_psig;
-	channel->eltoo_keyset.session = *session;
-
+	channel->eltoo_keyset.last_complete_state = *complete_state;
+	channel->eltoo_keyset.last_committed_state = *committed_state;
 	channel->htlcs = NULL;
 
     pubkey_ptrs[0] = local_funding_pubkey;

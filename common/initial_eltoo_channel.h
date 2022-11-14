@@ -30,9 +30,8 @@ struct fulfilled_htlc;
  * @remote_funding_pubkey: remote funding key
  * @local_settle_pubkey: local settlement key
  * @remote_settle_key: remote settlement key
- * @self_psig: local partial signature for reestablishment only
- * @other_psig: remote partial signature for reestablishment only
- * @session: musig session for reestablishment only
+ * @complete_state: MuSig signing state for which we have all sigs
+ * @committed_sate: MuSig signing state for which we have incomplete sigs
  * @type: type for this channel
  * @option_wumbo: has peer currently negotiated wumbo?
  * @opener: which side initiated it.
@@ -51,9 +50,8 @@ struct channel *new_initial_eltoo_channel(const tal_t *ctx,
 				    const struct pubkey *remote_funding_pubkey,
 				    const struct pubkey *local_settle_pubkey,
 				    const struct pubkey *remote_settle_pubkey,
-                    const struct partial_sig *self_psig,
-                    const struct partial_sig *other_psig,
-                    const struct musig_session *session,
+                    const struct eltoo_sign *complete_state,
+                    const struct eltoo_sign *committed_state,
 				    const struct channel_type *type TAKES,
 				    bool option_wumbo,
 				    enum side opener);
