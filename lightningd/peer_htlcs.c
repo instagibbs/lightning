@@ -2306,11 +2306,16 @@ void peer_sending_updatesig(struct channel *channel, const u8 *msg)
     /* These are unused currently... */
 	struct partial_sig our_update_psig;
     struct musig_session session;
+    struct bitcoin_tx *committed_update_tx;
+    struct bitcoin_tx *committed_settle_tx;
 
 	if (!fromwire_channeld_sending_updatesig(msg, msg,
 						&update_num,
 						&changed_htlcs,
-						&our_update_psig, &session)) {
+						&our_update_psig,
+                        &session,
+                        &committed_update_tx,
+                        &committed_settle_tx)) {
 		channel_internal_error(channel, "bad channel_sending_updatesig %s",
 				       tal_hex(channel, msg));
 		return;

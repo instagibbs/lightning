@@ -661,16 +661,18 @@ static u8 *sending_updatesig_msg(const tal_t *ctx,
 				 u64 update_index,
 				 const struct htlc **changed_htlcs,
                  const struct partial_sig *our_update_psig,
-                 const struct musig_session *session)
+                 const struct musig_session *session,
+	   		     const struct bitcoin_tx *committed_update_tx,
+			     const struct bitcoin_tx *committed_settle_tx)
 {
 	struct changed_htlc *changed;
 	u8 *msg;
 
 	/* We tell master what (of our) HTLCs we will be
-	 * committed to. */
+	 * committed to, and of unfinished partial signtures. */
 	changed = changed_htlc_arr(tmpctx, changed_htlcs);
 	msg = towire_channeld_sending_updatesig(ctx, update_index,
-						changed, our_update_psig, session);
+						changed, our_update_psig, session, committed_update_tx, committed_settle_tx);
 	return msg;
 }
 
@@ -883,8 +885,9 @@ static void send_update(struct eltoo_peer *peer)
 
     /* Cache half-signed tx, for finalization when ACK comes back */
     /* FIXME delete older first */
-    peer->channel->last_unsigned_update = tal_steal(peer->channel, update_and_settle_txs[0]);
-    peer->channel->last_unsigned_settle = tal_steal(peer->channel, update_and_settle_txs[1]);
+    /* FIXME these have to be persisted for safety!!! They can appear at any time */
+    peer->channel->last_committed_update = tal_steal(peer->channel, update_and_settle_txs[0]);
+    peer->channel->last_committed_settle = tal_steal(peer->channel, update_and_settle_txs[1]);
 
 #if DEVELOPER
 	if (peer->dev_disable_commit) {
@@ -899,7 +902,9 @@ static void send_update(struct eltoo_peer *peer)
 	msg = sending_updatesig_msg(NULL, peer->next_index,
 				    changed_htlcs,
 				    &peer->channel->eltoo_keyset.self_psig,
-				    &peer->channel->eltoo_keyset.session);
+				    &peer->channel->eltoo_keyset.session,
+                    peer->channel->last_committed_update,
+                    peer->channel->last_committed_update);
 	/* Message is empty; receiving it is the point. */
 	master_wait_sync_reply(tmpctx, peer, take(msg),
 			       WIRE_CHANNELD_SENDING_UPDATESIG_REPLY);
@@ -1227,8 +1232,8 @@ static void handle_peer_update_sig_ack(struct eltoo_peer *peer, const u8 *msg)
 
     status_debug("partial signature combine req on update tx %s, settle tx %s, our_psig: %s,"
                 " their_psig: %s, session %s, OLD our nonce %s, OLD their nonce %s",
-             type_to_string(tmpctx, struct bitcoin_tx, peer->channel->last_unsigned_update),
-             type_to_string(tmpctx, struct bitcoin_tx, peer->channel->last_unsigned_settle),
+             type_to_string(tmpctx, struct bitcoin_tx, peer->channel->last_committed_update),
+             type_to_string(tmpctx, struct bitcoin_tx, peer->channel->last_committed_settle),
              type_to_string(tmpctx, struct partial_sig, &peer->channel->eltoo_keyset.self_psig),
              type_to_string(tmpctx, struct partial_sig, &peer->channel->eltoo_keyset.other_psig),
              type_to_string(tmpctx, struct musig_session, &peer->channel->eltoo_keyset.session),
@@ -1243,8 +1248,8 @@ static void handle_peer_update_sig_ack(struct eltoo_peer *peer, const u8 *msg)
                             &peer->channel->eltoo_keyset.self_psig,
                             &peer->channel->eltoo_keyset.other_psig,
                             &peer->channel->eltoo_keyset.session,
-                            peer->channel->last_unsigned_update,
-                            peer->channel->last_unsigned_settle,
+                            peer->channel->last_committed_update,
+                            peer->channel->last_committed_settle,
                             &peer->channel->eltoo_keyset.inner_pubkey);
     wire_sync_write(HSM_FD, take(comb_msg));
     comb_msg = wire_sync_read(tmpctx, HSM_FD);

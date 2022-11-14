@@ -484,6 +484,9 @@ msgdata,channeld_sending_updatesig,num_changed,u16,
 msgdata,channeld_sending_updatesig,changed,changed_htlc,num_changed
 msgdata,channeld_sending_updatesig,our_update_p_sig,partial_sig,
 msgdata,channeld_sending_updatesig,session,musig_session,
+# Committed but not yet completed
+msgdata,channeld_sending_updatesig,update_tx,bitcoin_tx,
+msgdata,channeld_sending_updatesig,settle_tx,bitcoin_tx,
 
 # Wait for reply, to make sure it's on disk before we send commit.
 msgtype,channeld_sending_updatesig_reply,1180

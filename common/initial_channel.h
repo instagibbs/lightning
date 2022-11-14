@@ -93,8 +93,8 @@ struct channel {
 	u64 update_number_obscurer;
 
     /* Cached transactions waiting for counter-sign via `update_signed_ack` */
-    struct bitcoin_tx *last_unsigned_update;
-    struct bitcoin_tx *last_unsigned_settle;
+    struct bitcoin_tx *last_committed_update;
+    struct bitcoin_tx *last_committed_settle;
 
     /* End Eltoo fields*/
 
