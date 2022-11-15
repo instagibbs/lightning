@@ -1161,7 +1161,8 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 			      "Bad combine_psig_reply %s", tal_hex(tmpctx, msg));
     }
 
-    /* FIXME Now that state is complete, move signing state over from last_committed_state to last_complete_state */
+    /* Update succeeded, migrate over signing state from last_committed_state to last_complete_state */
+    state->channel->eltoo_keyset.last_complete_state = state->channel->eltoo_keyset.last_committed_state;
 
 	/* We don't send this ourselves: channeld does, because master needs
 	 * to save state to disk before doing so. */
