@@ -1325,11 +1325,14 @@ int main(int argc, char *argv[])
 	const tal_t *ctx = tal(NULL, char);
 	u8 *msg;
     struct tx_parts *spending_tx;
-    struct bitcoin_tx *unbound_update_tx, *unbound_settle_tx;
+    /* Full tx we have partial signatures for */
+    struct bitcoin_tx *unbound_complete_update_tx, *unbound_complete_settle_tx;
+    /* Tx we do not have full signatures for, but may appear on-chain */
+    struct bitcoin_tx *unbound_committed_update_tx, *unbound_committed_settle_tx;
     struct tracked_output **outs;
     struct bitcoin_outpoint funding;
     struct amount_sat funding_sats;
-    u32 locktime, tx_blockheight;
+    u32 locktime, tx_blockheight, max_known_version;
     u8 *scriptpubkey[NUM_SIDES];
 
 	subdaemon_setup(argc, argv);
@@ -1344,8 +1347,10 @@ int main(int argc, char *argv[])
         &funding_sats,
         &spending_tx,
         &locktime,
-        &unbound_update_tx,
-        &unbound_settle_tx,
+        &unbound_complete_update_tx,
+        &unbound_complete_settle_tx,
+        &unbound_committed_update_tx,
+        &unbound_committed_settle_tx,
         &tx_blockheight,
         &our_msat,
         &scriptpubkey[LOCAL],
@@ -1357,14 +1362,22 @@ int main(int argc, char *argv[])
     reasonable_depth = 3;
 
 	status_debug("lightningd_eltoo_onchaind is alive!");
-	/* We need to keep tx around, but there's only one: not really a leak */
+	/* We need to keep tx around, but there's only a constant number: not really a leak */
 	tal_steal(ctx, notleak(spending_tx));
-	tal_steal(ctx, notleak(unbound_update_tx));
-	tal_steal(ctx, notleak(unbound_settle_tx));
+	tal_steal(ctx, notleak(unbound_complete_update_tx));
+	tal_steal(ctx, notleak(unbound_complete_settle_tx));
 
     status_debug("Unbound update and settle transactions to potentially broadcast: %s, %s",
-        type_to_string(tmpctx, struct bitcoin_tx, unbound_update_tx),
-        type_to_string(tmpctx, struct bitcoin_tx, unbound_settle_tx));
+        type_to_string(tmpctx, struct bitcoin_tx, unbound_complete_update_tx),
+        type_to_string(tmpctx, struct bitcoin_tx, unbound_complete_settle_tx));
+
+    if (unbound_committed_update_tx) {
+	    tal_steal(ctx, notleak(unbound_committed_update_tx));
+	    tal_steal(ctx, notleak(unbound_committed_settle_tx));
+        status_debug("Unbound update and settle transactions committed but incomplete: %s, %s",
+            type_to_string(tmpctx, struct bitcoin_tx, unbound_committed_update_tx),
+            type_to_string(tmpctx, struct bitcoin_tx, unbound_committed_settle_tx));
+    }
 
     /* These are the utxos we are interested in */
     outs = tal_arr(ctx, struct tracked_output *, 0);
@@ -1383,19 +1396,27 @@ int main(int argc, char *argv[])
                           funding_sats,
                           tal_count(spending_tx->outputs))));
 
+    /* Committed state should be one step further max */
+    max_known_version = unbound_complete_update_tx->wtx->locktime;
+    if (unbound_committed_update_tx) {
+        assert(unbound_complete_update_tx->wtx->locktime == unbound_committed_update_tx->wtx->locktime ||
+                unbound_complete_update_tx->wtx->locktime == unbound_committed_update_tx->wtx->locktime + 1);
+        max_known_version = unbound_committed_update_tx->wtx->locktime;
+    }
+
     if (is_mutual_close(locktime)) {
         status_debug("Handling mutual close!");
         eltoo_handle_mutual_close(outs, spending_tx);
     } else {
         status_debug("Handling unilateral close!");
-        if (locktime > unbound_update_tx->wtx->locktime) {
+        if (locktime > max_known_version) {
             /* Might as well track the state output, see if it ends up in a settlement tx
              * So `to_node` values can be harvested, HTLCs rescued with counterparty's help?
              * Or we should immediately report all HTLCs as missing, failing these?
              */
             status_debug("Uh-oh, please be nice Mr Counterparty :(");
-        } else if (locktime == unbound_update_tx->wtx->locktime) {
-            status_debug("Unilateral close of last state detected");
+        } else if (locktime == max_known_version) {
+            status_debug("Unilateral close of last known state detected");
             /* Someday we could maybe negotiate with peer to life back into channel
              * For now we just deal with it by submitting settle transaction.
              * If we know it's counter-party, maybe they'll pay for us :)

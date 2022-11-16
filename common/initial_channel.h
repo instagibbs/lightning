@@ -86,15 +86,11 @@ struct channel {
 
     /* Eltoo fields below */
 
-    /* Keys and signing state used for the lifetime of the channel */
+    /* Keys, tx, and signing state used for the lifetime of the channel */
     struct eltoo_keyset eltoo_keyset;
 
 	/* Mask for obscuring the encoding of the update number. */
 	u64 update_number_obscurer;
-
-    /* Cached transactions waiting for counter-sign via `update_signed_ack` */
-    struct bitcoin_tx *last_committed_update;
-    struct bitcoin_tx *last_committed_settle;
 
     /* End Eltoo fields*/
 

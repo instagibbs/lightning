@@ -16,8 +16,6 @@ struct keyset {
 
 /* Holds all information for a particular state being signed */
 struct eltoo_sign {
-    struct bitcoin_tx *update_tx;
-    struct bitcoin_tx *settle_tx;
     struct partial_sig self_psig, other_psig;
     struct musig_session session;
 };
@@ -32,10 +30,16 @@ struct eltoo_keyset {
     struct nonce self_next_nonce, other_next_nonce;
     /* State we can go to chain with at any point. */
     struct eltoo_sign last_complete_state;
+    /* Will be stolen, so needs to be not copied directly with other state */
+    struct bitcoin_tx *complete_update_tx;
+    struct bitcoin_tx *complete_settle_tx;
     /* State we have committed to but have incomplete signatures for.
      * This may be used in channel reestablishment or for reacting
        to the appearance of the state on-chain.  */
     struct eltoo_sign last_committed_state;
+    /* Will be stolen, so needs to be not copied directly with other state */
+    struct bitcoin_tx *committed_update_tx;
+    struct bitcoin_tx *committed_settle_tx;
 };
 
 /* Self == owner of commitment tx, other == non-owner. */
