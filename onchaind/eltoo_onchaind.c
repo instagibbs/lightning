@@ -1305,7 +1305,7 @@ static void handle_latest_update(const struct tx_parts *tx,
     assert(htlcs_info);
     onchain_annotate_txin(&tx->txid, state_index, TX_CHANNEL_UNILATERAL);
 
-    resolved_by_other(outs[0], &tx->txid, UPDATE);
+    resolved_by_other(outs[0], &tx->txid, ELTOO_UPDATE);
 
     new_tracked_output(&outs,
                  &outpoint, tx_blockheight,
