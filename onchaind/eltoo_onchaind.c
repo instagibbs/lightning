@@ -39,20 +39,6 @@ static struct bitcoin_tx *committed_update_tx, *committed_settle_tx;
 /* Required in various places: keys for commitment transaction. */
 static const struct eltoo_keyset *keyset;
 
-/* The dust limit to use when we generate transactions. */
-static struct amount_sat dust_limit;
-
-/* The CSV delays for each side. */
-static u32 to_self_delay[NUM_SIDES];
-
-/* Where we send money to (our wallet) */
-static u32 our_wallet_index;
-static struct ext_key our_wallet_ext_key;
-static struct pubkey our_wallet_pubkey;
-
-/* Their revocation secret (only if they cheated). */
-static const struct secret *remote_per_commitment_secret;
-
 /* When to tell master about HTLCs which are missing/timed out */
 static u32 reasonable_depth;
 
@@ -65,16 +51,13 @@ static u8 **queued_msgs;
 /* Our recorded channel balance at 'chain time' */
 static struct amount_msat our_msat;
 
-/* The minimum relay feerate acceptable to the fullnode.  */
-static u32 min_relay_feerate;
-
 /* If we broadcast a tx, or need a delay to resolve the output. */
 struct proposed_resolution {
 	/* This can be NULL if our proposal is to simply ignore it after depth */
 	const struct bitcoin_tx *tx;
 	/* Non-zero if this is CSV-delayed. */
 	u32 depth_required;
-	enum tx_type tx_type;
+	enum eltoo_tx_type tx_type;
 };
 
 /* How it actually got resolved. */
@@ -139,234 +122,6 @@ static void send_coin_mvt(struct chain_coin_mvt *mvt TAKES)
 		tal_free(mvt);
 }
 
-static u8 *penalty_to_us(const tal_t *ctx,
-			 struct bitcoin_tx *tx,
-			 const u8 *wscript)
-{
-	return towire_hsmd_sign_penalty_to_us(ctx, remote_per_commitment_secret,
-					     tx, wscript);
-}
-
-/** replace_penalty_tx_to_us
- *
- * @brief creates a replacement TX for
- * a given penalty tx.
- *
- * @param ctx - the context to allocate
- * off of.
- * @param hsm_sign_msg - function to construct
- * the signing message to HSM.
- * @param penalty_tx - the original
- * penalty transaction.
- * @param output_amount - the output
- * amount to use instead of the
- * original penalty transaction.
- * If this amount is below the dust
- * limit, the output is replaced with
- * an `OP_RETURN` instead.
- *
- * @return the signed transaction.
- */
-static struct bitcoin_tx *
-replace_penalty_tx_to_us(const tal_t *ctx,
-			 u8 *(*hsm_sign_msg)(const tal_t *ctx,
-					     struct bitcoin_tx *tx,
-					     const u8 *wscript),
-			 const struct bitcoin_tx *penalty_tx,
-			 struct amount_sat *output_amount)
-{
-	struct bitcoin_tx *tx;
-
-	/* The penalty tx input.  */
-	const struct wally_tx_input *input;
-	/* Specs of the penalty tx input.  */
-	struct bitcoin_outpoint input_outpoint;
-	u8 *input_wscript;
-	u8 *input_element;
-	struct amount_sat input_amount;
-
-	/* Signature from the HSM.  */
-	u8 *msg;
-	struct bitcoin_signature sig;
-	/* Witness we generate from the signature and other data.  */
-	u8 **witness;
-
-
-	/* Get the single input of the penalty tx.  */
-	input = &penalty_tx->wtx->inputs[0];
-	/* Extract the input-side data.  */
-	bitcoin_tx_input_get_txid(penalty_tx, 0, &input_outpoint.txid);
-	input_outpoint.n = input->index;
-	input_wscript = tal_dup_arr(tmpctx, u8,
-				    input->witness->items[2].witness,
-				    input->witness->items[2].witness_len,
-				    0);
-	input_element = tal_dup_arr(tmpctx, u8,
-				    input->witness->items[1].witness,
-				    input->witness->items[1].witness_len,
-				    0);
-	input_amount = psbt_input_get_amount(penalty_tx->psbt, 0);
-
-	/* Create the replacement.  */
-	tx = bitcoin_tx(ctx, chainparams, 1, 1, /*locktime*/ 0);
-	/* Reconstruct the input.  */
-	bitcoin_tx_add_input(tx, &input_outpoint,
-			     BITCOIN_TX_RBF_SEQUENCE,
-			     NULL, input_amount, NULL, input_wscript, NULL, NULL);
-	/* Reconstruct the output with a smaller amount.  */
-	if (amount_sat_greater(*output_amount, dust_limit)) {
-		bitcoin_tx_add_output(tx,
-				      scriptpubkey_p2wpkh(tx,
-							  &our_wallet_pubkey),
-				      NULL,
-				      *output_amount);
-		psbt_add_keypath_to_last_output(tx, our_wallet_index, &our_wallet_ext_key);
-	} else {
-		bitcoin_tx_add_output(tx,
-				      scriptpubkey_opreturn_padded(tx),
-				      NULL,
-				      AMOUNT_SAT(0));
-		*output_amount = AMOUNT_SAT(0);
-	}
-
-	/* Finalize the transaction.  */
-	bitcoin_tx_finalize(tx);
-
-	/* Ask HSM to sign it.  */
-	if (!wire_sync_write(HSM_FD, take(hsm_sign_msg(NULL, tx,
-							input_wscript))))
-		status_failed(STATUS_FAIL_HSM_IO, "While feebumping penalty: writing sign request to hsm");
-	msg = wire_sync_read(tmpctx, HSM_FD);
-	if (!msg || !fromwire_hsmd_sign_tx_reply(msg, &sig))
-		status_failed(STATUS_FAIL_HSM_IO, "While feebumping penalty: reading sign_tx_reply: %s", tal_hex(tmpctx, msg));
-
-	/* Install the witness with the signature.  */
-	witness = bitcoin_witness_sig_and_element(tx, &sig,
-						  input_element,
-						  tal_bytelen(input_element),
-						  input_wscript);
-	bitcoin_tx_input_set_witness(tx, 0, take(witness));
-
-	return tx;
-}
-
-/** min_rbf_bump
- *
- * @brief computes the minimum RBF bump required by
- * BIP125, given an index.
- *
- * @desc BIP125 requires that an replacement transaction
- * pay, not just the fee of the evicted transactions,
- * but also the minimum relay fee for itself.
- * This function assumes that previous RBF attempts
- * paid exactly the return value for that attempt, on
- * top of the initial transaction fee.
- * It can serve as a baseline for other functions that
- * compute a suggested fee: get whichever is higher,
- * the fee this function suggests, or your own unique
- * function.
- *
- * This function is provided as a common function that
- * all RBF-bump computations can use.
- *
- * @param weight - the weight of the transaction you
- * are RBFing.
- * @param index - 0 makes no sense, 1 means this is
- * the first RBF attempt, 2 means this is the 2nd
- * RBF attempt, etc.
- *
- * @return the suggested total fee.
- */
-static struct amount_sat min_rbf_bump(size_t weight,
-				      size_t index)
-{
-	struct amount_sat min_relay_fee;
-	struct amount_sat min_rbf_bump;
-
-	/* Compute the minimum relay fee for a transaction of the given
-	 * weight.  */
-	min_relay_fee = amount_tx_fee(min_relay_feerate, weight);
-
-	/* For every RBF attempt, we add the min-relay-fee.
-	 * Or in other words, we multiply the min-relay-fee by the
-	 * index number of the attempt.
-	 */
-	if (mul_overflows_u64(index, min_relay_fee.satoshis)) /* Raw: multiplication.  */
-		min_rbf_bump = AMOUNT_SAT(UINT64_MAX);
-	else
-		min_rbf_bump.satoshis = index * min_relay_fee.satoshis; /* Raw: multiplication.  */
-
-	return min_rbf_bump;
-}
-
-/** compute_penalty_output_amount
- *
- * @brief computes the appropriate output amount for a
- * penalty transaction that spends a theft transaction
- * that is already of a specific depth.
- *
- * @param initial_amount - the outout amount of the first
- * penalty transaction.
- * @param depth - the current depth of the theft
- * transaction.
- * @param max_depth - the maximum depth of the theft
- * transaction, after which the theft transaction will
- * succeed.
- * @param weight - the weight of the first penalty
- * transaction, in Sipa.
- */
-static struct amount_sat
-compute_penalty_output_amount(struct amount_sat initial_amount,
-			      u32 depth, u32 max_depth,
-			      size_t weight)
-{
-	struct amount_sat max_output_amount;
-	struct amount_sat output_amount;
-	struct amount_sat deducted_amount;
-
-	assert(depth <= max_depth);
-	assert(depth > 0);
-
-	/* The difference between initial_amount, and the fee suggested
-	 * by min_rbf_bump, is the largest allowed output amount.
-	 *
-	 * depth = 1 is the first attempt, thus maps to the 0th RBF
-	 * (i.e. the initial attempt that is not RBFed itself).
-	 * We actually start to replace at depth = 2, so we use
-	 * depth - 1 as the index for min_rbf_bump.
-	 */
-	if (!amount_sat_sub(&max_output_amount,
-			    initial_amount, min_rbf_bump(weight, depth - 1)))
-		/* If min_rbf_bump is larger than the initial_amount,
-		 * we should just donate the whole output as fee,
-		 * meaning we get 0 output amount.
-		 */
-		return AMOUNT_SAT(0);
-
-	/* Map the depth / max_depth into a number between 0->1.  */
-	double x = (double) depth / (double) max_depth;
-	/* Get the cube of the above position, resulting in a graph
-	 * where the y is close to 0 up to less than halfway through,
-	 * then quickly rises up to 1 as depth nears the max depth.
-	 */
-	double y = x * x * x;
-	/* Scale according to the initial_amount.  */
-	deducted_amount.satoshis = (u64) (y * initial_amount.satoshis); /* Raw: multiplication.  */
-
-	/* output_amount = initial_amount - deducted_amount.  */
-	if (!amount_sat_sub(&output_amount,
-			    initial_amount, deducted_amount))
-		/* If underflow, force to 0.  */
-		output_amount = AMOUNT_SAT(0);
-
-	/* If output exceeds max, return max.  */
-	if (amount_sat_less(max_output_amount, output_amount))
-		return max_output_amount;
-
-	return output_amount;
-}
-
-
 static struct tracked_output *
 new_tracked_output(struct tracked_output ***outs,
 		   const struct bitcoin_outpoint *outpoint,
@@ -418,55 +173,40 @@ static void ignore_output(struct tracked_output *out)
 	out->resolved->tx_type = SELF;
 }
 
-static enum wallet_tx_type onchain_txtype_to_wallet_txtype(enum tx_type t)
+static enum wallet_tx_type onchain_txtype_to_wallet_txtype(enum eltoo_tx_type t)
 {
+    /* FIXME put eltoo_tx_type into proper wallet_tx_type */
 	switch (t) {
-	case FUNDING_TRANSACTION:
+	case ELTOO_FUNDING_TRANSACTION:
 		return TX_CHANNEL_FUNDING;
-	case MUTUAL_CLOSE:
+	case ELTOO_MUTUAL_CLOSE:
 		return TX_CHANNEL_CLOSE;
-	case OUR_UNILATERAL:
-		return TX_CHANNEL_UNILATERAL;
-	case THEIR_HTLC_FULFILL_TO_US:
-	case OUR_HTLC_SUCCESS_TX:
-		return TX_CHANNEL_HTLC_SUCCESS;
-	case OUR_HTLC_TIMEOUT_TO_US:
-	case OUR_HTLC_TIMEOUT_TX:
-		return TX_CHANNEL_HTLC_TIMEOUT;
-	case OUR_DELAYED_RETURN_TO_WALLET:
-	case SELF:
-		return TX_CHANNEL_SWEEP;
-	case OUR_PENALTY_TX:
-		return TX_CHANNEL_PENALTY;
-	case THEIR_DELAYED_CHEAT:
-		return TX_CHANNEL_CHEAT | TX_THEIRS;
-	case THEIR_UNILATERAL:
-	case UNKNOWN_UNILATERAL:
-	case THEIR_REVOKED_UNILATERAL:
-		return TX_CHANNEL_UNILATERAL | TX_THEIRS;
-	case THEIR_HTLC_TIMEOUT_TO_THEM:
-		return TX_CHANNEL_HTLC_TIMEOUT | TX_THEIRS;
-	case OUR_HTLC_FULFILL_TO_THEM:
-		return TX_CHANNEL_HTLC_SUCCESS | TX_THEIRS;
-	case IGNORING_TINY_PAYMENT:
-	case UNKNOWN_TXTYPE:
+    case ELTOO_UPDATE:
+    case ELTOO_INVALIDATED_UPDATE:
+    case ELTOO_SETTLE:
+    case ELTOO_INVALIDATED_SETTLE:
+    case ELTOO_SWEEP:
+    case ELTOO_IGNORING_TINY_PAYMENT:
+    case ELTOO_SELF:
+    case ELTOO_UNKNOWN_TXTYPE:
 		return TX_UNKNOWN;
 	}
 	abort();
 }
 
-/** proposal_is_rbfable
+/** eltoo_proposal_is_rbfable
  *
  * @brief returns true if the given proposal
  * would be RBFed if the output it is tracking
  * increases in depth without being spent.
  */
-static bool proposal_is_rbfable(const struct proposed_resolution *proposal)
+static bool eltoo_proposal_is_rbfable(const struct proposed_resolution *proposal)
 {
-	/* Future onchain resolutions, such as anchored commitments, might
-	 * want to RBF as well.
+	/* We may fee bump anything time-sensitive
 	 */
-	return proposal->tx_type == OUR_PENALTY_TX;
+	return proposal->tx_type == ELTOO_UPDATE ||
+            proposal->tx_type == ELTOO_SETTLE ||
+            proposal->tx_type == ELTOO_SWEEP;
 }
 
 /** proposal_should_rbf
@@ -476,15 +216,15 @@ static bool proposal_is_rbfable(const struct proposed_resolution *proposal)
  * rebroadcast.
  *
  * @desc precondition: the given output must have an
- * rbfable proposal as per `proposal_is_rbfable`.
+ * rbfable proposal as per `eltoo_proposal_is_rbfable`.
  */
-static void proposal_should_rbf(struct tracked_output *out)
+static void eltoo_proposal_should_rbf(struct tracked_output *out)
 {
 	struct bitcoin_tx *tx = NULL;
 	u32 depth;
 
 	assert(out->proposal);
-	assert(proposal_is_rbfable(out->proposal));
+	assert(eltoo_proposal_is_rbfable(out->proposal));
 
 	depth = out->depth;
 
@@ -500,43 +240,6 @@ static void proposal_should_rbf(struct tracked_output *out)
 	if (depth <= 1)
 		return;
 
-	if (out->proposal->tx_type == OUR_PENALTY_TX) {
-		u32 max_depth = to_self_delay[REMOTE];
-		u32 my_depth = depth;
-		size_t weight = bitcoin_tx_weight(out->proposal->tx);
-		struct amount_sat initial_amount;
-		struct amount_sat new_amount;
-
-		if (max_depth >= 1)
-			max_depth -= 1;
-		if (my_depth >= max_depth)
-			my_depth = max_depth;
-
-		bitcoin_tx_output_get_amount_sat(out->proposal->tx, 0,
-						 &initial_amount);
-
-		/* Compute the new output amount for the RBF.  */
-		new_amount = compute_penalty_output_amount(initial_amount,
-							   my_depth, max_depth,
-							   weight);
-		assert(amount_sat_less_eq(new_amount, initial_amount));
-		/* Recreate the penalty tx.  */
-		tx = replace_penalty_tx_to_us(tmpctx,
-					      &penalty_to_us,
-					      out->proposal->tx, &new_amount);
-
-		/* We also update the output's value, so our accounting
-		 * is correct. */
-		out->sat = new_amount;
-
-		status_debug("Created RBF OUR_PENALTY_TX with output %s "
-			     "(originally %s) for depth %"PRIu32"/%"PRIu32".",
-			     type_to_string(tmpctx, struct amount_sat,
-					    &new_amount),
-			     type_to_string(tmpctx, struct amount_sat,
-					    &initial_amount),
-			     depth, to_self_delay[LOCAL]);
-	}
 	/* Add other RBF-able proposals here.  */
 
 	/* Broadcast the transaction.  */
@@ -577,9 +280,10 @@ static void proposal_meets_depth(struct tracked_output *out)
 		     output_type_name(out->output_type));
 
 	if (out->proposal)
-		/* Our own penalty transactions are going to be RBFed.  */
-		is_rbf = proposal_is_rbfable(out->proposal);
+		/* Any state transition we want is going to be package-RBFed.  */
+		is_rbf = eltoo_proposal_is_rbfable(out->proposal);
 
+    /* FIXME Figure out how fees are going to be paid via anchor */
 	wire_sync_write(
 	    REQ_FD,
 	    take(towire_onchaind_broadcast_tx(
@@ -588,7 +292,7 @@ static void proposal_meets_depth(struct tracked_output *out)
 		 is_rbf)));
 
 	/* Don't wait for this if we're ignoring the tiny payment. */
-	if (out->proposal->tx_type == IGNORING_TINY_PAYMENT) {
+	if (out->proposal->tx_type == ELTOO_IGNORING_TINY_PAYMENT) {
 		ignore_output(out);
 	}
 
@@ -1062,8 +766,6 @@ static void eltoo_tx_new_depth(struct tracked_output **outs,
 		if (outs[i]->proposal
 		    && bitcoin_txid_eq(&outs[i]->outpoint.txid, txid)
             && depth >= outs[i]->proposal->depth_required) {
-            /* ELTOO: We don't need any delays anywhere */
-            assert(outs[i]->proposal->depth_required == 0);
 			proposal_meets_depth(outs[i]);
 		}
 
@@ -1071,8 +773,8 @@ static void eltoo_tx_new_depth(struct tracked_output **outs,
 		 * we should RBF?  */
 		if (outs[i]->proposal
 		    && bitcoin_txid_eq(&outs[i]->outpoint.txid, txid)
-		    && proposal_is_rbfable(outs[i]->proposal))
-			proposal_should_rbf(outs[i]);
+		    && eltoo_proposal_is_rbfable(outs[i]->proposal))
+			eltoo_proposal_should_rbf(outs[i]);
 	}
 }
 
