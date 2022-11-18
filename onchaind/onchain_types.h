@@ -59,7 +59,7 @@ enum eltoo_tx_type {
 	/* A mutual close: spends funding */
 	ELTOO_MUTUAL_CLOSE,
 
-	/* Unknown unilateral (presumably theirs): spends funding */
+	/* Latest unilateral: spends funding */
 	ELTOO_UPDATE,
 
 	/* Old unilateral: spends funding */

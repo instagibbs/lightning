@@ -126,15 +126,12 @@ void bind_tx_to_funding_outpoint(struct bitcoin_tx *update_tx,
     bitcoin_tx_input_set_witness(update_tx, /* input_num */ 0, update_witness);
 }
 
-void bind_settle_tx(const struct bitcoin_tx *update_tx,
+void bind_settle_tx(const struct bitcoin_txid update_txid,
                     int output_index,
                     struct bitcoin_tx *settle_tx)
 {
-    struct bitcoin_txid txid;
-    /* Really direct txid surgery... libwally routine better to modify PSBT input! */
-    bitcoin_txid(update_tx, &txid);
     assert(settle_tx->wtx->num_inputs == 1); /* We don't craft anything else */
-    memcpy(settle_tx->wtx->inputs[0].txhash, &txid, 32);
+    memcpy(settle_tx->wtx->inputs[0].txhash, &update_txid, 32);
 }
 
 void bind_update_tx_to_update_outpoint(struct bitcoin_tx *update_tx,
@@ -232,6 +229,7 @@ struct bitcoin_tx **bind_txs_to_funding_outpoint(const struct bitcoin_tx *update
     secp256k1_musig_keyagg_cache dummy_cache;
     struct pubkey inner_pubkey;
     struct eltoo_keyset keyset_copy;
+    struct bitcoin_txid update_txid;
     towire_bitcoin_tx(&p, update_tx);
     p_start = p;
     p_len = tal_count(p);
@@ -275,7 +273,8 @@ struct bitcoin_tx **bind_txs_to_funding_outpoint(const struct bitcoin_tx *update
         &inner_pubkey,
         &sig);
 
-    bind_settle_tx(bound_update_tx,
+    bitcoin_txid(bound_update_tx, &update_txid);
+    bind_settle_tx(update_txid,
         0 /* output_index: we can't know for sure until update tx confirms, this is
         for ease of use */,
         bound_settle_tx);

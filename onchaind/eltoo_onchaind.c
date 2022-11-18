@@ -15,6 +15,7 @@
 #include <common/status.h>
 #include <common/subdaemon.h>
 #include <common/type_to_string.h>
+#include <common/update_tx.h>
 #include <hsmd/hsmd_wiregen.h>
 #include <onchaind/onchain_types.h>
 #include <onchaind/onchaind_wiregen.h>
@@ -29,11 +30,14 @@
 
 /* FIXME Everything copy/pasted bc static. Deduplicate later */
 
-/* Required in various places: keys for commitment transaction. */
-static const struct keyset *keyset;
+/* Full tx we have partial signatures for */
+static struct bitcoin_tx *complete_update_tx, *complete_settle_tx;
 
-/* IFF it's their commitment tx: HSM can't derive their per-commitment point! */
-static const struct pubkey *remote_per_commitment_point;
+/* Tx we do not have full signatures for, but may appear on-chain */
+static struct bitcoin_tx *committed_update_tx, *committed_settle_tx;
+
+/* Required in various places: keys for commitment transaction. */
+static const struct eltoo_keyset *keyset;
 
 /* The dust limit to use when we generate transactions. */
 static struct amount_sat dust_limit;
@@ -778,6 +782,27 @@ static void billboard_update(struct tracked_output **outs)
 		       output_type_name(best->output_type), best->depth);
 }
 
+static void propose_resolution(struct tracked_output *out,
+                   const struct bitcoin_tx *tx,
+                   unsigned int depth_required,
+                   enum tx_type tx_type)
+{
+    status_debug("Propose handling %s/%s by %s (%s) after %u blocks",
+             tx_type_name(out->tx_type),
+             output_type_name(out->output_type),
+             tx_type_name(tx_type),
+             tx ? type_to_string(tmpctx, struct bitcoin_tx, tx):"IGNORING",
+             depth_required);
+
+    out->proposal = tal(out, struct proposed_resolution);
+    out->proposal->tx = tal_steal(out->proposal, tx);
+    out->proposal->depth_required = depth_required;
+    out->proposal->tx_type = tx_type;
+
+    if (depth_required == 0)
+        proposal_meets_depth(out);
+}
+
 static void unwatch_txid(const struct bitcoin_txid *txid)
 {
 	u8 *msg;
@@ -1096,8 +1121,6 @@ static void memleak_remove_globals(struct htable *memtable, const tal_t *topctx)
 {
 	if (keyset)
 		memleak_remove_region(memtable, keyset, sizeof(*keyset));
-	memleak_remove_pointer(memtable, remote_per_commitment_point);
-	memleak_remove_pointer(memtable, remote_per_commitment_secret);
 	memleak_remove_pointer(memtable, topctx);
 	memleak_remove_region(memtable,
 			      missing_htlc_msgs, tal_bytelen(missing_htlc_msgs));
@@ -1153,14 +1176,13 @@ static void wait_for_resolved(struct tracked_output **outs)
 
 		if (fromwire_onchaind_depth(msg, &txid, &depth)) {
 			eltoo_tx_new_depth(outs, &txid, depth);
-        }
-		else if (fromwire_onchaind_spent(msg, msg, &tx_parts, &input_num,
+        } else if (fromwire_onchaind_spent(msg, msg, &tx_parts, &input_num,
 						&tx_blockheight)) {
             /* FIXME walk through logic with someone who knows what's going on  */
 			output_spent(&outs, tx_parts, input_num, tx_blockheight);
 		} else if (fromwire_onchaind_known_preimage(msg, &preimage))
-            /* FIXME Somehow we should be watching out settlement outputs
-               even if they haven't entered utxo set. */
+            /* We could be watching our settlement outputs
+               even if they haven't entered utxo set to use for CPFP. */
 			eltoo_handle_preimage(outs, &preimage);
 		else if (!handle_dev_memleak(outs, msg))
 			master_badmsg(-1, msg);
@@ -1285,12 +1307,15 @@ static void eltoo_handle_mutual_close(struct tracked_output **outs,
 
 static void handle_latest_update(const struct tx_parts *tx,
                   u32 tx_blockheight,
-                  struct tracked_output **outs)
+                  struct tracked_output **outs,
+                  u32 locktime)
 {
     struct htlcs_info *htlcs_info;
     struct bitcoin_outpoint outpoint;
     struct amount_asset asset;
     struct amount_sat amt;
+    struct tracked_output *out;
+
     /* State output will match index */
     int state_index = funding_input_num(outs, tx);
 
@@ -1300,19 +1325,28 @@ static void handle_latest_update(const struct tx_parts *tx,
     asset = wally_tx_output_get_amount(tx->outputs[state_index]);
     amt = amount_asset_to_sat(&asset);
 
-    htlcs_info = eltoo_init_reply(tmpctx, "Tracking latest update transaction");
+    htlcs_info = eltoo_init_reply(tmpctx, "Tracking final update transaction");
     /* FIXME do something with htlcs_info ? */
     assert(htlcs_info);
     onchain_annotate_txin(&tx->txid, state_index, TX_CHANNEL_UNILATERAL);
 
     resolved_by_other(outs[0], &tx->txid, ELTOO_UPDATE);
 
-    new_tracked_output(&outs,
+    out = new_tracked_output(&outs,
                  &outpoint, tx_blockheight,
                  UPDATE,
                  amt,
                  DELAYED_OUTPUT_TO_US,
                  NULL /* htlc */, NULL /* wscript */, NULL /* remote_htlc_sig */);
+
+    /* Proposed resolution is the matching settlement tx */
+    if (locktime == complete_update_tx->wtx->locktime) {
+        bind_settle_tx(tx->txid, state_index, complete_settle_tx);
+        propose_resolution(out, complete_settle_tx,  complete_settle_tx->wtx->inputs[0].sequence /* depth_required */, ELTOO_SETTLE);
+    } else {
+        bind_settle_tx(tx->txid, state_index, committed_settle_tx);
+        propose_resolution(out, committed_settle_tx, committed_settle_tx->wtx->inputs[0].sequence /* depth_required */, ELTOO_SETTLE);
+    }
 
     /* Wait until we get shared_delay confirms for this output */
     wait_for_resolved(outs);
@@ -1325,10 +1359,6 @@ int main(int argc, char *argv[])
 	const tal_t *ctx = tal(NULL, char);
 	u8 *msg;
     struct tx_parts *spending_tx;
-    /* Full tx we have partial signatures for */
-    struct bitcoin_tx *unbound_complete_update_tx, *unbound_complete_settle_tx;
-    /* Tx we do not have full signatures for, but may appear on-chain */
-    struct bitcoin_tx *unbound_committed_update_tx, *unbound_committed_settle_tx;
     struct tracked_output **outs;
     struct bitcoin_outpoint funding;
     struct amount_sat funding_sats;
@@ -1347,10 +1377,11 @@ int main(int argc, char *argv[])
         &funding_sats,
         &spending_tx,
         &locktime,
-        &unbound_complete_update_tx,
-        &unbound_complete_settle_tx,
-        &unbound_committed_update_tx,
-        &unbound_committed_settle_tx,
+        /* Transactions are global for ease of access */
+        &complete_update_tx,
+        &complete_settle_tx,
+        &committed_update_tx,
+        &committed_settle_tx,
         &tx_blockheight,
         &our_msat,
         &scriptpubkey[LOCAL],
@@ -1364,19 +1395,19 @@ int main(int argc, char *argv[])
 	status_debug("lightningd_eltoo_onchaind is alive!");
 	/* We need to keep tx around, but there's only a constant number: not really a leak */
 	tal_steal(ctx, notleak(spending_tx));
-	tal_steal(ctx, notleak(unbound_complete_update_tx));
-	tal_steal(ctx, notleak(unbound_complete_settle_tx));
+	tal_steal(ctx, notleak(complete_update_tx));
+	tal_steal(ctx, notleak(complete_settle_tx));
 
     status_debug("Unbound update and settle transactions to potentially broadcast: %s, %s",
-        type_to_string(tmpctx, struct bitcoin_tx, unbound_complete_update_tx),
-        type_to_string(tmpctx, struct bitcoin_tx, unbound_complete_settle_tx));
+        type_to_string(tmpctx, struct bitcoin_tx, complete_update_tx),
+        type_to_string(tmpctx, struct bitcoin_tx, complete_settle_tx));
 
-    if (unbound_committed_update_tx) {
-	    tal_steal(ctx, notleak(unbound_committed_update_tx));
-	    tal_steal(ctx, notleak(unbound_committed_settle_tx));
+    if (committed_update_tx) {
+	    tal_steal(ctx, notleak(committed_update_tx));
+	    tal_steal(ctx, notleak(committed_settle_tx));
         status_debug("Unbound update and settle transactions committed but incomplete: %s, %s",
-            type_to_string(tmpctx, struct bitcoin_tx, unbound_committed_update_tx),
-            type_to_string(tmpctx, struct bitcoin_tx, unbound_committed_settle_tx));
+            type_to_string(tmpctx, struct bitcoin_tx, committed_update_tx),
+            type_to_string(tmpctx, struct bitcoin_tx, committed_settle_tx));
     }
 
     /* These are the utxos we are interested in */
@@ -1397,11 +1428,11 @@ int main(int argc, char *argv[])
                           tal_count(spending_tx->outputs))));
 
     /* Committed state should be one step further max */
-    max_known_version = unbound_complete_update_tx->wtx->locktime;
-    if (unbound_committed_update_tx) {
-        assert(unbound_complete_update_tx->wtx->locktime == unbound_committed_update_tx->wtx->locktime ||
-                unbound_complete_update_tx->wtx->locktime == unbound_committed_update_tx->wtx->locktime + 1);
-        max_known_version = unbound_committed_update_tx->wtx->locktime;
+    max_known_version = complete_update_tx->wtx->locktime;
+    if (committed_update_tx) {
+        assert(complete_update_tx->wtx->locktime == committed_update_tx->wtx->locktime ||
+                complete_update_tx->wtx->locktime == committed_update_tx->wtx->locktime + 1);
+        max_known_version = committed_update_tx->wtx->locktime;
     }
 
     if (is_mutual_close(locktime)) {
@@ -1417,14 +1448,18 @@ int main(int argc, char *argv[])
             status_debug("Uh-oh, please be nice Mr Counterparty :(");
         } else if (locktime == max_known_version) {
             status_debug("Unilateral close of last known state detected");
-            /* Someday we could maybe negotiate with peer to life back into channel
-             * For now we just deal with it by submitting settle transaction.
-             * If we know it's counter-party, maybe they'll pay for us :)
-             * or maybe we paid a watchtower already...
-             *
-             * Either way, this also happens in the "cheating" below, and we handle this identically.
+            /* 
+             * We are simply waiting for this particular update tx to mature
+             * before getting the settlement tx on chain and sweeping outputs.
              */
-            handle_latest_update(spending_tx, tx_blockheight, outs);
+            handle_latest_update(spending_tx, tx_blockheight, outs, locktime);
+        } else if (locktime == complete_update_tx->wtx->locktime) {
+            status_debug("Unilateral close of last complete state detected");
+            /*
+             * It's possible this last transaction will be over-written
+             * by the committed state we don't have signatures for.
+             */
+            handle_latest_update(spending_tx, tx_blockheight, outs, locktime);
         } else {
             status_debug("Cheater!");
         }

@@ -23,12 +23,12 @@ void tx_add_unbound_input(struct bitcoin_tx *update_tx,
 
 /* Called just in time before broadcasting to spend expired
    update output.
- * @update_tx: the update transaction that has reached enough
+ * @update_txix: the txid of the update transaction that has reached enough
  * confirmations to spend via settle path
  * @output_index: which output index is to be spent
  * @settle_tx: the settlement transaction to rebind
  **/
-void bind_settle_tx(const struct bitcoin_tx *update_tx,
+void bind_settle_tx(const struct bitcoin_txid update_txid,
                     int output_index,
                     struct bitcoin_tx *settle_tx);
 
