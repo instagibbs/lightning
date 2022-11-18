@@ -694,7 +694,7 @@ static void resolved_by_other(struct tracked_output *out,
 static bool is_mutual_close(u32 locktime)
 {
     /* If we mask update number, this needs to change */
-    return locktime == 500000000;
+    return locktime == 0;
 }
 
 /* BOLT #5:
