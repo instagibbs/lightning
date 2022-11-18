@@ -93,13 +93,13 @@ struct tracked_output {
 	struct sha256 payment_hash;
 };
 
-static const char *tx_type_name(enum tx_type tx_type)
+static const char *eltoo_tx_type_name(enum eltoo_tx_type tx_type)
 {
 	size_t i;
 
-	for (i = 0; enum_tx_type_names[i].name; i++)
-		if (enum_tx_type_names[i].v == tx_type)
-			return enum_tx_type_names[i].name;
+	for (i = 0; enum_eltoo_tx_type_names[i].name; i++)
+		if (enum_eltoo_tx_type_names[i].v == tx_type)
+			return enum_eltoo_tx_type_names[i].name;
 	return "unknown";
 }
 
@@ -137,7 +137,7 @@ new_tracked_output(struct tracked_output ***outs,
 
 	status_debug("Tracking output %s: %s/%s",
 		     type_to_string(tmpctx, struct bitcoin_outpoint, outpoint),
-		     tx_type_name(tx_type),
+		     eltoo_tx_type_name(tx_type),
 		     output_type_name(output_type));
 
 	out->tx_type = tx_type;
@@ -164,7 +164,7 @@ static void ignore_output(struct tracked_output *out)
 	status_debug("Ignoring output %s: %s/%s",
 		     type_to_string(tmpctx, struct bitcoin_outpoint,
 				    &out->outpoint),
-		     tx_type_name(out->tx_type),
+		     eltoo_tx_type_name(out->tx_type),
 		     output_type_name(out->output_type));
 
 	out->resolved = tal(out, struct resolution);
@@ -248,9 +248,9 @@ static void eltoo_proposal_should_rbf(struct tracked_output *out)
 
 		status_debug("Broadcasting RBF %s (%s) to resolve %s/%s "
 			     "depth=%"PRIu32"",
-			     tx_type_name(out->proposal->tx_type),
+			     eltoo_tx_type_name(out->proposal->tx_type),
 			     type_to_string(tmpctx, struct bitcoin_tx, tx),
-			     tx_type_name(out->tx_type),
+			     eltoo_tx_type_name(out->tx_type),
 			     output_type_name(out->output_type),
 			     depth);
 
@@ -262,21 +262,20 @@ static void eltoo_proposal_should_rbf(struct tracked_output *out)
 	}
 }
 
-static void proposal_meets_depth(struct tracked_output *out)
+static void eltoo_proposal_meets_depth(struct tracked_output *out)
 {
 	bool is_rbf = false;
 
-	/* If we simply wanted to ignore it after some depth */
+	/* If there's no proposal, we're not gonna do anything. */
 	if (!out->proposal->tx) {
 		ignore_output(out);
-
 		return;
 	}
 
 	status_debug("Broadcasting %s (%s) to resolve %s/%s",
-		     tx_type_name(out->proposal->tx_type),
+		     eltoo_tx_type_name(out->proposal->tx_type),
 		     type_to_string(tmpctx, struct bitcoin_tx, out->proposal->tx),
-		     tx_type_name(out->tx_type),
+		     eltoo_tx_type_name(out->tx_type),
 		     output_type_name(out->output_type));
 
 	if (out->proposal)
@@ -367,9 +366,9 @@ static bool resolved_by_proposal(struct tracked_output *out,
 	out->resolved = tal(out, struct resolution);
 	out->resolved->txid = tx_parts->txid;
 	status_debug("Resolved %s/%s by our proposal %s (%s)",
-		     tx_type_name(out->tx_type),
+		     eltoo_tx_type_name(out->tx_type),
 		     output_type_name(out->output_type),
-		     tx_type_name(out->proposal->tx_type),
+		     eltoo_tx_type_name(out->proposal->tx_type),
 		     type_to_string(tmpctx, struct bitcoin_txid,
 				    &out->resolved->txid));
 
@@ -389,9 +388,9 @@ static void resolved_by_other(struct tracked_output *out,
 	out->resolved->tx_type = tx_type;
 
 	status_debug("Resolved %s/%s by %s (%s)",
-		     tx_type_name(out->tx_type),
+		     eltoo_tx_type_name(out->tx_type),
 		     output_type_name(out->output_type),
-		     tx_type_name(tx_type),
+		     eltoo_tx_type_name(tx_type),
 		     type_to_string(tmpctx, struct bitcoin_txid, txid));
 }
 
@@ -445,7 +444,7 @@ static void billboard_update(struct tracked_output **outs)
 				       type_to_string(tmpctx,
 						      struct bitcoin_outpoint,
 						      &best->outpoint),
-				       tx_type_name(best->proposal->tx_type));
+				       eltoo_tx_type_name(best->proposal->tx_type));
 		} else {
 			peer_billboard(false,
 				       "%u outputs unresolved: in %u blocks will spend %s (%s) using %s",
@@ -455,7 +454,7 @@ static void billboard_update(struct tracked_output **outs)
 				       type_to_string(tmpctx,
 						      struct bitcoin_outpoint,
 						      &best->outpoint),
-				       tx_type_name(best->proposal->tx_type));
+				       eltoo_tx_type_name(best->proposal->tx_type));
 		}
 		return;
 	}
@@ -492,9 +491,9 @@ static void propose_resolution(struct tracked_output *out,
                    enum tx_type tx_type)
 {
     status_debug("Propose handling %s/%s by %s (%s) after %u blocks",
-             tx_type_name(out->tx_type),
+             eltoo_tx_type_name(out->tx_type),
              output_type_name(out->output_type),
-             tx_type_name(tx_type),
+             eltoo_tx_type_name(tx_type),
              tx ? type_to_string(tmpctx, struct bitcoin_tx, tx):"IGNORING",
              depth_required);
 
@@ -504,7 +503,7 @@ static void propose_resolution(struct tracked_output *out,
     out->proposal->tx_type = tx_type;
 
     if (depth_required == 0)
-        proposal_meets_depth(out);
+        eltoo_proposal_meets_depth(out);
 }
 
 static void unwatch_txid(const struct bitcoin_txid *txid)
@@ -535,7 +534,7 @@ static void handle_eltoo_htlc_onchain_fulfill(struct tracked_output *out,
 		if (tx_parts->inputs[htlc_outpoint->n]->witness->num_items != 4) /* +2 for script/control block */
 			status_failed(STATUS_FAIL_INTERNAL_ERROR,
 				      "%s/%s spent with weird witness %zu",
-				      tx_type_name(out->tx_type),
+				      eltoo_tx_type_name(out->tx_type),
 				      output_type_name(out->output_type),
 				      tx_parts->inputs[htlc_outpoint->n]->witness->num_items);
 
@@ -544,7 +543,7 @@ static void handle_eltoo_htlc_onchain_fulfill(struct tracked_output *out,
 	} else
 		status_failed(STATUS_FAIL_INTERNAL_ERROR,
 			      "onchain_fulfill for %s/%s?",
-			      tx_type_name(out->tx_type),
+			      eltoo_tx_type_name(out->tx_type),
 			      output_type_name(out->output_type));
 
 	memcpy(&preimage, preimage_item->witness, sizeof(preimage));
@@ -554,7 +553,7 @@ static void handle_eltoo_htlc_onchain_fulfill(struct tracked_output *out,
 	if (!ripemd160_eq(&ripemd, &out->htlc.ripemd))
 		status_failed(STATUS_FAIL_INTERNAL_ERROR,
 			      "%s/%s spent with bad preimage %s (ripemd not %s)",
-			      tx_type_name(out->tx_type),
+			      eltoo_tx_type_name(out->tx_type),
 			      output_type_name(out->output_type),
 			      type_to_string(tmpctx, struct preimage, &preimage),
 			      type_to_string(tmpctx, struct ripemd160,
@@ -566,7 +565,7 @@ static void handle_eltoo_htlc_onchain_fulfill(struct tracked_output *out,
 
 	/* Tell master we found a preimage. */
 	status_debug("%s/%s gave us preimage %s",
-		     tx_type_name(out->tx_type),
+		     eltoo_tx_type_name(out->tx_type),
 		     output_type_name(out->output_type),
 		     type_to_string(tmpctx, struct preimage, &preimage));
 	wire_sync_write(REQ_FD,
@@ -670,7 +669,7 @@ static void output_spent(struct tracked_output ***outs,
 		case ANCHOR_TO_THEM:
 			status_failed(STATUS_FAIL_INTERNAL_ERROR,
 				      "Tracked spend of %s/%s?",
-				      tx_type_name(out->tx_type),
+				      eltoo_tx_type_name(out->tx_type),
 				      output_type_name(out->output_type));
 		}
 		return;
@@ -691,9 +690,9 @@ static void update_resolution_depth(struct tracked_output *out, u32 depth)
 	bool reached_reasonable_depth;
 
 	status_debug("%s/%s->%s depth %u",
-		     tx_type_name(out->tx_type),
+		     eltoo_tx_type_name(out->tx_type),
 		     output_type_name(out->output_type),
-		     tx_type_name(out->resolved->tx_type),
+		     eltoo_tx_type_name(out->resolved->tx_type),
 		     depth);
 
 	/* We only set this once. */
@@ -715,7 +714,7 @@ static void update_resolution_depth(struct tracked_output *out, u32 depth)
 	if (out->resolved->tx_type == ELTOO_SWEEP && reached_reasonable_depth) {
 		u8 *msg;
 		status_debug("%s/%s reached reasonable depth %u",
-			     tx_type_name(out->tx_type),
+			     eltoo_tx_type_name(out->tx_type),
 			     output_type_name(out->output_type),
 			     depth);
 		msg = towire_onchaind_htlc_timeout(out, &out->htlc);
@@ -728,10 +727,6 @@ static void eltoo_tx_new_depth(struct tracked_output **outs,
 			 const struct bitcoin_txid *txid, u32 depth)
 {
 	size_t i;
-
-    /* FIXME React to final update tx getting shared_delay old */
-
-    /* FIXME React to settlement transaction being mined */
 
     /* Special handling for funding-spending update tx reaching depth */
     /* FIXME re-add note_missing_htlcs for TRIMMED ONLY here... should this b
@@ -766,7 +761,7 @@ static void eltoo_tx_new_depth(struct tracked_output **outs,
 		if (outs[i]->proposal
 		    && bitcoin_txid_eq(&outs[i]->outpoint.txid, txid)
             && depth >= outs[i]->proposal->depth_required) {
-			proposal_meets_depth(outs[i]);
+			eltoo_proposal_meets_depth(outs[i]);
 		}
 
 		/* Otherwise, is this an output whose proposed resolution
@@ -803,7 +798,7 @@ static void eltoo_handle_preimage(struct tracked_output **outs,
 		if (outs[i]->resolved) {
 			status_broken("HTLC already resolved by %s"
 				     " when we found preimage",
-				     tx_type_name(outs[i]->resolved->tx_type));
+				     eltoo_tx_type_name(outs[i]->resolved->tx_type));
 			return;
 		}
 
