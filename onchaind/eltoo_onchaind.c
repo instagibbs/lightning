@@ -1066,6 +1066,9 @@ int main(int argc, char *argv[])
 
 	status_setup_sync(REQ_FD);
 
+    missing_htlc_msgs = tal_arr(ctx, u8 *, 0);
+    queued_msgs = tal_arr(ctx, u8 *, 0);
+
 	msg = wire_sync_read(tmpctx, REQ_FD);
 	if (!fromwire_eltoo_onchaind_init(tmpctx,
         msg,

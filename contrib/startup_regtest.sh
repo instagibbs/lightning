@@ -172,6 +172,20 @@ onchain_ln() {
     # Should be bound to funding output!
     UPDATE_HEX=$(l1-cli listpeers | jq -r .peers[0].channels[0].last_update_tx )
     SETTLE_HEX=$(l1-cli listpeers | jq -r .peers[0].channels[0].last_settle_tx )
+
+    ### THIS
+
+    # Test for latest update hitting chain
+    txid=$(bt-cli decoderawtransaction $UPDATE_HEX | jq -r .txid)
+    bt-cli prioritisetransaction $txid 0 100000000
+    txid=$(bt-cli decoderawtransaction $SETTLE_HEX | jq -r .txid)
+    bt-cli prioritisetransaction $txid 0 100000000
+    bt-cli sendrawtransaction $UPDATE_HEX
+    bt-cli generatetoaddress 7 $btcaddr
+
+    ### OR
+
+    # Test for old update hitting chain
     txid=$(bt-cli decoderawtransaction $FIRST_UPDATE_HEX | jq -r .txid)
     bt-cli prioritisetransaction $txid 0 100000000
     bt-cli sendrawtransaction $FIRST_UPDATE_HEX
