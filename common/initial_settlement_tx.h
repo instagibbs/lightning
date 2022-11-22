@@ -41,6 +41,9 @@ void tx_add_ephemeral_anchor_output(struct bitcoin_tx *tx);
 
 int tx_add_to_node_output(struct bitcoin_tx *tx, const struct eltoo_keyset *eltoo_keyset, struct amount_msat pay, enum side receiver);
 
+/* Generate to_node spk based on keyset */
+u8 *compute_to_node_spk(const struct eltoo_keyset *eltoo_keyset, enum side receiver);
+
 void add_settlement_input(struct bitcoin_tx *tx, const struct bitcoin_outpoint *update_outpoint, struct amount_sat update_outpoint_sats, u32 shared_delay, const struct pubkey *inner_pubkey, u32 obscured_update_number, const struct pubkey *pubkey_ptrs[2]);
 
 #endif /* LIGHTNING_COMMON_INITIAL_SETTLEMENT_TX_H */

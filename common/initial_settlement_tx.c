@@ -14,33 +14,11 @@
 
 int tx_add_to_node_output(struct bitcoin_tx *tx, const struct eltoo_keyset *eltoo_keyset, struct amount_msat pay, enum side receiver)
 {
-    struct pubkey taproot_pk;
-    secp256k1_musig_keyagg_cache keyagg_cache;
-    struct sha256 tap_merkle_root;
-    struct sha256 tap_tweak_out;
-    u8 *tapleaf_scripts[1];
-    struct pubkey const *receiver_pubkey;
-    struct pubkey const *pubkey_ptrs[2];
-	struct amount_sat amount;
-
-    if (receiver == LOCAL) {
-        receiver_pubkey = &eltoo_keyset->self_settle_key;
-    } else {
-        receiver_pubkey = &eltoo_keyset->other_settle_key;
-    }
-
-    pubkey_ptrs[0] = &eltoo_keyset->self_funding_key;
-    pubkey_ptrs[1] = &eltoo_keyset->other_funding_key;
-
-    tapleaf_scripts[0] = bitcoin_tapscript_to_node(tmpctx, receiver_pubkey);
-    printf("RECEIVER: %u, RECEIVER(SETTLE) PUBKEY: %s, SELF TO NODE: %s\n", receiver, tal_hexstr(tmpctx, receiver_pubkey, 33), tal_hexstr(tmpctx, tapleaf_scripts[0], tal_count(tapleaf_scripts[0])));
-    compute_taptree_merkle_root(&tap_merkle_root, tapleaf_scripts, /* num_scripts */ 1);
-    bipmusig_finalize_keys(&taproot_pk, &keyagg_cache, pubkey_ptrs, /* n_pubkeys */ 2,
-       &tap_merkle_root, tap_tweak_out.u.u8);
-
-    amount = amount_msat_to_sat_round_down(pay);
     return bitcoin_tx_add_output(
-        tx, scriptpubkey_p2tr(tmpctx, &taproot_pk), /* wscript */ NULL, amount /* FIXME pass in psbt fields for tap outputs */);
+        tx, scriptpubkey_p2tr(tmpctx,
+            receiver == LOCAL ? &eltoo_keyset->self_settle_key : &eltoo_keyset->other_settle_key),
+            /* wscript */ NULL,
+            amount_msat_to_sat_round_down(pay));
 }
 
 void tx_add_ephemeral_anchor_output(struct bitcoin_tx *tx)

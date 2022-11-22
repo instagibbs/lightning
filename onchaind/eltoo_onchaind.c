@@ -37,7 +37,7 @@ static struct bitcoin_tx *complete_update_tx, *complete_settle_tx;
 static struct bitcoin_tx *committed_update_tx, *committed_settle_tx;
 
 /* Required in various places: keys for commitment transaction. */
-static const struct eltoo_keyset *keyset;
+static struct eltoo_keyset *keyset;
 
 /* When to tell master about HTLCs which are missing/timed out */
 static u32 reasonable_depth;
@@ -76,12 +76,10 @@ struct tracked_output {
 	struct amount_sat sat;
 	enum output_type output_type;
 
-	/* If it is an HTLC, this is set, wscript is non-NULL. */
+	/* If it is an HTLC, this is set, tapscripts are non-NULL. */
 	struct htlc_stub htlc;
-	const u8 *wscript;
-
-	/* If it's an HTLC off our unilateral, this is their sig for htlc_tx */
-	const struct bitcoin_signature *remote_htlc_sig;
+	const u8 *htlc_success_tapscript; /* EXPR_SUCCESS */
+	const u8 *htlc_timeout_tapscript; /* EXPR_TIMEOUT */
 
 	/* Our proposed solution (if any) */
 	struct proposed_resolution *proposal;
@@ -122,6 +120,87 @@ static void send_coin_mvt(struct chain_coin_mvt *mvt TAKES)
 		tal_free(mvt);
 }
 
+static u8 **derive_htlc_success_scripts(const struct htlc_stub *htlcs, const struct pubkey *our_htlc_pubkey, const struct pubkey *their_htlc_pubkey)
+{
+    size_t i;
+    u8 **htlc_scripts = tal_arr(htlcs, u8 *, tal_count(htlcs));
+
+    for (i = 0; i < tal_count(htlcs); i++) {
+        htlc_scripts[i] = make_eltoo_htlc_success_script(htlc_scripts,
+                                   htlcs[i].owner == LOCAL ? our_htlc_pubkey : their_htlc_pubkey,
+                                   htlcs[i].ripemd.u.u8);
+    }
+    return htlc_scripts;
+}
+
+static u8 **derive_htlc_timeout_scripts(const struct htlc_stub *htlcs, const struct pubkey *our_htlc_pubkey, const struct pubkey *their_htlc_pubkey)
+{
+    size_t i;
+    u8 **htlc_scripts = tal_arr(htlcs, u8 *, tal_count(htlcs));
+
+    for (i = 0; i < tal_count(htlcs); i++) {
+        htlc_scripts[i] = make_eltoo_htlc_timeout_script(htlc_scripts,
+                                   htlcs[i].owner == LOCAL ? our_htlc_pubkey : their_htlc_pubkey,
+                                   htlcs[i].cltv_expiry);
+    }
+    return htlc_scripts;
+}
+
+/* They must all be in the same direction, since the scripts are different for
+ * each dir.  Unless, of course, they've found a sha256 clash. */
+static enum side matches_direction(const size_t *matches,
+                   const struct htlc_stub *htlcs)
+{
+    for (size_t i = 1; i < tal_count(matches); i++) {
+        assert(matches[i] < tal_count(htlcs));
+        assert(htlcs[matches[i]].owner == htlcs[matches[i-1]].owner);
+    }
+    return htlcs[matches[0]].owner;
+}
+
+/* Return tal_arr of htlc indexes. */
+static const size_t *eltoo_match_htlc_output(const tal_t *ctx,
+                       const struct wally_tx_output *out,
+                       u8 **htlc_success_scripts,
+                       u8 **htlc_timeout_scripts)
+{
+    assert(tal_count(htlc_success_scripts) == tal_count(htlc_timeout_scripts));
+
+    size_t *matches = tal_arr(ctx, size_t, 0);
+    const u8 *script = tal_dup_arr(tmpctx, u8, out->script, out->script_len,
+                       0);
+    /* Must be a p2tr output */
+    if (!is_p2tr(script, NULL))
+        return matches;
+
+    for (size_t i = 0; i < tal_count(htlc_success_scripts); i++) {
+        struct sha256 tap_merkle_root;
+        const struct pubkey *pubkey_ptrs[2];
+        struct pubkey taproot_pubkey;
+        secp256k1_musig_keyagg_cache keyagg_cache;
+        unsigned char tap_tweak_out[32];
+        u8 *htlc_scripts[2];
+        u8 *taproot_script;
+        htlc_scripts[0] = htlc_success_scripts[i];
+        htlc_scripts[1] = htlc_timeout_scripts[i];
+
+        pubkey_ptrs[0] = &keyset->self_settle_key;
+        pubkey_ptrs[1] = &keyset->other_settle_key;
+
+        if (!htlc_success_scripts[i] || !htlc_timeout_scripts[i])
+            continue;
+
+        compute_taptree_merkle_root(&tap_merkle_root, htlc_scripts, /* num_scripts */ 2);
+        bipmusig_finalize_keys(&taproot_pubkey, &keyagg_cache, pubkey_ptrs, /* n_pubkeys */ 2,
+               &tap_merkle_root, tap_tweak_out);
+        taproot_script = scriptpubkey_p2tr(ctx, &taproot_pubkey);
+
+        if (memeq(taproot_script, tal_count(taproot_script), script, sizeof(script)))
+            tal_arr_expand(&matches, i);
+    }
+    return matches;
+}
+
 static struct tracked_output *
 new_tracked_output(struct tracked_output ***outs,
 		   const struct bitcoin_outpoint *outpoint,
@@ -130,8 +209,8 @@ new_tracked_output(struct tracked_output ***outs,
 		   struct amount_sat sat,
 		   enum output_type output_type,
 		   const struct htlc_stub *htlc,
-		   const u8 *wscript,
-		   const struct bitcoin_signature *remote_htlc_sig TAKES)
+		   const u8 *htlc_success_tapscript TAKES,
+		   const u8 *htlc_timeout_tapscript TAKES)
 {
 	struct tracked_output *out = tal(*outs, struct tracked_output);
 
@@ -150,9 +229,8 @@ new_tracked_output(struct tracked_output ***outs,
 	out->resolved = NULL;
 	if (htlc)
 		out->htlc = *htlc;
-	out->wscript = tal_steal(out, wscript);
-	out->remote_htlc_sig = tal_dup_or_null(out, struct bitcoin_signature,
-					       remote_htlc_sig);
+	out->htlc_success_tapscript = tal_steal(out, htlc_success_tapscript);
+	out->htlc_timeout_tapscript = tal_steal(out, htlc_timeout_tapscript);
 
 	tal_arr_expand(outs, out);
 
@@ -587,11 +665,20 @@ static void onchain_annotate_txin(const struct bitcoin_txid *txid, u32 innum,
 				    tmpctx, txid, innum, type)));
 }
 
+struct htlcs_info {
+	struct htlc_stub *htlcs;
+	bool *tell_if_missing;
+	bool *tell_immediately;
+};
+
 /* An output has been spent: see if it resolves something we care about. */
 static void output_spent(struct tracked_output ***outs,
 			 const struct tx_parts *tx_parts,
 			 u32 input_num,
-			 u32 tx_blockheight)
+			 u32 tx_blockheight,
+             u8 **htlc_success_scripts,
+             u8 **htlc_timeout_scripts,
+             struct htlcs_info *htlcs_info)
 {
 	for (size_t i = 0; i < tal_count(*outs); i++) {
 		struct tracked_output *out = (*outs)[i];
@@ -606,6 +693,75 @@ static void output_spent(struct tracked_output ***outs,
 
 		/* Was this our resolution? */
 		if (resolved_by_proposal(out, tx_parts)) {
+            if (out->resolved->tx_type == ELTOO_SETTLE) {
+                /* Settlement transaction has 5 types of outputs it's looking for  */
+                for (size_t j = 0; j < tal_count(tx_parts->outputs); j++) {
+                    struct wally_tx_output *settle_out = tx_parts->outputs[j];
+                    struct amount_sat satoshis = amount_sat(settle_out->satoshi);
+                    /* (1) Ephemeral Anchor */
+                    if (is_ephemeral_anchor(settle_out->script)) {
+                        /* Do we need to handle anchor? */
+                        continue;
+                    }
+                    const size_t *matches = eltoo_match_htlc_output(tmpctx, settle_out, htlc_success_scripts, htlc_timeout_scripts);
+                    struct bitcoin_outpoint outpoint;
+                    outpoint.txid = tx_parts->txid;
+                    outpoint.n = j;
+                    if (tal_count(matches) == 0) {
+                        if (!is_p2tr(settle_out->script, NULL)) {
+                            /* Everything should be taproot FIXME what do */
+                            abort();
+                        }
+                        u8 *to_us = scriptpubkey_p2tr(tmpctx, &keyset->self_settle_key);
+                        if (memcmp(settle_out->script, to_us, tal_count(to_us)) == 0) {
+                            /* (2) `to_node` to us */
+                            new_tracked_output(outs, &outpoint,
+                                tx_blockheight,
+                                out->resolved->tx_type,
+                                satoshis,
+                                OUTPUT_TO_US /* output_type */,
+                                NULL /* htlc */,
+                                NULL /* htlc_success_tapscript */,
+                                NULL /* htlc_timeout_tapscript */);
+                            continue;
+                        }
+                        u8 *to_them = scriptpubkey_p2tr(tmpctx, &keyset->other_settle_key);
+                        if (memcmp(settle_out->script, to_us, tal_count(to_them)) == 0) {
+                            /* (3) `to_node` to them */
+                            new_tracked_output(outs, &outpoint,
+                                tx_blockheight,
+                                out->resolved->tx_type,
+                                satoshis,
+                                OUTPUT_TO_THEM /* output_type */,
+                                NULL /* htlc */,
+                                NULL /* htlc_success_tapscript */,
+                                NULL /* htlc_timeout_tapscript */);
+                            continue;
+                        }
+                        /* Update we don't recognise :( FIXME what do */
+                        abort();
+                    } else {
+                        enum output_type htlc_type;
+                        if (matches_direction(matches, htlcs_info->htlcs) == LOCAL) {
+                            /* (4) HTLC to us */
+                            htlc_type = THEIR_HTLC;
+                        } else {
+                            /* (5) HTLC to them */
+                            htlc_type = OUR_HTLC;
+                        }
+                        new_tracked_output(outs, &outpoint,
+                            tx_blockheight,
+                            out->resolved->tx_type,
+                            satoshis,
+                            htlc_type /* output_type */,
+                            &htlcs_info->htlcs[matches[0]] /* htlc */,
+                            htlc_success_scripts[matches[0]] /* htlc_success_tapscript */,
+                            htlc_timeout_scripts[matches[0]] /* htlc_timeout_tapscript */);
+                            continue;
+                    }
+                }
+            }
+
 			return;
 		}
 
@@ -851,9 +1007,47 @@ static bool handle_dev_memleak(struct tracked_output **outs, const u8 *msg)
 }
 #endif /* !DEVELOPER */
 
-static void wait_for_resolved(struct tracked_output **outs)
+static void wait_for_mutual_resolved(struct tracked_output **outs)
 {
 	billboard_update(outs);
+
+	while (num_not_irrevocably_resolved(outs) != 0) {
+		u8 *msg;
+		struct bitcoin_txid txid;
+		u32 depth;
+
+		if (tal_count(queued_msgs)) {
+			msg = tal_steal(outs, queued_msgs[0]);
+			tal_arr_remove(&queued_msgs, 0);
+		} else
+			msg = wire_sync_read(outs, REQ_FD);
+
+		status_debug("Got new message %s",
+			     onchaind_wire_name(fromwire_peektype(msg)));
+
+        /* Should only be getting updates on the funding output spend getting buried */
+		if (fromwire_onchaind_depth(msg, &txid, &depth)) {
+			eltoo_tx_new_depth(outs, &txid, depth);
+        } else if (!handle_dev_memleak(outs, msg)) {
+			master_badmsg(-1, msg);
+        }
+
+		billboard_update(outs);
+		tal_free(msg);
+		clean_tmpctx();
+	}
+
+	wire_sync_write(REQ_FD,
+			take(towire_onchaind_all_irrevocably_resolved(outs)));
+}
+
+static void wait_for_resolved(struct tracked_output **outs, struct htlcs_info *htlcs_info)
+{
+	billboard_update(outs);
+
+    /* Calculate all the HTLC scripts so we can match them */
+    u8 **htlc_success_scripts = derive_htlc_success_scripts(htlcs_info->htlcs, &keyset->self_settle_key, &keyset->other_settle_key);
+    u8 **htlc_timeout_scripts = derive_htlc_timeout_scripts(htlcs_info->htlcs, &keyset->self_settle_key, &keyset->other_settle_key);
 
 	while (num_not_irrevocably_resolved(outs) != 0) {
 		u8 *msg;
@@ -875,8 +1069,7 @@ static void wait_for_resolved(struct tracked_output **outs)
 			eltoo_tx_new_depth(outs, &txid, depth);
         } else if (fromwire_onchaind_spent(msg, msg, &tx_parts, &input_num,
 						&tx_blockheight)) {
-            /* FIXME walk through logic with someone who knows what's going on  */
-			output_spent(&outs, tx_parts, input_num, tx_blockheight);
+			output_spent(&outs, tx_parts, input_num, tx_blockheight, htlc_success_scripts, htlc_timeout_scripts, htlcs_info);
 		} else if (fromwire_onchaind_known_preimage(msg, &preimage))
             /* We could be watching our settlement outputs
                even if they haven't entered utxo set to use for CPFP. */
@@ -892,12 +1085,6 @@ static void wait_for_resolved(struct tracked_output **outs)
 	wire_sync_write(REQ_FD,
 			take(towire_onchaind_all_irrevocably_resolved(outs)));
 }
-
-struct htlcs_info {
-	struct htlc_stub *htlcs;
-	bool *tell_if_missing;
-	bool *tell_immediately;
-};
 
 struct htlc_with_tells {
 	struct htlc_stub htlc;
@@ -999,7 +1186,7 @@ static void eltoo_handle_mutual_close(struct tracked_output **outs,
      * already agreed to the output, which is sent to its specified `scriptpubkey`
      */
     resolved_by_other(outs[0], &tx->txid, MUTUAL_CLOSE);
-    wait_for_resolved(outs);
+    wait_for_mutual_resolved(outs);
 }
 
 static void handle_latest_update(const struct tx_parts *tx,
@@ -1023,18 +1210,17 @@ static void handle_latest_update(const struct tx_parts *tx,
     amt = amount_asset_to_sat(&asset);
 
     htlcs_info = eltoo_init_reply(tmpctx, "Tracking final update transaction");
-    /* FIXME do something with htlcs_info ? */
-    assert(htlcs_info);
+
     onchain_annotate_txin(&tx->txid, state_index, TX_CHANNEL_UNILATERAL);
 
     resolved_by_other(outs[0], &tx->txid, ELTOO_UPDATE);
 
     out = new_tracked_output(&outs,
                  &outpoint, tx_blockheight,
-                 UPDATE,
+                 ELTOO_UPDATE,
                  amt,
                  DELAYED_OUTPUT_TO_US,
-                 NULL /* htlc */, NULL /* wscript */, NULL /* remote_htlc_sig */);
+                 NULL /* htlc */, NULL /* htlc_success_tapscript */, NULL /* htlc_timeout_tapscript */);
 
     /* Proposed resolution is the matching settlement tx */
     if (locktime == complete_update_tx->wtx->locktime) {
@@ -1045,8 +1231,10 @@ static void handle_latest_update(const struct tx_parts *tx,
         propose_resolution(out, committed_settle_tx, committed_settle_tx->wtx->inputs[0].sequence /* depth_required */, ELTOO_SETTLE);
     }
 
-    /* Wait until we get shared_delay confirms for this output */
-    wait_for_resolved(outs);
+    /* Run to completion since we don't fan out immediately in eltoo  */
+    wait_for_resolved(outs, htlcs_info);
+
+    tal_free(htlcs_info);
 }
 
 int main(int argc, char *argv[])
@@ -1061,6 +1249,8 @@ int main(int argc, char *argv[])
     struct amount_sat funding_sats;
     u32 locktime, tx_blockheight, max_known_version;
     u8 *scriptpubkey[NUM_SIDES];
+
+    keyset = tal(ctx, struct eltoo_keyset);
 
 	subdaemon_setup(argc, argv);
 
@@ -1085,7 +1275,11 @@ int main(int argc, char *argv[])
         &tx_blockheight,
         &our_msat,
         &scriptpubkey[LOCAL],
-        &scriptpubkey[REMOTE])) {
+        &scriptpubkey[REMOTE],
+        &keyset->self_funding_key,
+        &keyset->other_funding_key,
+        &keyset->self_settle_key,
+        &keyset->other_settle_key)) {
 		master_badmsg(WIRE_ELTOO_ONCHAIND_INIT, msg);
 	}
 
@@ -1118,7 +1312,7 @@ int main(int argc, char *argv[])
                0, /* We don't care about funding blockheight */
                FUNDING_TRANSACTION,
                funding_sats,
-               FUNDING_OUTPUT, NULL, NULL, NULL);
+               FUNDING_OUTPUT, NULL /* htlc */, NULL /* htlc_success_tapscript */, NULL /* htlc_timeout_tapscript */);
 
     /* Record funding output spent */
     send_coin_mvt(take(new_coin_channel_close(NULL, &spending_tx->txid,
