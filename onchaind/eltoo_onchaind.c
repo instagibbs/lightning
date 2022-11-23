@@ -120,10 +120,10 @@ static void send_coin_mvt(struct chain_coin_mvt *mvt TAKES)
 		tal_free(mvt);
 }
 
-static u8 **derive_htlc_success_scripts(const struct htlc_stub *htlcs, const struct pubkey *our_htlc_pubkey, const struct pubkey *their_htlc_pubkey)
+static u8 **derive_htlc_success_scripts(const tal_t *ctx, const struct htlc_stub *htlcs, const struct pubkey *our_htlc_pubkey, const struct pubkey *their_htlc_pubkey)
 {
     size_t i;
-    u8 **htlc_scripts = tal_arr(htlcs, u8 *, tal_count(htlcs));
+    u8 **htlc_scripts = tal_arr(ctx, u8 *, tal_count(htlcs));
 
     for (i = 0; i < tal_count(htlcs); i++) {
         htlc_scripts[i] = make_eltoo_htlc_success_script(htlc_scripts,
@@ -133,10 +133,10 @@ static u8 **derive_htlc_success_scripts(const struct htlc_stub *htlcs, const str
     return htlc_scripts;
 }
 
-static u8 **derive_htlc_timeout_scripts(const struct htlc_stub *htlcs, const struct pubkey *our_htlc_pubkey, const struct pubkey *their_htlc_pubkey)
+static u8 **derive_htlc_timeout_scripts(const tal_t *ctx, const struct htlc_stub *htlcs, const struct pubkey *our_htlc_pubkey, const struct pubkey *their_htlc_pubkey)
 {
     size_t i;
-    u8 **htlc_scripts = tal_arr(htlcs, u8 *, tal_count(htlcs));
+    u8 **htlc_scripts = tal_arr(ctx, u8 *, tal_count(htlcs));
 
     for (i = 0; i < tal_count(htlcs); i++) {
         htlc_scripts[i] = make_eltoo_htlc_timeout_script(htlc_scripts,
@@ -164,7 +164,7 @@ static const size_t *eltoo_match_htlc_output(const tal_t *ctx,
                        u8 **htlc_success_scripts,
                        u8 **htlc_timeout_scripts)
 {
-    assert(tal_count(htlc_success_scripts) == tal_count(htlc_timeout_scripts));
+// wtf?    assert(tal_count(htlc_success_scripts) == tal_count(htlc_timeout_scripts));
 
     size_t *matches = tal_arr(ctx, size_t, 0);
     const u8 *script = tal_dup_arr(tmpctx, u8, out->script, out->script_len,
@@ -680,6 +680,7 @@ static void output_spent(struct tracked_output ***outs,
              u8 **htlc_timeout_scripts,
              struct htlcs_info *htlcs_info)
 {
+    assert(tal_count(htlc_success_scripts) == tal_count(htlc_timeout_scripts));
 	for (size_t i = 0; i < tal_count(*outs); i++) {
 		struct tracked_output *out = (*outs)[i];
 		struct bitcoin_outpoint htlc_outpoint;
@@ -1046,8 +1047,8 @@ static void wait_for_resolved(struct tracked_output **outs, struct htlcs_info *h
 	billboard_update(outs);
 
     /* Calculate all the HTLC scripts so we can match them */
-    u8 **htlc_success_scripts = derive_htlc_success_scripts(htlcs_info->htlcs, &keyset->self_settle_key, &keyset->other_settle_key);
-    u8 **htlc_timeout_scripts = derive_htlc_timeout_scripts(htlcs_info->htlcs, &keyset->self_settle_key, &keyset->other_settle_key);
+    u8 **htlc_success_scripts = derive_htlc_success_scripts(outs, htlcs_info->htlcs, &keyset->self_settle_key, &keyset->other_settle_key);
+    u8 **htlc_timeout_scripts = derive_htlc_timeout_scripts(outs, htlcs_info->htlcs, &keyset->self_settle_key, &keyset->other_settle_key);
 
 	while (num_not_irrevocably_resolved(outs) != 0) {
 		u8 *msg;

@@ -182,6 +182,9 @@ onchain_ln() {
     bt-cli prioritisetransaction $txid 0 100000000
     bt-cli sendrawtransaction $UPDATE_HEX
     bt-cli generatetoaddress 7 $btcaddr
+    sleep 1
+    # settle tx should be pushed after next block
+    bt-cli generatetoaddress 1 $btcaddr
 
     ### OR
 
