@@ -237,6 +237,9 @@ new_tracked_output(struct tracked_output ***outs,
 	return out;
 }
 
+/* Marks a utxo as resolved. The utxo still needs to be buried >>==100 to be
+ * irrevocably resolved
+ */
 static void ignore_output(struct tracked_output *out)
 {
 	status_debug("Ignoring output %s: %s/%s",
@@ -489,6 +492,7 @@ static size_t num_not_irrevocably_resolved(struct tracked_output **outs)
 	size_t i, num = 0;
 
 	for (i = 0; i < tal_count(outs); i++) {
+        /* FIXME If an output gets reorged out, what do we do? */
 		if (!outs[i]->resolved || outs[i]->resolved->depth < 100)
 			num++;
 	}
@@ -671,6 +675,92 @@ struct htlcs_info {
 	bool *tell_immediately;
 };
 
+static void track_settle_outputs(struct tracked_output ***outs,
+			 const struct tx_parts *tx_parts,
+			 u32 tx_blockheight,
+             u8 **htlc_success_scripts,
+             u8 **htlc_timeout_scripts,
+             struct htlcs_info *htlcs_info)
+{
+    /* Settlement transaction has 5 types of outputs it's looking for  */
+    for (size_t j = 0; j < tal_count(tx_parts->outputs); j++) {
+        struct wally_tx_output *settle_out = tx_parts->outputs[j];
+        struct tracked_output *out;
+        struct amount_sat satoshis = amount_sat(settle_out->satoshi);
+        /* (1) Ephemeral Anchor */
+        if (is_ephemeral_anchor(settle_out->script)) {
+            /* Anchor is lightningd's problem */
+            continue;
+        }
+        const size_t *matches = eltoo_match_htlc_output(tmpctx, settle_out, htlc_success_scripts, htlc_timeout_scripts);
+        struct bitcoin_outpoint outpoint;
+        outpoint.txid = tx_parts->txid;
+        outpoint.n = j;
+        if (tal_count(matches) == 0) {
+            if (!is_p2tr(settle_out->script, NULL)) {
+                /* Everything should be taproot FIXME what do */
+                abort();
+            }
+            status_debug("Output script: %s", tal_hex(tmpctx, settle_out->script));
+            u8 *to_us = scriptpubkey_p2tr(tmpctx, &keyset->self_settle_key);
+            status_debug("to_us script: %s", tal_hex(tmpctx, to_us));
+            if (memcmp(settle_out->script, to_us, tal_count(to_us)) == 0) {
+                /* (2) `to_node` to us */
+                //out = new_tracked_output(outs, &outpoint,
+                 //   tx_blockheight,
+                //    ELTOO_SETTLE,
+                //    satoshis,
+                //    OUTPUT_TO_US /* output_type */,
+                //    NULL /* htlc */,
+                //    NULL /* htlc_success_tapscript */,
+                //    NULL /* htlc_timeout_tapscript */);
+                /* No need to resolve or track it */
+                //ignore_output(out);
+                continue;
+            }
+            u8 *to_them = scriptpubkey_p2tr(tmpctx, &keyset->other_settle_key);
+            status_debug("to_them script: %s", tal_hex(tmpctx, to_them));
+            if (memcmp(settle_out->script, to_them, tal_count(to_them)) == 0) {
+                /* (3) `to_node` to them */
+                //out = new_tracked_output(outs, &outpoint,
+                //    tx_blockheight,
+                //    ELTOO_SETTLE,
+                //    satoshis,
+                //    OUTPUT_TO_THEM /* output_type */,
+                //    NULL /* htlc */,
+                //    NULL /* htlc_success_tapscript */,
+                //    NULL /* htlc_timeout_tapscript */);
+                /* No need to resolve it */
+                //ignore_output(out);
+                continue;
+            }
+            /* Update we don't recognise :( FIXME what do */
+            status_failed(STATUS_FAIL_INTERNAL_ERROR, "Couldn't match settlement output script to known output type");
+        } else {
+            enum output_type htlc_type;
+            if (matches_direction(matches, htlcs_info->htlcs) == LOCAL) {
+                /* (4) HTLC to us */
+                htlc_type = THEIR_HTLC;
+            } else {
+                /* (5) HTLC to them */
+                htlc_type = OUR_HTLC;
+            }
+            /* FIXME we need to propose a resolution for this output */
+            out = new_tracked_output(outs, &outpoint,
+                tx_blockheight,
+                ELTOO_SETTLE,
+                satoshis,
+                htlc_type /* output_type */,
+                &htlcs_info->htlcs[matches[0]] /* htlc */,
+                htlc_success_scripts[matches[0]] /* htlc_success_tapscript */,
+                htlc_timeout_scripts[matches[0]] /* htlc_timeout_tapscript */);
+            // FIXME resolve_our_htlc_ourcommit <--- do something like this which proposes resolution tx
+            assert(out);
+            continue;
+        }
+    }
+}
+
 /* An output has been spent: see if it resolves something we care about. */
 static void output_spent(struct tracked_output ***outs,
 			 const struct tx_parts *tx_parts,
@@ -695,74 +785,8 @@ static void output_spent(struct tracked_output ***outs,
 		/* Was this our resolution? */
 		if (resolved_by_proposal(out, tx_parts)) {
             if (out->resolved->tx_type == ELTOO_SETTLE) {
-                /* Settlement transaction has 5 types of outputs it's looking for  */
-                for (size_t j = 0; j < tal_count(tx_parts->outputs); j++) {
-                    struct wally_tx_output *settle_out = tx_parts->outputs[j];
-                    struct amount_sat satoshis = amount_sat(settle_out->satoshi);
-                    /* (1) Ephemeral Anchor */
-                    if (is_ephemeral_anchor(settle_out->script)) {
-                        /* Do we need to handle anchor? */
-                        continue;
-                    }
-                    const size_t *matches = eltoo_match_htlc_output(tmpctx, settle_out, htlc_success_scripts, htlc_timeout_scripts);
-                    struct bitcoin_outpoint outpoint;
-                    outpoint.txid = tx_parts->txid;
-                    outpoint.n = j;
-                    if (tal_count(matches) == 0) {
-                        if (!is_p2tr(settle_out->script, NULL)) {
-                            /* Everything should be taproot FIXME what do */
-                            abort();
-                        }
-                        u8 *to_us = scriptpubkey_p2tr(tmpctx, &keyset->self_settle_key);
-                        if (memcmp(settle_out->script, to_us, tal_count(to_us)) == 0) {
-                            /* (2) `to_node` to us */
-                            new_tracked_output(outs, &outpoint,
-                                tx_blockheight,
-                                out->resolved->tx_type,
-                                satoshis,
-                                OUTPUT_TO_US /* output_type */,
-                                NULL /* htlc */,
-                                NULL /* htlc_success_tapscript */,
-                                NULL /* htlc_timeout_tapscript */);
-                            continue;
-                        }
-                        u8 *to_them = scriptpubkey_p2tr(tmpctx, &keyset->other_settle_key);
-                        if (memcmp(settle_out->script, to_us, tal_count(to_them)) == 0) {
-                            /* (3) `to_node` to them */
-                            new_tracked_output(outs, &outpoint,
-                                tx_blockheight,
-                                out->resolved->tx_type,
-                                satoshis,
-                                OUTPUT_TO_THEM /* output_type */,
-                                NULL /* htlc */,
-                                NULL /* htlc_success_tapscript */,
-                                NULL /* htlc_timeout_tapscript */);
-                            continue;
-                        }
-                        /* Update we don't recognise :( FIXME what do */
-                        abort();
-                    } else {
-                        enum output_type htlc_type;
-                        if (matches_direction(matches, htlcs_info->htlcs) == LOCAL) {
-                            /* (4) HTLC to us */
-                            htlc_type = THEIR_HTLC;
-                        } else {
-                            /* (5) HTLC to them */
-                            htlc_type = OUR_HTLC;
-                        }
-                        new_tracked_output(outs, &outpoint,
-                            tx_blockheight,
-                            out->resolved->tx_type,
-                            satoshis,
-                            htlc_type /* output_type */,
-                            &htlcs_info->htlcs[matches[0]] /* htlc */,
-                            htlc_success_scripts[matches[0]] /* htlc_success_tapscript */,
-                            htlc_timeout_scripts[matches[0]] /* htlc_timeout_tapscript */);
-                            continue;
-                    }
-                }
+                track_settle_outputs(outs, tx_parts, tx_blockheight, htlc_success_scripts, htlc_timeout_scripts, htlcs_info);
             }
-
 			return;
 		}
 
