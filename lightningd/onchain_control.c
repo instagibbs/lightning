@@ -1990,7 +1990,6 @@ enum watch_result eltoo_onchaind_funding_spent(struct channel *channel,
 	if (channel->closer != NUM_SIDES)
 		reason = REASON_UNKNOWN;  /* will use last cause as reason */
 
-    /* FIXME This submits and unfunded transaction :) Need to spend anchor */
 	channel_fail_permanent(channel, reason, "Funding transaction spent");
 
 	/* We could come from almost any state. */

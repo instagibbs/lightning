@@ -1269,7 +1269,6 @@ static void handle_unilateral(const struct tx_parts *tx,
            /* n_pubkeys */ 2);
 
     /* FIXME I think this logic will be the same in main loop under output_spent  */
-    /* FIXME rework bind_update_tx_to_update_outpoint to take precisely what's required */
 
     /* Proposed resolution is the matching settlement tx */
     if (locktime == complete_update_tx->wtx->locktime) {
@@ -1282,6 +1281,7 @@ static void handle_unilateral(const struct tx_parts *tx,
         /* If we get lucky the settle transaction will hit chain and we can get balance back */
         status_debug("Uh-oh, update from the future!");
     } else {
+        /* FIXME probably should assert something here even though we checked for index already? */
         u8 *invalidated_annex_hint = tx->inputs[state_index]->witness->items[0].witness;
         struct bip340sig sig;
         bipmusig_partial_sigs_combine_state(&keyset->last_complete_state, &sig);
@@ -1294,6 +1294,7 @@ static void handle_unilateral(const struct tx_parts *tx,
                     locktime /* invalidated_update_number */,
                     &keyset->inner_pubkey,
                     &sig);
+        propose_resolution(out, complete_update_tx, 0 /* depth_required */, ELTOO_UPDATE);
     }
 
     /* Run to completion since we don't fan out immediately in eltoo  */
