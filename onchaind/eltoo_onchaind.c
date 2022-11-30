@@ -788,7 +788,6 @@ static void output_spent(struct tracked_output ***outs,
 		if (out->resolved)
 			continue;
 
-        /* FIXME segfaulting here */
 		if (!wally_tx_input_spends(tx_parts->inputs[input_num],
 					   &out->outpoint))
 			continue;
@@ -823,7 +822,7 @@ static void output_spent(struct tracked_output ***outs,
             /* We ignore this timeout tx, since we should
              * resolve by ignoring once we reach depth. */
             onchain_annotate_txout(
-                &htlc_outpoint,
+               &htlc_outpoint,
                 TX_CHANNEL_HTLC_TIMEOUT | TX_THEIRS);
 			break;
 
