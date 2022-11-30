@@ -30,6 +30,16 @@
 
 /* FIXME Everything copy/pasted bc static. Deduplicate later */
 
+/* Should make this a reusable thing */
+static bool bipmusig_partial_sigs_combine_state(const struct eltoo_sign *state,
+           struct bip340sig *sig)
+{   
+    const secp256k1_musig_partial_sig *p_sigs[2];
+    p_sigs[0] = &state->self_psig.p_sig;
+    p_sigs[1] = &state->other_psig.p_sig;
+    return bipmusig_partial_sigs_combine(p_sigs, 2 /* num_signers */, &state->session.session, sig);
+}  
+
 /* Full tx we have partial signatures for */
 static struct bitcoin_tx *complete_update_tx, *complete_settle_tx;
 
@@ -1272,15 +1282,18 @@ static void handle_unilateral(const struct tx_parts *tx,
         /* If we get lucky the settle transaction will hit chain and we can get balance back */
         status_debug("Uh-oh, update from the future!");
     } else {
+        u8 *invalidated_annex_hint = tx->inputs[state_index]->witness->items[0].witness;
+        struct bip340sig sig;
+        bipmusig_partial_sigs_combine_state(&keyset->last_complete_state, &sig);
         /* Need to propose our last complete update */
-//        bind_update_tx_to_update_outpoint(complete_update_tx,
-//                    complete_settle_tx,
-//                    &outpoint,
-//                    keyset,
-//                    invalidated_annex_hint,
-//                   locktime /* invalidated_update_number */,
-//                    &keyset->inner_pubkey,
-//                    b340sig);
+        bind_update_tx_to_update_outpoint(complete_update_tx,
+                    complete_settle_tx,
+                    &outpoint,
+                    keyset,
+                    invalidated_annex_hint,
+                    locktime /* invalidated_update_number */,
+                    &keyset->inner_pubkey,
+                    &sig);
     }
 
     /* Run to completion since we don't fan out immediately in eltoo  */
@@ -1331,7 +1344,10 @@ int main(int argc, char *argv[])
         &keyset->self_funding_key,
         &keyset->other_funding_key,
         &keyset->self_settle_key,
-        &keyset->other_settle_key)) {
+        &keyset->other_settle_key,
+        &keyset->last_complete_state.self_psig,
+        &keyset->last_complete_state.other_psig,
+        &keyset->last_complete_state.session)) {
 		master_badmsg(WIRE_ELTOO_ONCHAIND_INIT, msg);
 	}
 
