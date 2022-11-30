@@ -846,6 +846,8 @@ int main(int argc, const char *argv[])
     err |= test_invalid_update_tx();
     assert(!err);
 
+    printf("Tests succeeded!\n");
+
 	common_shutdown();
 
     return err;

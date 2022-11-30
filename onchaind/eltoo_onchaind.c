@@ -1260,7 +1260,6 @@ static void handle_unilateral(const struct tx_parts *tx,
 
     /* FIXME I think this logic will be the same in main loop under output_spent  */
     /* FIXME rework bind_update_tx_to_update_outpoint to take precisely what's required */
-    /* FIXME onchaind_spent needs to give locktime of new tx */
 
     /* Proposed resolution is the matching settlement tx */
     if (locktime == complete_update_tx->wtx->locktime) {
