@@ -191,6 +191,11 @@ onchain_ln() {
     # Test for old update hitting chain
     txid=$(bt-cli decoderawtransaction $FIRST_UPDATE_HEX | jq -r .txid)
     bt-cli prioritisetransaction $txid 0 100000000
+    # FIXME no way of grabbing latest bound tx to latest state output
+    # except by scraping logs
+    #txid=$(bt-cli decoderawtransaction $UPDATE_HEX | jq -r .txid)
+    #bt-cli prioritisetransaction $txid 0 100000000
+    # Only manually send first
     bt-cli sendrawtransaction $FIRST_UPDATE_HEX
     bt-cli generatetoaddress 1 $btcaddr
 

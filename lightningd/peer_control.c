@@ -1307,6 +1307,7 @@ static void NON_NULL_ARGS(1, 2, 4, 5) json_add_channel(struct command *cmd,
 
 	json_add_htlcs(ld, response, channel);
 
+<<<<<<< HEAD
     /* FIXME add latest update_tx and settle_tx, ideally re-bound */
     if (channel->last_tx) {
         json_add_tx(response, "last_update_tx", channel->last_tx);
@@ -1314,6 +1315,45 @@ static void NON_NULL_ARGS(1, 2, 4, 5) json_add_channel(struct command *cmd,
 
     if (channel->last_settle_tx) {
         json_add_tx(response, "last_settle_tx", channel->last_settle_tx);
+||||||| parent of 69d0234f0 (Testing out handling old updates for funding output spend)
+    if (channel->our_config.is_eltoo) {
+        struct bitcoin_tx **bound_update_and_settle_txs;
+
+        /* Eltoo keyset should probably have all pubkeys... */
+        bound_update_and_settle_txs = bind_txs_to_funding_outpoint(channel->eltoo_keyset.complete_update_tx,
+                         &channel->funding,
+                         channel->eltoo_keyset.complete_settle_tx,
+                         &channel->eltoo_keyset.last_complete_state.self_psig,
+                         &channel->eltoo_keyset.last_complete_state.other_psig,
+                         &channel->local_funding_pubkey,
+                         &channel->channel_info.remote_fundingkey,
+                         &channel->eltoo_keyset.last_complete_state.session);
+
+        json_add_tx(response, "last_update_tx", bound_update_and_settle_txs[0]);
+        json_add_tx(response, "last_settle_tx", bound_update_and_settle_txs[1]);
+        json_add_tx(response, "unbound_update_tx", channel->eltoo_keyset.complete_update_tx);
+        json_add_tx(response, "unbound_settle_tx", channel->eltoo_keyset.complete_settle_tx);
+        /* FIXME Deallocate copied txns? */
+=======
+    if (channel->our_config.is_eltoo) {
+        struct bitcoin_tx **bound_update_and_settle_txs;
+        /* Eltoo keyset should probably have all pubkeys... */
+        /* FIXME would be nice to rebind to latest utxo, not just funding output that may by spent already */
+        bound_update_and_settle_txs = bind_txs_to_funding_outpoint(channel->eltoo_keyset.complete_update_tx,
+                         &channel->funding,
+                         channel->eltoo_keyset.complete_settle_tx,
+                         &channel->eltoo_keyset.last_complete_state.self_psig,
+                         &channel->eltoo_keyset.last_complete_state.other_psig,
+                         &channel->local_funding_pubkey,
+                         &channel->channel_info.remote_fundingkey,
+                         &channel->eltoo_keyset.last_complete_state.session);
+
+        json_add_tx(response, "last_update_tx", bound_update_and_settle_txs[0]);
+        json_add_tx(response, "last_settle_tx", bound_update_and_settle_txs[1]);
+        json_add_tx(response, "unbound_update_tx", channel->eltoo_keyset.complete_update_tx);
+        json_add_tx(response, "unbound_settle_tx", channel->eltoo_keyset.complete_settle_tx);
+        /* FIXME Deallocate copied txns? */
+>>>>>>> 69d0234f0 (Testing out handling old updates for funding output spend)
     }
 
 	json_object_end(response);

@@ -302,9 +302,17 @@ static void onchain_txo_spent(struct channel *channel, const struct bitcoin_tx *
 
 	watch_tx_and_outputs(channel, tx);
 
+<<<<<<< HEAD
 	/* Reply will need this if we want to unwatch */
 	txid = tal(NULL, struct bitcoin_txid);
 	bitcoin_txid(tx, txid);
+||||||| parent of 69d0234f0 (Testing out handling old updates for funding output spend)
+	msg = towire_onchaind_spent(channel, parts, input_num, tx->wtx->locktime, blockheight);
+	subd_send_msg(channel->owner, take(msg));
+=======
+	msg = towire_onchaind_spent(channel, parts, tx->wtx->locktime, input_num, blockheight);
+	subd_send_msg(channel->owner, take(msg));
+>>>>>>> 69d0234f0 (Testing out handling old updates for funding output spend)
 
 	msg = towire_onchaind_spent(channel, parts, input_num, blockheight);
 	subd_req(channel->owner, channel->owner, take(msg), -1, 0,

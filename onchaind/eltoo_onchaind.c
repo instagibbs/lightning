@@ -788,6 +788,7 @@ static void output_spent(struct tracked_output ***outs,
 		if (out->resolved)
 			continue;
 
+        /* FIXME segfaulting here */
 		if (!wally_tx_input_spends(tx_parts->inputs[input_num],
 					   &out->outpoint))
 			continue;
@@ -797,8 +798,15 @@ static void output_spent(struct tracked_output ***outs,
             if (out->resolved->tx_type == ELTOO_SETTLE) {
                 track_settle_outputs(outs, tx_parts, tx_blockheight, htlc_success_scripts, htlc_timeout_scripts, htlcs_info);
             }
+            /* FIXME handle our own response update tx being mined */
 			return;
 		}
+
+        /* FIXME handle old update hitting the chain here */
+
+        /* FIXME handle complete update tx hitting the chain */
+
+        /* FIXME handle committed update tx hitting the chain */
 
 		htlc_outpoint.txid = tx_parts->txid;
 		htlc_outpoint.n = input_num;
@@ -1274,15 +1282,18 @@ static void handle_unilateral(const struct tx_parts *tx,
     if (locktime == complete_update_tx->wtx->locktime) {
         bind_settle_tx(tx->txid, state_index, complete_settle_tx);
         propose_resolution(out, complete_settle_tx,  complete_settle_tx->wtx->inputs[0].sequence /* depth_required */, ELTOO_SETTLE);
-    } else if (locktime == committed_update_tx->wtx->locktime) {
+    } else if (committed_update_tx && locktime == committed_update_tx->wtx->locktime) {
         bind_settle_tx(tx->txid, state_index, committed_settle_tx);
         propose_resolution(out, committed_settle_tx, committed_settle_tx->wtx->inputs[0].sequence /* depth_required */, ELTOO_SETTLE);
-    } else if (locktime > committed_update_tx->wtx->locktime) {
+    } else if ((committed_update_tx && locktime > committed_update_tx->wtx->locktime) ||
+        (!committed_update_tx && locktime > complete_update_tx->wtx->locktime)) {
         /* If we get lucky the settle transaction will hit chain and we can get balance back */
         status_debug("Uh-oh, update from the future!");
     } else {
         /* FIXME probably should assert something here even though we checked for index already? */
-        u8 *invalidated_annex_hint = tx->inputs[state_index]->witness->items[0].witness;
+        /* FIXME getting taproot committment mismatch here */
+        struct wally_tx_witness_stack *wit_stack = tx->inputs[state_index]->witness;
+        u8 *invalidated_annex_hint = wit_stack->items[wit_stack->num_items - 1].witness;  /* Annex is last witness item! */
         struct bip340sig sig;
         bipmusig_partial_sigs_combine_state(&keyset->last_complete_state, &sig);
         /* Need to propose our last complete update */
@@ -1291,7 +1302,7 @@ static void handle_unilateral(const struct tx_parts *tx,
                     &outpoint,
                     keyset,
                     invalidated_annex_hint,
-                    locktime /* invalidated_update_number */,
+                    locktime - 500000000 /* invalidated_update_number FIXME don't translate back and forth*/,
                     &keyset->inner_pubkey,
                     &sig);
         propose_resolution(out, complete_update_tx, 0 /* depth_required */, ELTOO_UPDATE);
