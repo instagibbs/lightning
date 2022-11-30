@@ -1080,6 +1080,7 @@ static void wait_for_resolved(struct tracked_output **outs, struct htlcs_info *h
 		u32 input_num, depth, tx_blockheight;
 		struct preimage preimage;
 		struct tx_parts *tx_parts;
+        u32 locktime;
 
 		if (tal_count(queued_msgs)) {
 			msg = tal_steal(outs, queued_msgs[0]);
@@ -1092,7 +1093,7 @@ static void wait_for_resolved(struct tracked_output **outs, struct htlcs_info *h
 
 		if (fromwire_onchaind_depth(msg, &txid, &depth)) {
 			eltoo_tx_new_depth(outs, &txid, depth);
-        } else if (fromwire_onchaind_spent(msg, msg, &tx_parts, &input_num,
+        } else if (fromwire_onchaind_spent(msg, msg, &tx_parts, &locktime, &input_num,
 						&tx_blockheight)) {
 			output_spent(&outs, tx_parts, input_num, tx_blockheight, htlc_success_scripts, htlc_timeout_scripts, htlcs_info);
 		} else if (fromwire_onchaind_known_preimage(msg, &preimage))
@@ -1214,7 +1215,7 @@ static void eltoo_handle_mutual_close(struct tracked_output **outs,
     wait_for_mutual_resolved(outs);
 }
 
-static void handle_latest_update(const struct tx_parts *tx,
+static void handle_unilateral(const struct tx_parts *tx,
                   u32 tx_blockheight,
                   struct tracked_output **outs,
                   u32 locktime)
@@ -1224,6 +1225,8 @@ static void handle_latest_update(const struct tx_parts *tx,
     struct amount_asset asset;
     struct amount_sat amt;
     struct tracked_output *out;
+    const struct pubkey *pubkey_ptrs[2];
+    secp256k1_musig_keyagg_cache keyagg_cache;
 
     /* State output will match index */
     int state_index = funding_input_num(outs, tx);
@@ -1234,7 +1237,7 @@ static void handle_latest_update(const struct tx_parts *tx,
     asset = wally_tx_output_get_amount(tx->outputs[state_index]);
     amt = amount_asset_to_sat(&asset);
 
-    htlcs_info = eltoo_init_reply(tmpctx, "Tracking final update transaction");
+    htlcs_info = eltoo_init_reply(tmpctx, "Tracking update transactions");
 
     onchain_annotate_txin(&tx->txid, state_index, TX_CHANNEL_UNILATERAL);
 
@@ -1247,13 +1250,38 @@ static void handle_latest_update(const struct tx_parts *tx,
                  DELAYED_OUTPUT_TO_US,
                  NULL /* htlc */, NULL /* htlc_success_tapscript */, NULL /* htlc_timeout_tapscript */);
 
+    /* Fill out inner pubkey to complete re-binding of update transactions going forward */
+    pubkey_ptrs[0] = &keyset->self_funding_key;
+    pubkey_ptrs[1] = &keyset->other_funding_key;
+    bipmusig_inner_pubkey(&keyset->inner_pubkey,
+           &keyagg_cache,
+           pubkey_ptrs,
+           /* n_pubkeys */ 2);
+
+    /* FIXME I think this logic will be the same in main loop under output_spent  */
+    /* FIXME rework bind_update_tx_to_update_outpoint to take precisely what's required */
+    /* FIXME onchaind_spent needs to give locktime of new tx */
+
     /* Proposed resolution is the matching settlement tx */
     if (locktime == complete_update_tx->wtx->locktime) {
         bind_settle_tx(tx->txid, state_index, complete_settle_tx);
         propose_resolution(out, complete_settle_tx,  complete_settle_tx->wtx->inputs[0].sequence /* depth_required */, ELTOO_SETTLE);
-    } else {
+    } else if (locktime == committed_update_tx->wtx->locktime) {
         bind_settle_tx(tx->txid, state_index, committed_settle_tx);
         propose_resolution(out, committed_settle_tx, committed_settle_tx->wtx->inputs[0].sequence /* depth_required */, ELTOO_SETTLE);
+    } else if (locktime > committed_update_tx->wtx->locktime) {
+        /* If we get lucky the settle transaction will hit chain and we can get balance back */
+        status_debug("Uh-oh, update from the future!");
+    } else {
+        /* Need to propose our last complete update */
+//        bind_update_tx_to_update_outpoint(complete_update_tx,
+//                    complete_settle_tx,
+//                    &outpoint,
+//                    keyset,
+//                    invalidated_annex_hint,
+//                   locktime /* invalidated_update_number */,
+//                    &keyset->inner_pubkey,
+//                    b340sig);
     }
 
     /* Run to completion since we don't fan out immediately in eltoo  */
@@ -1272,7 +1300,7 @@ int main(int argc, char *argv[])
     struct tracked_output **outs;
     struct bitcoin_outpoint funding;
     struct amount_sat funding_sats;
-    u32 locktime, tx_blockheight, max_known_version;
+    u32 locktime, tx_blockheight;
     u8 *scriptpubkey[NUM_SIDES];
 
     keyset = tal(ctx, struct eltoo_keyset);
@@ -1347,11 +1375,9 @@ int main(int argc, char *argv[])
                           tal_count(spending_tx->outputs))));
 
     /* Committed state should be one step further max */
-    max_known_version = complete_update_tx->wtx->locktime;
     if (committed_update_tx) {
         assert(complete_update_tx->wtx->locktime == committed_update_tx->wtx->locktime ||
                 complete_update_tx->wtx->locktime == committed_update_tx->wtx->locktime + 1);
-        max_known_version = committed_update_tx->wtx->locktime;
     }
 
     if (is_mutual_close(locktime)) {
@@ -1359,29 +1385,7 @@ int main(int argc, char *argv[])
         eltoo_handle_mutual_close(outs, spending_tx);
     } else {
         status_debug("Handling unilateral close!");
-        if (locktime > max_known_version) {
-            /* Might as well track the state output, see if it ends up in a settlement tx
-             * So `to_node` values can be harvested, HTLCs rescued with counterparty's help?
-             * Or we should immediately report all HTLCs as missing, failing these?
-             */
-            status_debug("Uh-oh, please be nice Mr Counterparty :(");
-        } else if (locktime == max_known_version) {
-            status_debug("Unilateral close of last known state detected");
-            /* 
-             * We are simply waiting for this particular update tx to mature
-             * before getting the settlement tx on chain and sweeping outputs.
-             */
-            handle_latest_update(spending_tx, tx_blockheight, outs, locktime);
-        } else if (locktime == complete_update_tx->wtx->locktime) {
-            status_debug("Unilateral close of last complete state detected");
-            /*
-             * It's possible this last transaction will be over-written
-             * by the committed state we don't have signatures for.
-             */
-            handle_latest_update(spending_tx, tx_blockheight, outs, locktime);
-        } else {
-            status_debug("Cheater!");
-        }
+        handle_unilateral(spending_tx, tx_blockheight, outs, locktime);
     }
 
  	/* We're done! */

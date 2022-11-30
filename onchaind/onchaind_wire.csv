@@ -64,6 +64,7 @@ msgdata,onchaind_htlcs,tell_immediately,bool,num_htlcs
 # master->onchaind: Notifier that an output has been spent by input_num of tx.
 msgtype,onchaind_spent,5004
 msgdata,onchaind_spent,tx,tx_parts,
+msgdata,onchaind_spent,locktime,u32,
 msgdata,onchaind_spent,input_num,u32,
 msgdata,onchaind_spent,blockheight,u32,
 

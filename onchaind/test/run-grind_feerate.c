@@ -37,7 +37,7 @@ bool fromwire_onchaind_known_preimage(const void *p UNNEEDED, struct preimage *p
 bool fromwire_onchaind_spend_created(const tal_t *ctx UNNEEDED, const void *p UNNEEDED, bool *expect_to_succeed UNNEEDED, struct onchain_witness_element ***witness UNNEEDED)
 { fprintf(stderr, "fromwire_onchaind_spend_created called!\n"); abort(); }
 /* Generated stub for fromwire_onchaind_spent */
-bool fromwire_onchaind_spent(const tal_t *ctx UNNEEDED, const void *p UNNEEDED, struct tx_parts **tx UNNEEDED, u32 *input_num UNNEEDED, u32 *blockheight UNNEEDED)
+bool fromwire_onchaind_spent(const tal_t *ctx UNNEEDED, const void *p UNNEEDED, struct tx_parts **tx UNNEEDED, u32 *locktime UNNEEDED, u32 *input_num UNNEEDED, u32 *blockheight UNNEEDED)
 { fprintf(stderr, "fromwire_onchaind_spent called!\n"); abort(); }
 /* Generated stub for onchaind_wire_name */
 const char *onchaind_wire_name(int e UNNEEDED)
