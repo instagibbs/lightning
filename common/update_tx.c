@@ -207,6 +207,89 @@ void bind_update_tx_to_update_outpoint(struct bitcoin_tx *update_tx,
     bitcoin_tx_input_set_witness(update_tx, /* input_num */ 0, update_witness);
 }
 
+struct bitcoin_tx **bind_txs_to_update_outpoint(const struct bitcoin_tx *update_tx,
+                             const struct bitcoin_outpoint *latest_outpoint,
+                             const struct bitcoin_tx *settle_tx,
+                             const u8 *invalidated_annex_hint,
+                             u32 invalidated_update_num,
+                             const struct partial_sig *psig1,
+                             const struct partial_sig *psig2,
+                             const struct pubkey *funding_pubkey1,
+                             const struct pubkey *funding_pubkey2,
+                             const struct musig_session *session)
+{
+    struct bitcoin_tx **bound_update_and_settle_txs = tal_arr(tmpctx, struct bitcoin_tx *, 2);
+
+    u8 *p = tal_arr(tmpctx, u8, 0);
+    const u8 *p_start;
+    struct bitcoin_tx *bound_update_tx, *bound_settle_tx;
+    size_t p_len;
+    const secp256k1_musig_partial_sig * psig_ptrs[2];
+    const struct pubkey * pubkey_ptrs[2];
+    struct bip340sig sig;
+    int ok;
+    secp256k1_musig_keyagg_cache dummy_cache;
+    struct pubkey inner_pubkey;
+    struct eltoo_keyset keyset_copy;
+    struct bitcoin_txid update_txid;
+    towire_bitcoin_tx(&p, update_tx);
+    p_start = p;
+    p_len = tal_count(p);
+    bound_update_tx = fromwire_bitcoin_tx(tmpctx, &p_start, &p_len);
+    assert(bound_update_tx);
+
+    /* re-set and serialize settle tx next */
+    p = tal_arr(tmpctx, u8, 0);
+    towire_bitcoin_tx(&p, settle_tx);
+    p_start = p;
+
+    p_len = tal_count(p);
+    bound_settle_tx = fromwire_bitcoin_tx(tmpctx, &p_start, &p_len);
+    assert(bound_settle_tx);
+
+    psig_ptrs[0] = &psig1->p_sig;
+    psig_ptrs[1] = &psig2->p_sig;
+
+    keyset_copy.self_funding_key = *funding_pubkey1;
+    keyset_copy.other_funding_key = *funding_pubkey2;
+    /* FIXME: inner_pubkey should be in PSBT, don't need to make key here */
+    pubkey_ptrs[0] = &keyset_copy.self_funding_key;
+    pubkey_ptrs[1] = &keyset_copy.other_funding_key;
+
+    ok = bipmusig_partial_sigs_combine(psig_ptrs,
+        2 /* num_signers */,
+        &session->session,
+        &sig);
+    assert(ok); // Trusted data!!!
+
+    bipmusig_inner_pubkey(&inner_pubkey,
+        &dummy_cache,
+        pubkey_ptrs,
+        2 /* n_pubkeys */);
+
+    /* FIXME pass in pubkeys, not keyset ... or get pubkeys from PSBT directly */
+    bind_update_tx_to_update_outpoint(bound_update_tx,
+        bound_settle_tx,
+        latest_outpoint,
+        &keyset_copy,
+        invalidated_annex_hint,
+        invalidated_update_num,
+        &inner_pubkey,
+        &sig);
+
+    bitcoin_txid(bound_update_tx, &update_txid);
+    bind_settle_tx(update_txid,
+        0 /* output_index: we can't know for sure until update tx confirms, this is
+        for ease of use */,
+        bound_settle_tx);
+
+    bound_update_and_settle_txs[0] = bound_update_tx;
+    bound_update_and_settle_txs[1] = bound_settle_tx;
+
+    return bound_update_and_settle_txs;
+}
+
+
 struct bitcoin_tx **bind_txs_to_funding_outpoint(const struct bitcoin_tx *update_tx,
                              const struct bitcoin_outpoint *funding,
                              const struct bitcoin_tx *settle_tx,

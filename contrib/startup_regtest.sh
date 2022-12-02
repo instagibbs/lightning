@@ -191,20 +191,23 @@ onchain_ln() {
     # Test for old update hitting chain
     txid=$(bt-cli decoderawtransaction $FIRST_UPDATE_HEX | jq -r .txid)
     bt-cli prioritisetransaction $txid 0 100000000
-    # FIXME no way of grabbing latest bound tx to latest state output
-    # except by scraping logs
-    #txid=$(bt-cli decoderawtransaction $UPDATE_HEX | jq -r .txid)
-    #bt-cli prioritisetransaction $txid 0 100000000
-    # Only manually send first
     bt-cli sendrawtransaction $FIRST_UPDATE_HEX
     bt-cli generatetoaddress 1 $btcaddr
-
-    # Settle tx can be broadcast after shared_delay, onchaind should
-    # be trying to spend the update tx output itself!
-    bt-cli generatetoaddress 6 $btcaddr
-    txid=$(bt-cli decoderawtransaction $FIRST_SETTLE_HEX | jq -r .txid)
+    sleep 1
+    # Should be re-bound now
+    UPDATE_HEX=$(l1-cli listpeers | jq -r .peers[0].channels[0].last_update_tx )
+    txid=$(bt-cli decoderawtransaction $UPDATE_HEX | jq -r .txid)
     bt-cli prioritisetransaction $txid 0 100000000
-    bt-cli sendrawtransaction $FIRST_SETTLE_HEX
+    bt-cli generatetoaddress 1 $btcaddr
+    # Make sure final update txn is rebroadcasted into mempool
+    sleep 1
+    bt-cli generatetoaddress 1 $btcaddr
+    SETTLE_HEX=$(l1-cli listpeers | jq -r .peers[0].channels[0].last_settle_tx )
+    txid=$(bt-cli decoderawtransaction $SETTLE_HEX | jq -r .txid)
+    bt-cli prioritisetransaction $txid 0 100000000
+    bt-cli generatetoaddress 6 $btcaddr
+    # Make sure settle txn is broadcasted into mempool
+    sleep 1
     bt-cli generatetoaddress 1 $btcaddr
 }
 

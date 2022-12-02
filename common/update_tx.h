@@ -62,6 +62,20 @@ struct bitcoin_tx **bind_txs_to_funding_outpoint(const struct bitcoin_tx *update
                              const struct pubkey *funding_pubkey2,
                              const struct musig_session *session);
 
+/* Wrapper for bind_update_tx_to_update_outpoint and bind_settle_tx which
+ * clones the original transactions and returns blinded bound
+ * transactions: update then settle transactions */
+struct bitcoin_tx **bind_txs_to_update_outpoint(const struct bitcoin_tx *update_tx,
+                             const struct bitcoin_outpoint *latest_outpoint,
+                             const struct bitcoin_tx *settle_tx,
+                             const u8 *invalidated_annex_hint,
+                             u32 invalidated_update_num,
+                             const struct partial_sig *psig1,
+                             const struct partial_sig *psig2,
+                             const struct pubkey *funding_pubkey1,
+                             const struct pubkey *funding_pubkey2,
+                             const struct musig_session *session);
+
 /* Used to bind the update transaction to the non-funding outpoints
  * of the eltoo contract. This only occurs if invalidated update
  * transactions are published, e.g. faulty watchtower, or malicious

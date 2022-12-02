@@ -85,6 +85,7 @@ struct tracked_output {
 	u32 depth;
 	struct amount_sat sat;
 	enum output_type output_type;
+    u32 locktime; /* Used to detec update->settle transition */
 
 	/* If it is an HTLC, this is set, tapscripts are non-NULL. */
 	struct htlc_stub htlc;
@@ -218,6 +219,7 @@ new_tracked_output(struct tracked_output ***outs,
 		   enum eltoo_tx_type tx_type,
 		   struct amount_sat sat,
 		   enum output_type output_type,
+           u32 locktime,
 		   const struct htlc_stub *htlc,
 		   const u8 *htlc_success_tapscript TAKES,
 		   const u8 *htlc_timeout_tapscript TAKES)
@@ -235,6 +237,7 @@ new_tracked_output(struct tracked_output ***outs,
 	out->depth = 0;
 	out->sat = sat;
 	out->output_type = output_type;
+    out->locktime = locktime;
 	out->proposal = NULL;
 	out->resolved = NULL;
 	if (htlc)
@@ -761,6 +764,7 @@ static void track_settle_outputs(struct tracked_output ***outs,
                 ELTOO_SETTLE,
                 satoshis,
                 htlc_type /* output_type */,
+                0 /* locktime (unused by settle logic) */,
                 &htlcs_info->htlcs[matches[0]] /* htlc */,
                 htlc_success_scripts[matches[0]] /* htlc_success_tapscript */,
                 htlc_timeout_scripts[matches[0]] /* htlc_timeout_tapscript */);
@@ -776,6 +780,7 @@ static void output_spent(struct tracked_output ***outs,
 			 const struct tx_parts *tx_parts,
 			 u32 input_num,
 			 u32 tx_blockheight,
+             u32 locktime,
              u8 **htlc_success_scripts,
              u8 **htlc_timeout_scripts,
              struct htlcs_info *htlcs_info)
@@ -794,14 +799,65 @@ static void output_spent(struct tracked_output ***outs,
 
 		/* Was this our resolution? */
 		if (resolved_by_proposal(out, tx_parts)) {
+            /* FIXME Do we actually care if it was us for most cases? */
             if (out->resolved->tx_type == ELTOO_SETTLE) {
                 track_settle_outputs(outs, tx_parts, tx_blockheight, htlc_success_scripts, htlc_timeout_scripts, htlcs_info);
+			    return;
             }
-            /* FIXME handle our own response update tx being mined */
-			return;
 		}
 
-        /* FIXME handle old update hitting the chain here */
+        /* Must be an update transaction since nlocktime is increasing */
+        if (locktime != out->locktime) {
+            /* New state output will be on same index as tx input spending state */
+            struct bitcoin_outpoint outpoint;
+            struct amount_asset asset;
+            struct amount_sat amt;
+            struct tracked_output *new_state_out;
+
+            asset = wally_tx_output_get_amount(tx_parts->outputs[input_num]);
+            amt = amount_asset_to_sat(&asset);
+            outpoint.txid = tx_parts->txid;
+            outpoint.n = input_num;
+
+            new_state_out = new_tracked_output(outs, &outpoint, tx_blockheight, ELTOO_UPDATE, amt, DELAYED_OUTPUT_TO_US, locktime,
+                NULL /* htlcs */, NULL /* htlc_success_tapscript */, NULL /* htlc_timeout_tapscript */);
+
+            if (locktime == complete_update_tx->wtx->locktime) {
+                bind_settle_tx(tx_parts->txid, input_num, complete_settle_tx);
+                propose_resolution(new_state_out, complete_settle_tx,  complete_settle_tx->wtx->inputs[0].sequence /* depth_required */, ELTOO_SETTLE);
+            } else if (committed_update_tx && locktime == committed_update_tx->wtx->locktime) {
+                bind_settle_tx(tx_parts->txid, input_num, committed_settle_tx);
+                propose_resolution(new_state_out, committed_settle_tx, committed_settle_tx->wtx->inputs[0].sequence /* depth_required */, ELTOO_SETTLE);
+            } else if ((committed_update_tx && locktime > committed_update_tx->wtx->locktime) ||
+                (!committed_update_tx && locktime > complete_update_tx->wtx->locktime)) {
+                /* If we get lucky the settle transaction will hit chain and we can get balance back */
+                /* FIXME Should we give up after a long time? */
+                status_debug("Uh-oh, update from the future!");
+            } else {
+                /* FIXME probably should assert something here even though we checked for index already? */
+                struct wally_tx_witness_stack *wit_stack = tx_parts->inputs[input_num]->witness;
+                u8 *invalidated_annex_hint = wit_stack->items[wit_stack->num_items - 1].witness;  /* Annex is last witness item! */
+                struct bip340sig sig;
+                u32 invalidated_update_num = locktime - 500000000;
+                bipmusig_partial_sigs_combine_state(&keyset->last_complete_state, &sig);
+                /* Need to propose our last complete update */
+                bind_update_tx_to_update_outpoint(complete_update_tx,
+                            complete_settle_tx,
+                            &outpoint,
+                            keyset,
+                            invalidated_annex_hint,
+                            invalidated_update_num,
+                            &keyset->inner_pubkey,
+                            &sig);
+                propose_resolution(out, complete_update_tx, 0 /* depth_required */, ELTOO_UPDATE);
+
+                /* Inform master of latest known state output to rebind to over RPC responses
+                 * We don't send complete/committed_tx state outputs or future ones */
+                wire_sync_write(REQ_FD,
+                        take(towire_eltoo_onchaind_new_state_output(out, &outpoint, invalidated_update_num, invalidated_annex_hint)));
+            }
+
+        }
 
         /* FIXME handle complete update tx hitting the chain */
 
@@ -864,6 +920,8 @@ static void output_spent(struct tracked_output ***outs,
         case DELAYED_OUTPUT_TO_US:
 		case ELEMENTS_FEE:
 		case ANCHOR_TO_US:
+            /* FIXME none of this is working, just return for now */
+            return;
 		case ANCHOR_TO_THEM:
 			status_failed(STATUS_FAIL_INTERNAL_ERROR,
 				      "Tracked spend of %s/%s?",
@@ -1112,7 +1170,7 @@ static void wait_for_resolved(struct tracked_output **outs, struct htlcs_info *h
 			eltoo_tx_new_depth(outs, &txid, depth);
         } else if (fromwire_onchaind_spent(msg, msg, &tx_parts, &locktime, &input_num,
 						&tx_blockheight)) {
-			output_spent(&outs, tx_parts, input_num, tx_blockheight, htlc_success_scripts, htlc_timeout_scripts, htlcs_info);
+			output_spent(&outs, tx_parts, input_num, tx_blockheight, locktime, htlc_success_scripts, htlc_timeout_scripts, htlcs_info);
 		} else if (fromwire_onchaind_known_preimage(msg, &preimage))
             /* We could be watching our settlement outputs
                even if they haven't entered utxo set to use for CPFP. */
@@ -1265,6 +1323,7 @@ static void handle_unilateral(const struct tx_parts *tx,
                  ELTOO_UPDATE,
                  amt,
                  DELAYED_OUTPUT_TO_US,
+                 locktime,
                  NULL /* htlc */, NULL /* htlc_success_tapscript */, NULL /* htlc_timeout_tapscript */);
 
     /* Fill out inner pubkey to complete re-binding of update transactions going forward */
@@ -1290,10 +1349,10 @@ static void handle_unilateral(const struct tx_parts *tx,
         status_debug("Uh-oh, update from the future!");
     } else {
         /* FIXME probably should assert something here even though we checked for index already? */
-        /* FIXME getting taproot committment mismatch here */
         struct wally_tx_witness_stack *wit_stack = tx->inputs[state_index]->witness;
         u8 *invalidated_annex_hint = wit_stack->items[wit_stack->num_items - 1].witness;  /* Annex is last witness item! */
         struct bip340sig sig;
+        u32 invalidated_update_num = locktime - 500000000;
         bipmusig_partial_sigs_combine_state(&keyset->last_complete_state, &sig);
         /* Need to propose our last complete update */
         bind_update_tx_to_update_outpoint(complete_update_tx,
@@ -1301,13 +1360,18 @@ static void handle_unilateral(const struct tx_parts *tx,
                     &outpoint,
                     keyset,
                     invalidated_annex_hint,
-                    locktime - 500000000 /* invalidated_update_number FIXME don't translate back and forth*/,
+                    invalidated_update_num,
                     &keyset->inner_pubkey,
                     &sig);
         propose_resolution(out, complete_update_tx, 0 /* depth_required */, ELTOO_UPDATE);
+
+        /* Inform master of latest known state output to rebind to over RPC responses
+         * We don't send complete/committed_tx state outputs or future ones */
+        wire_sync_write(REQ_FD,
+                take(towire_eltoo_onchaind_new_state_output(out, &outpoint, invalidated_update_num, invalidated_annex_hint)));
+
     }
 
-    /* Run to completion since we don't fan out immediately in eltoo  */
     wait_for_resolved(outs, htlcs_info);
 
     tal_free(htlcs_info);
@@ -1391,7 +1455,8 @@ int main(int argc, char *argv[])
                0, /* We don't care about funding blockheight */
                FUNDING_TRANSACTION,
                funding_sats,
-               FUNDING_OUTPUT, NULL /* htlc */, NULL /* htlc_success_tapscript */, NULL /* htlc_timeout_tapscript */);
+               FUNDING_OUTPUT,
+               locktime, NULL /* htlc */, NULL /* htlc_success_tapscript */, NULL /* htlc_timeout_tapscript */);
 
     /* Record funding output spent */
     send_coin_mvt(take(new_coin_channel_close(NULL, &spending_tx->txid,
