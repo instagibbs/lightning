@@ -132,6 +132,7 @@ void bind_settle_tx(const struct bitcoin_txid update_txid,
 {
     assert(settle_tx->wtx->num_inputs == 1); /* We don't craft anything else */
     memcpy(settle_tx->wtx->inputs[0].txhash, &update_txid, 32);
+    settle_tx->wtx->inputs[0].index = output_index;
 }
 
 void bind_update_tx_to_update_outpoint(struct bitcoin_tx *update_tx,

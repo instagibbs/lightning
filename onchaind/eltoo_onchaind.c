@@ -1338,11 +1338,18 @@ static void handle_unilateral(const struct tx_parts *tx,
 
     /* Proposed resolution is the matching settlement tx */
     if (locktime == complete_update_tx->wtx->locktime) {
+        status_debug("Handling the final complete update transaction.");
         bind_settle_tx(tx->txid, state_index, complete_settle_tx);
         propose_resolution(out, complete_settle_tx,  complete_settle_tx->wtx->inputs[0].sequence /* depth_required */, ELTOO_SETTLE);
     } else if (committed_update_tx && locktime == committed_update_tx->wtx->locktime) {
+        u8 *empty_hint = tal_arr(tmpctx, u8, 0); /* Make sure this doesn't sit around forever */
+        status_debug("Handling the final committed update transaction.");
         bind_settle_tx(tx->txid, state_index, committed_settle_tx);
         propose_resolution(out, committed_settle_tx, committed_settle_tx->wtx->inputs[0].sequence /* depth_required */, ELTOO_SETTLE);
+
+        /* Give hint to how to rebind the committed settle tx */
+        wire_sync_write(REQ_FD,
+                take(towire_eltoo_onchaind_new_state_output(out, &outpoint, 0 /* invalidated_update_num */, empty_hint)));
     } else if ((committed_update_tx && locktime > committed_update_tx->wtx->locktime) ||
         (!committed_update_tx && locktime > complete_update_tx->wtx->locktime)) {
         /* If we get lucky the settle transaction will hit chain and we can get balance back */

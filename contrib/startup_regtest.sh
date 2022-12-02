@@ -193,6 +193,7 @@ onchain_ln() {
     bt-cli prioritisetransaction $txid 0 100000000
     bt-cli sendrawtransaction $FIRST_UPDATE_HEX
     bt-cli generatetoaddress 1 $btcaddr
+    # Need to make sure onchaind are continuing first
     sleep 1
     # Should be re-bound now
     UPDATE_HEX=$(l1-cli listpeers | jq -r .peers[0].channels[0].last_update_tx )
