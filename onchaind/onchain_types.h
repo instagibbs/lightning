@@ -74,8 +74,9 @@ enum eltoo_tx_type {
      */
     ELTOO_INVALIDATED_SETTLE,
 
-    /* Sweep of outputs from settlement tx */
-    ELTOO_SWEEP,
+    /* Sweep of outputs from settlement tx to outselves */
+    ELTOO_HTLC_TIMEOUT,
+    ELTOO_HTLC_SUCCESS,
 
     /* FIXME should I have more types? */
 
