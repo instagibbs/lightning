@@ -52,6 +52,9 @@ static struct bitcoin_tx *committed_update_tx, *committed_settle_tx;
 /* Required in various places: keys for commitment transaction. */
 static struct eltoo_keyset *keyset;
 
+/* The feerate for transactions spending HTLC outputs. */
+static u32 htlc_feerate;
+
 /* When to tell master about HTLCs which are missing/timed out */
 static u32 reasonable_depth;
 
@@ -1455,6 +1458,7 @@ int main(int argc, char *argv[])
         &committed_settle_tx,
         &tx_blockheight,
         &our_msat,
+        &htlc_feerate,
         &scriptpubkey[LOCAL],
         &scriptpubkey[REMOTE],
         &keyset->self_funding_key,
