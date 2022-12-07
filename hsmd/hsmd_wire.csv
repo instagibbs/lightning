@@ -599,3 +599,14 @@ msgdata,hsmd_migrate_nonce,temp_id,channel_id,
 msgdata,hsmd_migrate_nonce,final_id,channel_id,
 
 msgtype,hsmd_migrate_nonce_reply,197
+
+
+# Non-MuSig signature stuff for eltoo
+msgtype,hsmd_sign_eltoo_htlc_timeout_tx,113
+msgdata,hsmd_sign_eltoo_htlc_timeout_tx,tx,bitcoin_tx,
+msgdata,hsmd_sign_eltoo_htlc_timeout_tx,tapscript_len,u16,
+msgdata,hsmd_sign_eltoo_htlc_timeout_tx,tapscript,u8,tapscript_len
+
+# Reply for all the above requests.
+msgtype,hsmd_sign_eltoo_tx_reply,212
+msgdata,hsmd_sign_eltoo_tx_reply,sig,bip340sig,

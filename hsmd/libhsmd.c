@@ -139,6 +139,7 @@ bool hsmd_check_client_capabilities(struct hsmd_client *client,
     case WIRE_HSMD_PSIGN_UPDATE_TX:
     case WIRE_HSMD_COMBINE_PSIG:
     case WIRE_HSMD_READY_ELTOO_CHANNEL:
+    case WIRE_HSMD_SIGN_ELTOO_HTLC_TIMEOUT_TX:
     case WIRE_HSMD_VALIDATE_UPDATE_TX_PSIG: /* FIXME unused for now ...  */
 		return (client->capabilities & HSM_CAP_SIGN_REMOTE_TX) != 0;
 
@@ -193,6 +194,7 @@ bool hsmd_check_client_capabilities(struct hsmd_client *client,
     case WIRE_HSMD_VALIDATE_UPDATE_TX_PSIG_REPLY:
     case WIRE_HSMD_GEN_NONCE_REPLY:
     case WIRE_HSMD_MIGRATE_NONCE_REPLY:
+    case WIRE_HSMD_SIGN_ELTOO_TX_REPLY:
 		break;
 	}
 	return false;
@@ -1540,7 +1542,10 @@ static u8 *handle_psign_update_tx(struct hsmd_client *c, const u8 *msg_in)
                pubkey_ptrs,
                /* n_pubkeys */ 2);
 
-    bitcoin_tx_taproot_hash_for_sig(update_tx, /* input_index */ 0, SIGHASH_ANYPREVOUTANYSCRIPT|SIGHASH_SINGLE, /* non-NULL script signals bip342... */ annex, annex, &hash_out);
+    /* Update transactions do not require commitment to the tapleaf hash via APOAS, hence sending in annex here
+     * just to signal bip342 path evaluation */
+    bitcoin_tx_taproot_hash_for_sig(update_tx, /* input_index */ 0, SIGHASH_ANYPREVOUTANYSCRIPT|SIGHASH_SINGLE,
+        annex /* tapleaf_script */, annex, &hash_out);
     printf("sign taproot Sighash: ");
     for (i = 0; i < 32; i++)
     {
@@ -1701,6 +1706,46 @@ static u8 *handle_validate_revocation(struct hsmd_client *c, const u8 *msg_in)
 	/* Stub implementation, relies on validation in channeld. */
 
 	return towire_hsmd_validate_revocation_reply(NULL);
+}
+
+static u8 *handle_sign_eltoo_htlc_timeout_tx(struct hsmd_client *c,
+					 const u8 *msg_in)
+{
+    /* Key derivation boilerplate */
+	struct secret channel_seed;
+	struct secrets secrets;
+
+    struct bitcoin_tx *htlc_tx;
+    struct bip340sig sig;
+    u8 *tapleaf_script;
+    secp256k1_keypair key_pair;
+    int ret;
+
+    if (!fromwire_hsmd_sign_eltoo_htlc_timeout_tx(tmpctx, msg_in,
+                            &htlc_tx,
+                            &tapleaf_script)) {
+        return hsmd_status_malformed_request(c, msg_in);
+    }
+
+    get_channel_seed(&c->id, c->dbid, &channel_seed);
+    derive_basepoints(&channel_seed,
+              NULL, NULL, &secrets, NULL);
+
+    /* FIXME still need to switch over to htlc key in spec and impl */
+    ret = secp256k1_keypair_create(secp256k1_ctx, &key_pair, secrets.payment_basepoint_secret.data);
+    if (ret) {
+		return hsmd_status_bad_request(c, msg_in,
+					       "Failed to generate htlc pubkey pair");
+    }
+
+    sign_tx_taproot_input(htlc_tx,
+        0 /* input_index */,
+        SIGHASH_ALL,
+        tapleaf_script,
+        &key_pair,
+        &sig);
+
+    return towire_hsmd_sign_eltoo_tx_reply(NULL, &sig);
 }
 
 /*~ This is used when a commitment transaction is onchain, and has an HTLC
@@ -1903,6 +1948,8 @@ u8 *hsmd_handle_client_message(const tal_t *ctx, struct hsmd_client *client,
         return handle_gen_nonce(client, msg);
     case WIRE_HSMD_MIGRATE_NONCE:
         return handle_migrate_nonce(client, msg);
+    case WIRE_HSMD_SIGN_ELTOO_HTLC_TIMEOUT_TX:
+        return handle_sign_eltoo_htlc_timeout_tx(client, msg);
     /* Eltoo stuff ends */
 	case WIRE_HSMD_DEV_MEMLEAK:
 	case WIRE_HSMD_ECDH_RESP:
@@ -1934,6 +1981,7 @@ u8 *hsmd_handle_client_message(const tal_t *ctx, struct hsmd_client *client,
     case WIRE_HSMD_VALIDATE_UPDATE_TX_PSIG_REPLY:
     case WIRE_HSMD_GEN_NONCE_REPLY:
     case WIRE_HSMD_MIGRATE_NONCE_REPLY:
+    case WIRE_HSMD_SIGN_ELTOO_TX_REPLY:
 		break;
 	}
 	return hsmd_status_bad_request(client, msg, "Unknown request");

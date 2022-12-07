@@ -811,6 +811,7 @@ static struct io_plan *handle_client(struct io_conn *conn, struct client *c)
     case WIRE_HSMD_VALIDATE_UPDATE_TX_PSIG:
     case WIRE_HSMD_GEN_NONCE:
     case WIRE_HSMD_MIGRATE_NONCE:
+    case WIRE_HSMD_SIGN_ELTOO_HTLC_TIMEOUT_TX:
     /* Eltoo stuff ends */
 		/* Hand off to libhsmd for processing */
 		return req_reply(conn, c,
@@ -863,6 +864,7 @@ static struct io_plan *handle_client(struct io_conn *conn, struct client *c)
     case WIRE_HSMD_VALIDATE_UPDATE_TX_PSIG_REPLY:
     case WIRE_HSMD_GEN_NONCE_REPLY:
     case WIRE_HSMD_MIGRATE_NONCE_REPLY:
+    case WIRE_HSMD_SIGN_ELTOO_TX_REPLY:
 		return bad_req_fmt(conn, c, c->msg_in,
 				   "Received an incoming message of type %s, "
 				   "which is not a request",

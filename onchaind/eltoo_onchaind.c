@@ -55,6 +55,9 @@ static struct eltoo_keyset *keyset;
 /* The feerate for transactions spending HTLC outputs. */
 static u32 htlc_feerate;
 
+/* The dust limit to use when we generate transactions. */
+static struct amount_sat dust_limit;
+
 /* When to tell master about HTLCs which are missing/timed out */
 static u32 reasonable_depth;
 
@@ -96,6 +99,7 @@ struct tracked_output {
 
 	/* If it is an HTLC, this is set, tapscripts are non-NULL. */
 	struct htlc_stub htlc;
+    int parity_bit; /* Used to finish control block for tapscript spend of output */
 	const u8 *htlc_success_tapscript; /* EXPR_SUCCESS */
 	const u8 *htlc_timeout_tapscript; /* EXPR_TIMEOUT */
 
@@ -129,6 +133,14 @@ static const char *output_type_name(enum output_type output_type)
 	return "unknown";
 }
 
+static u8 *htlc_timeout_to_us(const tal_t *ctx,
+                 struct bitcoin_tx *tx,
+                 const u8 *tapscript)
+{
+    return towire_hsmd_sign_eltoo_htlc_timeout_tx(ctx, 
+                             tx, tapscript);
+}
+
 static void send_coin_mvt(struct chain_coin_mvt *mvt TAKES)
 {
 	wire_sync_write(REQ_FD,
@@ -136,6 +148,103 @@ static void send_coin_mvt(struct chain_coin_mvt *mvt TAKES)
 
 	if (taken(mvt))
 		tal_free(mvt);
+}
+
+/* Currently only used for HTLC resolutions */
+static struct bitcoin_tx *bip340_tx_to_us(const tal_t *ctx,
+                   u8 *(*hsm_sign_msg)(const tal_t *ctx,
+                               struct bitcoin_tx *tx,
+                               const u8 *tapscript),
+                   struct tracked_output *out,
+                   u32 locktime,
+                   const u8 *tapscript,
+                   const u8 *control_block,
+                   enum eltoo_tx_type *tx_type,
+                   u32 feerate)
+{
+    struct bitcoin_tx *tx;
+    size_t max_weight;
+    struct amount_sat fee, min_out, amt;
+    u8 *msg;
+    struct bip340sig sig;
+
+    tx = bitcoin_tx(ctx, chainparams, 1, 1, locktime);
+    bitcoin_tx_add_input(tx, &out->outpoint, 0 /* sequence */,
+            NULL /* scriptSig */, out->sat, NULL /* scriptPubkey */,
+            NULL /* input_wscript */, NULL /* inner_pubkey */, NULL /* tap_tree */);
+
+    /* FIXME figure out taproot output support to go directly into wallet aka "our_wallet_pubkey" */
+    bitcoin_tx_add_output(
+        tx, scriptpubkey_p2wpkh(tmpctx, &keyset->self_settle_key), NULL, out->sat);
+
+    /* BIP340 sigs are constant sized, 65 bytes for non-default, and we expose
+     a control block sized 33 + 32 for internal public key and tapleaf hash  */
+    max_weight = bitcoin_tx_weight(tx) +
+        1 + /* Witness stack size */
+        1 + /* control block size */
+        tal_count(control_block) +
+        1 + /* tapscript size*/
+        tal_count(tapscript) +
+        1 + /* signature size */
+        65 /* BIP340 sig with non-default sighash flag */;
+
+    /* FIXME elements support */
+    max_weight += 0;
+
+    fee = amount_tx_fee(feerate, max_weight);
+
+    /* Result is trivial?  Spend with small feerate, but don't wait
+     * around for it as it might not confirm. */
+    if (!amount_sat_add(&min_out, dust_limit, fee)) {
+        status_failed(STATUS_FAIL_INTERNAL_ERROR,
+                  "Cannot add dust_limit %s and fee %s",
+                  type_to_string(tmpctx, struct amount_sat, &dust_limit),
+                  type_to_string(tmpctx, struct amount_sat, &fee));
+    }
+
+    if (amount_sat_less(out->sat, min_out)) {
+        /* FIXME: We should use SIGHASH_NONE so others can take it */
+        fee = amount_tx_fee(feerate_floor(), max_weight);
+        status_unusual("TX %s amount %s too small to"
+                   " pay reasonable fee, using minimal fee"
+                   " and ignoring",
+                   eltoo_tx_type_name(*tx_type),
+                   type_to_string(tmpctx, struct amount_sat, &out->sat));
+        *tx_type = IGNORING_TINY_PAYMENT;
+    }
+
+    /* This can only happen if feerate_floor() is still too high; shouldn't
+     * happen! */
+    if (!amount_sat_sub(&amt, out->sat, fee)) {
+        amt = dust_limit;
+        status_broken("TX %s can't afford minimal feerate"
+                  "; setting output to %s",
+                  eltoo_tx_type_name(*tx_type),
+                  type_to_string(tmpctx, struct amount_sat,
+                         &amt));
+    }
+    bitcoin_tx_output_set_amount(tx, 0, amt);
+    bitcoin_tx_finalize(tx);
+
+
+    if (!wire_sync_write(HSM_FD, take(hsm_sign_msg(NULL, tx, tapscript))))
+        status_failed(STATUS_FAIL_HSM_IO, "Writing sign request to hsm");
+    msg = wire_sync_read(tmpctx, HSM_FD);
+    if (!msg || !fromwire_hsmd_sign_eltoo_tx_reply(msg, &sig)) {
+        status_failed(STATUS_FAIL_HSM_IO,
+                  "Reading sign_tx_reply: %s",
+                  tal_hex(tmpctx, msg));
+    }
+
+    /* FIXME now that sig is coming back, get witness together for tapscript spend
+    witness = bitcoin_witness_sig_and_element(tx, &sig, elem,
+                          elemsize, wscript);
+    */
+
+    /* 
+    bitcoin_tx_input_set_witness(tx, 0, take(witness));
+    */
+    return tx;
 }
 
 static u8 **derive_htlc_success_scripts(const tal_t *ctx, const struct htlc_stub *htlcs, const struct pubkey *our_htlc_pubkey, const struct pubkey *their_htlc_pubkey)
@@ -186,14 +295,13 @@ static enum side matches_direction(const size_t *matches,
     return htlcs[matches[0]].owner;
 }
 
-/* Return tal_arr of htlc indexes. */
+/* Return tal_arr of htlc indexes. Should be length 0 or 1 since CLTV is in script. */
 static const size_t *eltoo_match_htlc_output(const tal_t *ctx,
                        const struct wally_tx_output *out,
                        u8 **htlc_success_scripts,
-                       u8 **htlc_timeout_scripts)
+                       u8 **htlc_timeout_scripts,
+                       int *parity_bit)
 {
-// wtf?    assert(tal_count(htlc_success_scripts) == tal_count(htlc_timeout_scripts));
-
     size_t *matches = tal_arr(ctx, size_t, 0);
     const u8 *script = tal_dup_arr(tmpctx, u8, out->script, out->script_len,
                        0);
@@ -223,8 +331,10 @@ static const size_t *eltoo_match_htlc_output(const tal_t *ctx,
                &tap_merkle_root, tap_tweak_out);
         taproot_script = scriptpubkey_p2tr(ctx, &taproot_pubkey);
 
-        if (memeq(taproot_script, tal_count(taproot_script), script, sizeof(script)))
+        if (memeq(taproot_script, tal_count(taproot_script), script, sizeof(script))) {
             tal_arr_expand(&matches, i);
+            *parity_bit = pubkey_parity(&taproot_pubkey);
+        }
     }
     return matches;
 }
@@ -743,12 +853,13 @@ static void track_settle_outputs(struct tracked_output ***outs,
         struct wally_tx_output *settle_out = tx_parts->outputs[j];
         struct tracked_output *out;
         struct amount_sat satoshis = amount_sat(settle_out->satoshi);
+        int parity_bit;
         /* (1) Ephemeral Anchor */
         if (is_ephemeral_anchor(settle_out->script)) {
             /* Anchor is lightningd's problem */
             continue;
         }
-        const size_t *matches = eltoo_match_htlc_output(tmpctx, settle_out, htlc_success_scripts, htlc_timeout_scripts);
+        const size_t *matches = eltoo_match_htlc_output(tmpctx, settle_out, htlc_success_scripts, htlc_timeout_scripts, &parity_bit);
         struct bitcoin_outpoint outpoint;
         outpoint.txid = tx_parts->txid;
         outpoint.n = j;
@@ -806,6 +917,7 @@ static void track_settle_outputs(struct tracked_output ***outs,
                     &htlcs_info->htlcs[matches[0]] /* htlc */,
                     htlc_success_scripts[matches[0]] /* htlc_success_tapscript */,
                     htlc_timeout_scripts[matches[0]] /* htlc_timeout_tapscript */);
+                out->parity_bit = parity_bit;
                 /* FIXME Proposal comes in at handle_preimage? */
             } else {
                 /* (5) HTLC to them */
@@ -818,7 +930,7 @@ static void track_settle_outputs(struct tracked_output ***outs,
                     &htlcs_info->htlcs[matches[0]] /* htlc */,
                     htlc_success_scripts[matches[0]] /* htlc_success_tapscript */,
                     htlc_timeout_scripts[matches[0]] /* htlc_timeout_tapscript */);
-
+                out->parity_bit = parity_bit;
                 /* We'd like to propose a reasonable feerate tx at the time needed, not before */
                 propose_htlc_resolution_at_block(out, htlcs_info->htlcs[matches[0]].cltv_expiry, ELTOO_HTLC_TIMEOUT);
             }
@@ -1048,10 +1160,17 @@ static void eltoo_tx_new_depth(struct tracked_output **outs,
             && depth >= outs[i]->proposal->depth_required) {
             /* Just-in-time creation of HTLC_TIMEOUT tx before gets broadcasted */
             if (outs[i]->proposal->tx_type == ELTOO_HTLC_TIMEOUT) {
-                // !!! FIXME Need to trigger this at right time with right args
-                // resolve_htlc_timeouts(out, htlcs_info->htlcs[matches[0]], htlc_success_scripts[matches[0]], htlc_timeout_scripts[matches[0]]);
-                // propose_htlc_timeout_tx(); <--- more like this
-                abort();
+                if (outs[i]->proposal->tx) {
+                    status_broken("Proposal tx already exists for HTLC timeout when it should be null");
+                }
+                outs[i]->proposal->tx = bip340_tx_to_us(outs[i],
+                    htlc_timeout_to_us,
+                    outs[i],
+                    outs[i]->htlc.cltv_expiry,
+                    outs[i]->htlc_timeout_tapscript,
+                    compute_control_block(outs[i], outs[i]->htlc_success_tapscript /* other_script */, NULL /* annex_hint*/, &keyset->inner_pubkey, outs[i]->parity_bit),
+                    &outs[i]->proposal->tx_type, /* over-written if too small to care */
+                    htlc_feerate);
             }
 			eltoo_proposal_meets_depth(outs[i]);
 		}
@@ -1103,7 +1222,7 @@ static void eltoo_handle_preimage(struct tracked_output **outs,
 		outs[i]->proposal = tal_free(outs[i]->proposal);
 
         /* FIXME now that we know this output exists, we should propose to resolve it */
-        // propose_htlc_success_tx();
+        // propose_htlc_success_tx(); tx_to_us
         // propose_resolution(outs[i], sweep_tx, 0 /* depth_required */, ELTOO_HTLC_SUCCESS);
 	}
 }
@@ -1459,6 +1578,7 @@ int main(int argc, char *argv[])
         &tx_blockheight,
         &our_msat,
         &htlc_feerate,
+        &dust_limit,
         &scriptpubkey[LOCAL],
         &scriptpubkey[REMOTE],
         &keyset->self_funding_key,
