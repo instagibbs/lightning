@@ -43,6 +43,9 @@ static bool bipmusig_partial_sigs_combine_state(const struct eltoo_sign *state,
 /* Used as one-way latch to detect when the state ordering is being settled */
 static bool update_phase;
 
+/* During update_phase we queue all payment preimage notifications */
+static struct preimage **cached_preimages;
+
 /* Full tx we have partial signatures for */
 static struct bitcoin_tx *complete_update_tx, *complete_settle_tx;
 
@@ -957,6 +960,67 @@ static void track_settle_outputs(struct tracked_output ***outs,
     }
 }
 
+/* BOLT #XX:
+ * FIXME add BOLT text
+ */
+/* Master makes sure we only get told preimages once other node is committed. */
+static void eltoo_handle_preimage(struct tracked_output **outs,
+			    const struct preimage *preimage)
+{
+	size_t i;
+	struct sha256 sha;
+	struct ripemd160 ripemd;
+
+	sha256(&sha, preimage, sizeof(*preimage));
+	ripemd160(&ripemd, &sha, sizeof(sha));
+
+	for (i = 0; i < tal_count(outs); i++) {
+        struct bitcoin_tx *tx;
+        enum eltoo_tx_type tx_type = ELTOO_HTLC_SUCCESS;
+
+		if (outs[i]->output_type != THEIR_HTLC)
+			continue;
+
+		if (!ripemd160_eq(&outs[i]->htlc.ripemd, &ripemd))
+			continue;
+
+		/* Too late? */
+		if (outs[i]->resolved) {
+			status_broken("HTLC already resolved by %s"
+				     " when we found preimage",
+				     eltoo_tx_type_name(outs[i]->resolved->tx_type));
+			return;
+		}
+
+		/* stash the payment_hash so we can track this coin movement */
+		outs[i]->payment_hash = sha;
+
+		/* Discard any previous resolution.  Could be a timeout,
+		 * could be due to multiple identical rhashes in tx. */
+		outs[i]->proposal = tal_free(outs[i]->proposal);
+
+        tx = bip340_tx_to_us(outs[i],
+            htlc_success_to_us,
+            outs[i],
+            0 /* locktime */,
+            outs[i]->htlc_success_tapscript,
+            compute_control_block(outs[i], outs[i]->htlc_success_tapscript /* other_script */, NULL /* annex_hint*/, &keyset->inner_pubkey, outs[i]->parity_bit),
+            &tx_type, /* over-written if too small to care */
+            htlc_feerate);
+
+        propose_resolution(outs[i], tx, 0 /* depth_required */, tx_type);
+	}
+}
+
+static void eltoo_handle_cached_preimages(struct tracked_output **outs,
+			    struct preimage **cached_preimages)
+{
+    for (int j=0; j<tal_count(cached_preimages); j++) {
+        eltoo_handle_preimage(outs, cached_preimages[j]);
+    }
+    tal_free(cached_preimages);
+}
+
 /* An output has been spent: see if it resolves something we care about. */
 static void output_spent(struct tracked_output ***outs,
 			 const struct tx_parts *tx_parts,
@@ -991,6 +1055,10 @@ static void output_spent(struct tracked_output ***outs,
 
             /* Should be (any) settlement transaction! Process new outputs */
             track_settle_outputs(outs, tx_parts, tx_blockheight, htlc_success_scripts, htlc_timeout_scripts, htlcs_info);
+
+            /* Now that we've left update phase and know settlement outputs, process cached preimages */
+            eltoo_handle_cached_preimages(*outs, cached_preimages);
+
         } else if (locktime != out->locktime && update_phase) {
         /* (2) Update transaction*/
 
@@ -1202,57 +1270,6 @@ static void eltoo_tx_new_depth(struct tracked_output **outs,
 	}
 }
 
-/* BOLT #XX:
- * FIXME add BOLT text
- */
-/* Master makes sure we only get told preimages once other node is committed. */
-static void eltoo_handle_preimage(struct tracked_output **outs,
-			    const struct preimage *preimage)
-{
-	size_t i;
-	struct sha256 sha;
-	struct ripemd160 ripemd;
-
-	sha256(&sha, preimage, sizeof(*preimage));
-	ripemd160(&ripemd, &sha, sizeof(sha));
-
-	for (i = 0; i < tal_count(outs); i++) {
-        struct bitcoin_tx *tx;
-        enum eltoo_tx_type tx_type = ELTOO_HTLC_SUCCESS;
-
-		if (outs[i]->output_type != THEIR_HTLC)
-			continue;
-
-		if (!ripemd160_eq(&outs[i]->htlc.ripemd, &ripemd))
-			continue;
-
-		/* Too late? */
-		if (outs[i]->resolved) {
-			status_broken("HTLC already resolved by %s"
-				     " when we found preimage",
-				     eltoo_tx_type_name(outs[i]->resolved->tx_type));
-			return;
-		}
-
-		/* stash the payment_hash so we can track this coin movement */
-		outs[i]->payment_hash = sha;
-
-		/* Discard any previous resolution.  Could be a timeout,
-		 * could be due to multiple identical rhashes in tx. */
-		outs[i]->proposal = tal_free(outs[i]->proposal);
-
-        tx = bip340_tx_to_us(outs[i],
-            htlc_success_to_us,
-            outs[i],
-            0 /* locktime */,
-            outs[i]->htlc_success_tapscript,
-            compute_control_block(outs[i], outs[i]->htlc_success_tapscript /* other_script */, NULL /* annex_hint*/, &keyset->inner_pubkey, outs[i]->parity_bit),
-            &tx_type, /* over-written if too small to care */
-            htlc_feerate);
-
-        propose_resolution(outs[i], tx, 0 /* depth_required */, tx_type);
-	}
-}
 
 #if DEVELOPER
 static void memleak_remove_globals(struct htable *memtable, const tal_t *topctx)
@@ -1357,7 +1374,12 @@ static void wait_for_resolved(struct tracked_output **outs, struct htlcs_info *h
 						&tx_blockheight)) {
 			output_spent(&outs, tx_parts, input_num, tx_blockheight, locktime, htlc_success_scripts, htlc_timeout_scripts, htlcs_info);
 		} else if (fromwire_onchaind_known_preimage(msg, &preimage))
-			eltoo_handle_preimage(outs, &preimage);
+            /* We don't know the final set of settlement utxos yet */
+            if (update_phase) {
+                tal_arr_expand(cached_preimages, preimage);
+            } else {
+			    eltoo_handle_preimage(outs, &preimage);
+            }
 		else if (!handle_dev_memleak(outs, msg))
 			master_badmsg(-1, msg);
 
@@ -1588,6 +1610,11 @@ int main(int argc, char *argv[])
 
     missing_htlc_msgs = tal_arr(ctx, u8 *, 0);
     queued_msgs = tal_arr(ctx, u8 *, 0);
+    /* Since eltoo is not "one shot", we have to wait to process
+     * preimage notifications until settlement tx is mined or
+     * we switch how we track settlement outputs prior to mining.
+     */
+    cached_preimages = tal_arr(ctx, struct preimage *, 0);
 
 	msg = wire_sync_read(tmpctx, REQ_FD);
 	if (!fromwire_eltoo_onchaind_init(tmpctx,
