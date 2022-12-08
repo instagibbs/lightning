@@ -140,6 +140,7 @@ bool hsmd_check_client_capabilities(struct hsmd_client *client,
     case WIRE_HSMD_COMBINE_PSIG:
     case WIRE_HSMD_READY_ELTOO_CHANNEL:
     case WIRE_HSMD_SIGN_ELTOO_HTLC_TIMEOUT_TX:
+    case WIRE_HSMD_SIGN_ELTOO_HTLC_SUCCESS_TX:
     case WIRE_HSMD_VALIDATE_UPDATE_TX_PSIG: /* FIXME unused for now ...  */
 		return (client->capabilities & HSM_CAP_SIGN_REMOTE_TX) != 0;
 
@@ -1708,7 +1709,8 @@ static u8 *handle_validate_revocation(struct hsmd_client *c, const u8 *msg_in)
 	return towire_hsmd_validate_revocation_reply(NULL);
 }
 
-static u8 *handle_sign_eltoo_htlc_timeout_tx(struct hsmd_client *c,
+/* FIXME: do more introspection*/
+static u8 *handle_sign_eltoo_htlc_tx(struct hsmd_client *c,
 					 const u8 *msg_in)
 {
     /* Key derivation boilerplate */
@@ -1949,7 +1951,8 @@ u8 *hsmd_handle_client_message(const tal_t *ctx, struct hsmd_client *client,
     case WIRE_HSMD_MIGRATE_NONCE:
         return handle_migrate_nonce(client, msg);
     case WIRE_HSMD_SIGN_ELTOO_HTLC_TIMEOUT_TX:
-        return handle_sign_eltoo_htlc_timeout_tx(client, msg);
+    case WIRE_HSMD_SIGN_ELTOO_HTLC_SUCCESS_TX:
+        return handle_sign_eltoo_htlc_tx(client, msg);
     /* Eltoo stuff ends */
 	case WIRE_HSMD_DEV_MEMLEAK:
 	case WIRE_HSMD_ECDH_RESP:

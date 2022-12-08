@@ -812,6 +812,7 @@ static struct io_plan *handle_client(struct io_conn *conn, struct client *c)
     case WIRE_HSMD_GEN_NONCE:
     case WIRE_HSMD_MIGRATE_NONCE:
     case WIRE_HSMD_SIGN_ELTOO_HTLC_TIMEOUT_TX:
+    case WIRE_HSMD_SIGN_ELTOO_HTLC_SUCCESS_TX:
     /* Eltoo stuff ends */
 		/* Hand off to libhsmd for processing */
 		return req_reply(conn, c,

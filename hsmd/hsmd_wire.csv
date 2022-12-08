@@ -607,6 +607,11 @@ msgdata,hsmd_sign_eltoo_htlc_timeout_tx,tx,bitcoin_tx,
 msgdata,hsmd_sign_eltoo_htlc_timeout_tx,tapscript_len,u16,
 msgdata,hsmd_sign_eltoo_htlc_timeout_tx,tapscript,u8,tapscript_len
 
+msgtype,hsmd_sign_eltoo_htlc_success_tx,114
+msgdata,hsmd_sign_eltoo_htlc_success_tx,tx,bitcoin_tx,
+msgdata,hsmd_sign_eltoo_htlc_success_tx,tapscript_len,u16,
+msgdata,hsmd_sign_eltoo_htlc_success_tx,tapscript,u8,tapscript_len
+
 # Reply for all the above requests.
 msgtype,hsmd_sign_eltoo_tx_reply,212
 msgdata,hsmd_sign_eltoo_tx_reply,sig,bip340sig,

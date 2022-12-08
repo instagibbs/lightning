@@ -141,6 +141,14 @@ static u8 *htlc_timeout_to_us(const tal_t *ctx,
                              tx, tapscript);
 }
 
+static u8 *htlc_success_to_us(const tal_t *ctx,
+                 struct bitcoin_tx *tx,
+                 const u8 *tapscript)
+{
+    return towire_hsmd_sign_eltoo_htlc_success_tx(ctx, 
+                             tx, tapscript);
+}
+
 static void send_coin_mvt(struct chain_coin_mvt *mvt TAKES)
 {
 	wire_sync_write(REQ_FD,
@@ -1209,6 +1217,9 @@ static void eltoo_handle_preimage(struct tracked_output **outs,
 	ripemd160(&ripemd, &sha, sizeof(sha));
 
 	for (i = 0; i < tal_count(outs); i++) {
+        struct bitcoin_tx *tx;
+        enum eltoo_tx_type tx_type = ELTOO_HTLC_SUCCESS;
+
 		if (outs[i]->output_type != THEIR_HTLC)
 			continue;
 
@@ -1230,9 +1241,16 @@ static void eltoo_handle_preimage(struct tracked_output **outs,
 		 * could be due to multiple identical rhashes in tx. */
 		outs[i]->proposal = tal_free(outs[i]->proposal);
 
-        /* FIXME now that we know this output exists, we should propose to resolve it */
-        // propose_htlc_success_tx(); tx_to_us
-        // propose_resolution(outs[i], sweep_tx, 0 /* depth_required */, ELTOO_HTLC_SUCCESS);
+        tx = bip340_tx_to_us(outs[i],
+            htlc_success_to_us,
+            outs[i],
+            0 /* locktime */,
+            outs[i]->htlc_success_tapscript,
+            compute_control_block(outs[i], outs[i]->htlc_success_tapscript /* other_script */, NULL /* annex_hint*/, &keyset->inner_pubkey, outs[i]->parity_bit),
+            &tx_type, /* over-written if too small to care */
+            htlc_feerate);
+
+        propose_resolution(outs[i], tx, 0 /* depth_required */, tx_type);
 	}
 }
 
