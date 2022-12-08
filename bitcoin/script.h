@@ -98,6 +98,14 @@ u8 **bitcoin_witness_sig_and_element(const tal_t *ctx,
 				     const void *elem, size_t elemsize,
 				     const u8 *witnessscript);
 
+/* Create a witness which contains a sig, and possibly another entry, tapscript
+ * and control block for BIP342 spends */
+u8 **bitcoin_witness_bip340sig_and_element(const tal_t *ctx,
+                     const struct bip340sig *sig,
+                     const void *elem, size_t elemsize,
+                     const u8 *tapscript,
+                     const u8 *control_block);
+
 /* BOLT #3 to-local output */
 u8 *bitcoin_wscript_to_local(const tal_t *ctx, u16 to_self_delay,
 			     u32 lease_remaining,

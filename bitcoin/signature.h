@@ -17,6 +17,7 @@ struct privkey;
 struct bitcoin_tx_output;
 
 enum sighash_type {
+    SIGHASH_DEFAULT = 0,
     SIGHASH_ALL = 1,
     SIGHASH_NONE = 2,
     SIGHASH_SINGLE = 3,

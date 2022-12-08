@@ -167,6 +167,9 @@ static struct bitcoin_tx *bip340_tx_to_us(const tal_t *ctx,
     struct amount_sat fee, min_out, amt;
     u8 *msg;
     struct bip340sig sig;
+    u8 **witness;
+    /* Modifying later, we need this at the end for witness construction  */
+    enum eltoo_tx_type tx_type_copy = *tx_type;
 
     tx = bitcoin_tx(ctx, chainparams, 1, 1, locktime);
     bitcoin_tx_add_input(tx, &out->outpoint, 0 /* sequence */,
@@ -236,14 +239,20 @@ static struct bitcoin_tx *bip340_tx_to_us(const tal_t *ctx,
                   tal_hex(tmpctx, msg));
     }
 
-    /* FIXME now that sig is coming back, get witness together for tapscript spend
-    witness = bitcoin_witness_sig_and_element(tx, &sig, elem,
-                          elemsize, wscript);
-    */
+    if (tx_type_copy == ELTOO_HTLC_TIMEOUT) {
+        witness = bitcoin_witness_bip340sig_and_element(tx, &sig, NULL /* elem */,
+                          0 /* elemsize */, tapscript, control_block);
+    } else if (tx_type_copy == ELTOO_HTLC_SUCCESS) {
+        witness = bitcoin_witness_bip340sig_and_element(tx, &sig, out->payment_hash.u.u8 /* elem */,
+                          32 /* elemsize */, tapscript, control_block);
 
-    /* 
-    bitcoin_tx_input_set_witness(tx, 0, take(witness));
-    */
+    } else {
+        /* Should only be called for HTLC resolutions for now */
+        abort();
+    }
+
+    bitcoin_tx_input_set_witness(tx, 0 /* innum */, take(witness));
+
     return tx;
 }
 

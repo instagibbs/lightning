@@ -128,6 +128,18 @@ static u8 *stack_sig(const tal_t *ctx, const struct bitcoin_signature *sig)
 	return tal_dup_arr(ctx, u8, der, len, 0);
 }
 
+static u8 *stack_bip340sig(const tal_t *ctx, const struct bip340sig *sig, enum sighash_type sh_type)
+{
+    if (sh_type != SIGHASH_DEFAULT) {
+        u8 sig_flag[65];
+        memcpy(sig_flag, sig->u8, 64);
+        sig_flag[sizeof(sig_flag)-1] = sh_type;
+        return tal_dup_arr(ctx, u8, sig->u8, sizeof(sig_flag), 0);
+    } else {
+	    return tal_dup_arr(ctx, u8, sig->u8, 64, 0);
+    }
+}
+
 static u8 *stack_preimage(const tal_t *ctx, const struct preimage *preimage)
 {
 	return tal_dup_arr(ctx, u8, preimage->r, sizeof(preimage->r), 0);
@@ -598,6 +610,45 @@ u8 **bitcoin_witness_sig_and_element(const tal_t *ctx,
 	witness[2] = tal_dup_talarr(witness, u8, witnessscript);
 
 	return witness;
+}
+
+u8 **bitcoin_witness_bip340sig_and_element(const tal_t *ctx,
+				     const struct bip340sig *sig,
+				     const void *elem, size_t elemsize,
+				     const u8 *tapscript,
+                     const u8 *control_block)
+{
+    /* Itms ordered as a stack for readability */
+    if (elem) {
+        /*
+        *
+        *    The recipient node can redeem the HTLC with the witness:
+        *
+        *        <payment_preimage> <recipient_settlement_pubkey_signature>
+        *
+        */
+        u8 **witness = tal_arr(ctx, u8 *, 4);
+
+        witness[3] = tal_dup_talarr(witness, u8, control_block);
+        witness[2] = tal_dup_talarr(witness, u8, tapscript);
+	    witness[1] = tal_dup_arr(witness, u8, elem, elemsize, 0);
+        witness[0] = stack_bip340sig(witness, sig, SIGHASH_DEFAULT);
+
+        return witness;
+    } else {
+        /*
+        *    And the offerer via:
+        *
+        *        <offerer_settlement_pubkey_signature>
+        */
+        u8 **witness = tal_arr(ctx, u8 *, 3);
+
+        witness[2] = tal_dup_talarr(witness, u8, control_block);
+        witness[1] = tal_dup_talarr(witness, u8, tapscript);
+        witness[0] = stack_bip340sig(witness, sig, SIGHASH_DEFAULT);
+
+        return witness;
+    }
 }
 
 /* BOLT #3:
