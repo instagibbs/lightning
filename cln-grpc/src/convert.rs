@@ -127,6 +127,257 @@ impl From<responses::ListfundsChannels> for pb::ListfundsChannels {
             connected: c.connected, // Rule #2 for type boolean
             funding_output: c.funding_output, // Rule #2 for type u32
             funding_txid: hex::decode(&c.funding_txid).unwrap(), // Rule #2 for type txid
+<<<<<<< HEAD
+||||||| parent of 54ffcaedb (Start some proper testing of HTLC resolution)
+            funding_outnum: c.funding_outnum.clone(), // Rule #2 for type u32
+            feerate: c.feerate.clone(), // Rule #2 for type string
+            total_funding_msat: Some(c.total_funding_msat.into()), // Rule #2 for type msat
+            our_funding_msat: Some(c.our_funding_msat.into()), // Rule #2 for type msat
+            scratch_txid: hex::decode(&c.scratch_txid).unwrap(), // Rule #2 for type txid
+        }
+    }
+}
+
+#[allow(unused_variables)]
+impl From<&responses::ListpeersPeersChannelsHtlcs> for pb::ListpeersPeersChannelsHtlcs {
+    fn from(c: &responses::ListpeersPeersChannelsHtlcs) -> Self {
+        Self {
+            direction: c.direction as i32,
+            id: c.id.clone(), // Rule #2 for type u64
+            amount_msat: Some(c.amount_msat.into()), // Rule #2 for type msat
+            expiry: c.expiry.clone(), // Rule #2 for type u32
+            payment_hash: c.payment_hash.clone().to_vec(), // Rule #2 for type hash
+            local_trimmed: c.local_trimmed.clone(), // Rule #2 for type boolean?
+            status: c.status.clone(), // Rule #2 for type string?
+        }
+    }
+}
+
+#[allow(unused_variables)]
+impl From<&responses::ListpeersPeersChannels> for pb::ListpeersPeersChannels {
+    fn from(c: &responses::ListpeersPeersChannels) -> Self {
+        Self {
+            state: c.state as i32,
+            scratch_txid: c.scratch_txid.as_ref().map(|v| hex::decode(&v).unwrap()), // Rule #2 for type txid?
+            owner: c.owner.clone(), // Rule #2 for type string?
+            short_channel_id: c.short_channel_id.as_ref().map(|v| v.to_string()), // Rule #2 for type short_channel_id?
+            channel_id: c.channel_id.clone().map(|v| v.to_vec()), // Rule #2 for type hash?
+            funding_txid: c.funding_txid.as_ref().map(|v| hex::decode(&v).unwrap()), // Rule #2 for type txid?
+            funding_outnum: c.funding_outnum.clone(), // Rule #2 for type u32?
+            initial_feerate: c.initial_feerate.clone(), // Rule #2 for type string?
+            last_feerate: c.last_feerate.clone(), // Rule #2 for type string?
+            next_feerate: c.next_feerate.clone(), // Rule #2 for type string?
+            next_fee_step: c.next_fee_step.clone(), // Rule #2 for type u32?
+            inflight: c.inflight.as_ref().map(|arr| arr.iter().map(|i| i.into()).collect()).unwrap_or(vec![]), // Rule #3 
+            close_to: c.close_to.as_ref().map(|v| hex::decode(&v).unwrap()), // Rule #2 for type hex?
+            private: c.private.clone(), // Rule #2 for type boolean?
+            opener: c.opener as i32,
+            features: c.features.iter().map(|i| i.into()).collect(), // Rule #3 for type ListpeersPeersChannelsFeatures 
+            to_us_msat: c.to_us_msat.map(|f| f.into()), // Rule #2 for type msat?
+            min_to_us_msat: c.min_to_us_msat.map(|f| f.into()), // Rule #2 for type msat?
+            max_to_us_msat: c.max_to_us_msat.map(|f| f.into()), // Rule #2 for type msat?
+            total_msat: c.total_msat.map(|f| f.into()), // Rule #2 for type msat?
+            fee_base_msat: c.fee_base_msat.map(|f| f.into()), // Rule #2 for type msat?
+            fee_proportional_millionths: c.fee_proportional_millionths.clone(), // Rule #2 for type u32?
+            dust_limit_msat: c.dust_limit_msat.map(|f| f.into()), // Rule #2 for type msat?
+            max_total_htlc_in_msat: c.max_total_htlc_in_msat.map(|f| f.into()), // Rule #2 for type msat?
+            their_reserve_msat: c.their_reserve_msat.map(|f| f.into()), // Rule #2 for type msat?
+            our_reserve_msat: c.our_reserve_msat.map(|f| f.into()), // Rule #2 for type msat?
+            spendable_msat: c.spendable_msat.map(|f| f.into()), // Rule #2 for type msat?
+            receivable_msat: c.receivable_msat.map(|f| f.into()), // Rule #2 for type msat?
+            minimum_htlc_in_msat: c.minimum_htlc_in_msat.map(|f| f.into()), // Rule #2 for type msat?
+            minimum_htlc_out_msat: c.minimum_htlc_out_msat.map(|f| f.into()), // Rule #2 for type msat?
+            maximum_htlc_out_msat: c.maximum_htlc_out_msat.map(|f| f.into()), // Rule #2 for type msat?
+            their_to_self_delay: c.their_to_self_delay.clone(), // Rule #2 for type u32?
+            our_to_self_delay: c.our_to_self_delay.clone(), // Rule #2 for type u32?
+            max_accepted_htlcs: c.max_accepted_htlcs.clone(), // Rule #2 for type u32?
+            status: c.status.as_ref().map(|arr| arr.iter().map(|i| i.into()).collect()).unwrap_or(vec![]), // Rule #3 
+            in_payments_offered: c.in_payments_offered.clone(), // Rule #2 for type u64?
+            in_offered_msat: c.in_offered_msat.map(|f| f.into()), // Rule #2 for type msat?
+            in_payments_fulfilled: c.in_payments_fulfilled.clone(), // Rule #2 for type u64?
+            in_fulfilled_msat: c.in_fulfilled_msat.map(|f| f.into()), // Rule #2 for type msat?
+            out_payments_offered: c.out_payments_offered.clone(), // Rule #2 for type u64?
+            out_offered_msat: c.out_offered_msat.map(|f| f.into()), // Rule #2 for type msat?
+            out_payments_fulfilled: c.out_payments_fulfilled.clone(), // Rule #2 for type u64?
+            out_fulfilled_msat: c.out_fulfilled_msat.map(|f| f.into()), // Rule #2 for type msat?
+            htlcs: c.htlcs.as_ref().map(|arr| arr.iter().map(|i| i.into()).collect()).unwrap_or(vec![]), // Rule #3 
+            close_to_addr: c.close_to_addr.clone(), // Rule #2 for type string?
+        }
+    }
+}
+
+#[allow(unused_variables)]
+impl From<&responses::ListpeersPeers> for pb::ListpeersPeers {
+    fn from(c: &responses::ListpeersPeers) -> Self {
+        Self {
+            id: c.id.to_vec(), // Rule #2 for type pubkey
+            connected: c.connected.clone(), // Rule #2 for type boolean
+            log: c.log.as_ref().map(|arr| arr.iter().map(|i| i.into()).collect()).unwrap_or(vec![]), // Rule #3 
+            channels: c.channels.iter().map(|i| i.into()).collect(), // Rule #3 for type ListpeersPeersChannels 
+            netaddr: c.netaddr.as_ref().map(|arr| arr.iter().map(|i| i.into()).collect()).unwrap_or(vec![]), // Rule #3 
+            features: c.features.as_ref().map(|v| hex::decode(&v).unwrap()), // Rule #2 for type hex?
+        }
+    }
+}
+
+#[allow(unused_variables)]
+impl From<&responses::ListpeersResponse> for pb::ListpeersResponse {
+    fn from(c: &responses::ListpeersResponse) -> Self {
+        Self {
+            peers: c.peers.iter().map(|i| i.into()).collect(), // Rule #3 for type ListpeersPeers 
+        }
+    }
+}
+
+#[allow(unused_variables)]
+impl From<&responses::ListfundsOutputs> for pb::ListfundsOutputs {
+    fn from(c: &responses::ListfundsOutputs) -> Self {
+        Self {
+            txid: hex::decode(&c.txid).unwrap(), // Rule #2 for type txid
+            output: c.output.clone(), // Rule #2 for type u32
+            amount_msat: Some(c.amount_msat.into()), // Rule #2 for type msat
+            scriptpubkey: hex::decode(&c.scriptpubkey).unwrap(), // Rule #2 for type hex
+            address: c.address.clone(), // Rule #2 for type string?
+            redeemscript: c.redeemscript.as_ref().map(|v| hex::decode(&v).unwrap()), // Rule #2 for type hex?
+            status: c.status as i32,
+            blockheight: c.blockheight.clone(), // Rule #2 for type u32?
+        }
+    }
+}
+
+#[allow(unused_variables)]
+impl From<&responses::ListfundsChannels> for pb::ListfundsChannels {
+    fn from(c: &responses::ListfundsChannels) -> Self {
+        Self {
+            peer_id: c.peer_id.to_vec(), // Rule #2 for type pubkey
+=======
+            funding_outnum: c.funding_outnum.clone(), // Rule #2 for type u32
+            feerate: c.feerate.clone(), // Rule #2 for type string
+            total_funding_msat: Some(c.total_funding_msat.into()), // Rule #2 for type msat
+            our_funding_msat: Some(c.our_funding_msat.into()), // Rule #2 for type msat
+            scratch_txid: hex::decode(&c.scratch_txid).unwrap(), // Rule #2 for type txid
+        }
+    }
+}
+
+#[allow(unused_variables)]
+impl From<&responses::ListpeersPeersChannelsHtlcs> for pb::ListpeersPeersChannelsHtlcs {
+    fn from(c: &responses::ListpeersPeersChannelsHtlcs) -> Self {
+        Self {
+            direction: c.direction as i32,
+            id: c.id.clone(), // Rule #2 for type u64
+            amount_msat: Some(c.amount_msat.into()), // Rule #2 for type msat
+            expiry: c.expiry.clone(), // Rule #2 for type u32
+            payment_hash: c.payment_hash.clone().to_vec(), // Rule #2 for type hash
+            local_trimmed: c.local_trimmed.clone(), // Rule #2 for type boolean?
+            status: c.status.clone(), // Rule #2 for type string?
+        }
+    }
+}
+
+#[allow(unused_variables)]
+impl From<&responses::ListpeersPeersChannels> for pb::ListpeersPeersChannels {
+    fn from(c: &responses::ListpeersPeersChannels) -> Self {
+        Self {
+            state: c.state as i32,
+            scratch_txid: c.scratch_txid.as_ref().map(|v| hex::decode(&v).unwrap()), // Rule #2 for type txid?
+            owner: c.owner.clone(), // Rule #2 for type string?
+            short_channel_id: c.short_channel_id.as_ref().map(|v| v.to_string()), // Rule #2 for type short_channel_id?
+            channel_id: c.channel_id.clone().map(|v| v.to_vec()), // Rule #2 for type hash?
+            funding_txid: c.funding_txid.as_ref().map(|v| hex::decode(&v).unwrap()), // Rule #2 for type txid?
+            funding_outnum: c.funding_outnum.clone(), // Rule #2 for type u32?
+            initial_feerate: c.initial_feerate.clone(), // Rule #2 for type string?
+            last_feerate: c.last_feerate.clone(), // Rule #2 for type string?
+            next_feerate: c.next_feerate.clone(), // Rule #2 for type string?
+            next_fee_step: c.next_fee_step.clone(), // Rule #2 for type u32?
+            inflight: c.inflight.as_ref().map(|arr| arr.iter().map(|i| i.into()).collect()).unwrap_or(vec![]), // Rule #3 
+            close_to: c.close_to.as_ref().map(|v| hex::decode(&v).unwrap()), // Rule #2 for type hex?
+            private: c.private.clone(), // Rule #2 for type boolean?
+            opener: c.opener as i32,
+            features: c.features.iter().map(|i| i.into()).collect(), // Rule #3 for type ListpeersPeersChannelsFeatures 
+            to_us_msat: c.to_us_msat.map(|f| f.into()), // Rule #2 for type msat?
+            min_to_us_msat: c.min_to_us_msat.map(|f| f.into()), // Rule #2 for type msat?
+            max_to_us_msat: c.max_to_us_msat.map(|f| f.into()), // Rule #2 for type msat?
+            total_msat: c.total_msat.map(|f| f.into()), // Rule #2 for type msat?
+            fee_base_msat: c.fee_base_msat.map(|f| f.into()), // Rule #2 for type msat?
+            fee_proportional_millionths: c.fee_proportional_millionths.clone(), // Rule #2 for type u32?
+            dust_limit_msat: c.dust_limit_msat.map(|f| f.into()), // Rule #2 for type msat?
+            max_total_htlc_in_msat: c.max_total_htlc_in_msat.map(|f| f.into()), // Rule #2 for type msat?
+            their_reserve_msat: c.their_reserve_msat.map(|f| f.into()), // Rule #2 for type msat?
+            our_reserve_msat: c.our_reserve_msat.map(|f| f.into()), // Rule #2 for type msat?
+            spendable_msat: c.spendable_msat.map(|f| f.into()), // Rule #2 for type msat?
+            receivable_msat: c.receivable_msat.map(|f| f.into()), // Rule #2 for type msat?
+            minimum_htlc_in_msat: c.minimum_htlc_in_msat.map(|f| f.into()), // Rule #2 for type msat?
+            minimum_htlc_out_msat: c.minimum_htlc_out_msat.map(|f| f.into()), // Rule #2 for type msat?
+            maximum_htlc_out_msat: c.maximum_htlc_out_msat.map(|f| f.into()), // Rule #2 for type msat?
+            their_to_self_delay: c.their_to_self_delay.clone(), // Rule #2 for type u32?
+            our_to_self_delay: c.our_to_self_delay.clone(), // Rule #2 for type u32?
+            max_accepted_htlcs: c.max_accepted_htlcs.clone(), // Rule #2 for type u32?
+            status: c.status.as_ref().map(|arr| arr.iter().map(|i| i.into()).collect()).unwrap_or(vec![]), // Rule #3 
+            in_payments_offered: c.in_payments_offered.clone(), // Rule #2 for type u64?
+            in_offered_msat: c.in_offered_msat.map(|f| f.into()), // Rule #2 for type msat?
+            in_payments_fulfilled: c.in_payments_fulfilled.clone(), // Rule #2 for type u64?
+            in_fulfilled_msat: c.in_fulfilled_msat.map(|f| f.into()), // Rule #2 for type msat?
+            out_payments_offered: c.out_payments_offered.clone(), // Rule #2 for type u64?
+            out_offered_msat: c.out_offered_msat.map(|f| f.into()), // Rule #2 for type msat?
+            out_payments_fulfilled: c.out_payments_fulfilled.clone(), // Rule #2 for type u64?
+            out_fulfilled_msat: c.out_fulfilled_msat.map(|f| f.into()), // Rule #2 for type msat?
+            htlcs: c.htlcs.as_ref().map(|arr| arr.iter().map(|i| i.into()).collect()).unwrap_or(vec![]), // Rule #3 
+            last_update_tx: c.last_update_tx.clone(), // Rule #2 for type string?
+            last_settle_tx: c.last_settle_tx.clone(), // Rule #2 for type string?
+            unbound_update_tx: c.unbound_update_tx.clone(), // Rule #2 for type string?
+            unbound_settle_tx: c.unbound_settle_tx.clone(), // Rule #2 for type string?
+            last_committed_settle_tx: c.last_committed_settle_tx.clone(), // Rule #2 for type string?
+            close_to_addr: c.close_to_addr.clone(), // Rule #2 for type string?
+        }
+    }
+}
+
+#[allow(unused_variables)]
+impl From<&responses::ListpeersPeers> for pb::ListpeersPeers {
+    fn from(c: &responses::ListpeersPeers) -> Self {
+        Self {
+            id: c.id.to_vec(), // Rule #2 for type pubkey
+            connected: c.connected.clone(), // Rule #2 for type boolean
+            log: c.log.as_ref().map(|arr| arr.iter().map(|i| i.into()).collect()).unwrap_or(vec![]), // Rule #3 
+            channels: c.channels.iter().map(|i| i.into()).collect(), // Rule #3 for type ListpeersPeersChannels 
+            netaddr: c.netaddr.as_ref().map(|arr| arr.iter().map(|i| i.into()).collect()).unwrap_or(vec![]), // Rule #3 
+            features: c.features.as_ref().map(|v| hex::decode(&v).unwrap()), // Rule #2 for type hex?
+        }
+    }
+}
+
+#[allow(unused_variables)]
+impl From<&responses::ListpeersResponse> for pb::ListpeersResponse {
+    fn from(c: &responses::ListpeersResponse) -> Self {
+        Self {
+            peers: c.peers.iter().map(|i| i.into()).collect(), // Rule #3 for type ListpeersPeers 
+        }
+    }
+}
+
+#[allow(unused_variables)]
+impl From<&responses::ListfundsOutputs> for pb::ListfundsOutputs {
+    fn from(c: &responses::ListfundsOutputs) -> Self {
+        Self {
+            txid: hex::decode(&c.txid).unwrap(), // Rule #2 for type txid
+            output: c.output.clone(), // Rule #2 for type u32
+            amount_msat: Some(c.amount_msat.into()), // Rule #2 for type msat
+            scriptpubkey: hex::decode(&c.scriptpubkey).unwrap(), // Rule #2 for type hex
+            address: c.address.clone(), // Rule #2 for type string?
+            redeemscript: c.redeemscript.as_ref().map(|v| hex::decode(&v).unwrap()), // Rule #2 for type hex?
+            status: c.status as i32,
+            blockheight: c.blockheight.clone(), // Rule #2 for type u32?
+        }
+    }
+}
+
+#[allow(unused_variables)]
+impl From<&responses::ListfundsChannels> for pb::ListfundsChannels {
+    fn from(c: &responses::ListfundsChannels) -> Self {
+        Self {
+            peer_id: c.peer_id.to_vec(), // Rule #2 for type pubkey
+>>>>>>> 54ffcaedb (Start some proper testing of HTLC resolution)
             our_amount_msat: Some(c.our_amount_msat.into()), // Rule #2 for type msat
             peer_id: c.peer_id.serialize().to_vec(), // Rule #2 for type pubkey
             short_channel_id: c.short_channel_id.map(|v| v.to_string()), // Rule #2 for type short_channel_id?

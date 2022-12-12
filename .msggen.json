@@ -3070,7 +3070,10 @@
             "ListPeers.peers[].channels[].in_payments_offered": 38,
             "ListPeers.peers[].channels[].inflight[]": 13,
             "ListPeers.peers[].channels[].initial_feerate": 9,
+            "ListPeers.peers[].channels[].last_committed_settle_tx": 54,
             "ListPeers.peers[].channels[].last_feerate": 10,
+            "ListPeers.peers[].channels[].last_settle_tx": 51,
+            "ListPeers.peers[].channels[].last_update_tx": 50,
             "ListPeers.peers[].channels[].max_accepted_htlcs": 35,
             "ListPeers.peers[].channels[].max_to_us_msat": 22,
             "ListPeers.peers[].channels[].max_total_htlc_in_msat": 27,
@@ -3099,7 +3102,9 @@
             "ListPeers.peers[].channels[].their_reserve_msat": 28,
             "ListPeers.peers[].channels[].their_to_self_delay": 33,
             "ListPeers.peers[].channels[].to_us_msat": 20,
-            "ListPeers.peers[].channels[].total_msat": 23
+            "ListPeers.peers[].channels[].total_msat": 23,
+            "ListPeers.peers[].channels[].unbound_settle_tx": 53,
+            "ListPeers.peers[].channels[].unbound_update_tx": 52
         },
         "ListpeersPeersChannelsAlias": {
             "ListPeers.peers[].channels[].alias.local": 1,

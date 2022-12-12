@@ -3600,7 +3600,7 @@ static struct command_result *json_dev_reenable_commit(struct command *cmd,
 				    "Peer has no owner");
 	}
 
-	if (!streq(channel->owner->name, "channeld")) {
+	if (!streq(channel->owner->name, "channeld") && !streq(channel->owner->name, "eltoo_channeld")) {
 		return command_fail(cmd, LIGHTNINGD,
 				    "Peer owned by %s", channel->owner->name);
 	}
