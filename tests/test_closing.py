@@ -806,9 +806,6 @@ def test_eltoo_outhtlc(node_factory, bitcoind, executor, chainparams):
     # Now, this will get stuck due to l1 commit being disabled due to one more update..
     t = executor.submit(l2.pay, l1, 100000*SAT)
 
-    from pdb import set_trace
-    set_trace()
-
     # Make sure we get partial signature
     l1.daemon.wait_for_log('peer_in WIRE_UPDATE_ADD_HTLC')
     l1.daemon.wait_for_log('peer_in WIRE_UPDATE_SIGNED')
@@ -830,21 +827,24 @@ def test_eltoo_outhtlc(node_factory, bitcoind, executor, chainparams):
     assert l1_update_tx == l2_update_tx
     assert l1_settle_tx == l2_settle_tx
 
-    # Let them continue
-    l1.rpc.dev_reenable_commit(l2.info['id'])
-    l2.rpc.dev_reenable_commit(l1.info['id'])
+    # We can't them continue, since we'll end up blowing away old HTLCs (or having to deal with
+    # old state we didn't keep)
+    # l1.rpc.dev_reenable_commit(l2.info['id'])
 
     # Thread should complete.
-    t.result(timeout=10)
+#    t.result(timeout=10)
 
     # Make sure both sides got revoke_and_ack for final.
-    l1.daemon.wait_for_log('WIRE_UPDATE_SIGNED_ACK')
-    l2.daemon.wait_for_log('WIRE_UPDATE_SIGNED_ACK')
+#    l1.daemon.wait_for_log('WIRE_UPDATE_SIGNED_ACK')
+#    l2.daemon.wait_for_log('WIRE_UPDATE_SIGNED_ACK')
+
+    from pdb import set_trace
+    set_trace()
 
     # Now we really mess things up!
 
     # FIXME we need real anchor CPFP + package relay to pay fees
-    l1_update_details = bitcoind.decoderawtransaction(l1_update_tx)
+    l1_update_details = bitcoind.rpc.decoderawtransaction(l1_update_tx)
     bitcoind.rpc.prioritisetransaction(l1_update_details["txid"], 0, 100000000)
     bitcoind.rpc.sendrawtransaction(l1_update_tx)
     # Mine and mature the update tx
