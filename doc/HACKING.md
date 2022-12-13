@@ -218,7 +218,8 @@ There are four kinds of tests:
 
   You can also append `-k TESTNAME` to run a single test.  Environment variables
   `DEBUG_SUBD=<subdaemon>` and `TIMEOUT=<seconds>` can be useful for debugging
-  subdaemons on individual tests.
+  subdaemons on individual tests, with `VALGRIND=0` to make gdb debugging easier
+  and tests run quicker.
 
   You need `bitcoind` installed in your path, or must supply one as an environmental variable:
   `BITCOIND_TEST_PATH=<path>`

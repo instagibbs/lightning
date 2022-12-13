@@ -44,7 +44,7 @@ static bool bipmusig_partial_sigs_combine_state(const struct eltoo_sign *state,
 static bool update_phase;
 
 /* During update_phase we queue all payment preimage notifications */
-static struct preimage **cached_preimages;
+static struct preimage *cached_preimages;
 
 /* Full tx we have partial signatures for */
 static struct bitcoin_tx *complete_update_tx, *complete_settle_tx;
@@ -965,13 +965,13 @@ static void track_settle_outputs(struct tracked_output ***outs,
  */
 /* Master makes sure we only get told preimages once other node is committed. */
 static void eltoo_handle_preimage(struct tracked_output **outs,
-			    const struct preimage *preimage)
+			    const struct preimage preimage)
 {
 	size_t i;
 	struct sha256 sha;
 	struct ripemd160 ripemd;
 
-	sha256(&sha, preimage, sizeof(*preimage));
+	sha256(&sha, &preimage, sizeof(preimage));
 	ripemd160(&ripemd, &sha, sizeof(sha));
 
 	for (i = 0; i < tal_count(outs); i++) {
@@ -1013,8 +1013,9 @@ static void eltoo_handle_preimage(struct tracked_output **outs,
 }
 
 static void eltoo_handle_cached_preimages(struct tracked_output **outs,
-			    struct preimage **cached_preimages)
+			    struct preimage *cached_preimages)
 {
+	status_debug("Processing cached preimages now that we have settle tx confirmed");
     for (int j=0; j<tal_count(cached_preimages); j++) {
         eltoo_handle_preimage(outs, cached_preimages[j]);
     }
@@ -1376,9 +1377,9 @@ static void wait_for_resolved(struct tracked_output **outs, struct htlcs_info *h
 		} else if (fromwire_onchaind_known_preimage(msg, &preimage))
             /* We don't know the final set of settlement utxos yet */
             if (update_phase) {
-                tal_arr_expand(cached_preimages, preimage);
+                tal_arr_expand(&cached_preimages, preimage);
             } else {
-			    eltoo_handle_preimage(outs, &preimage);
+			    eltoo_handle_preimage(outs, preimage);
             }
 		else if (!handle_dev_memleak(outs, msg))
 			master_badmsg(-1, msg);
@@ -1614,7 +1615,7 @@ int main(int argc, char *argv[])
      * preimage notifications until settlement tx is mined or
      * we switch how we track settlement outputs prior to mining.
      */
-    cached_preimages = tal_arr(ctx, struct preimage *, 0);
+    cached_preimages = tal_arr(ctx, struct preimage, 0);
 
 	msg = wire_sync_read(tmpctx, REQ_FD);
 	if (!fromwire_eltoo_onchaind_init(tmpctx,

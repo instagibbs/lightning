@@ -838,17 +838,21 @@ def test_eltoo_outhtlc(node_factory, bitcoind, executor, chainparams):
 #    l1.daemon.wait_for_log('WIRE_UPDATE_SIGNED_ACK')
 #    l2.daemon.wait_for_log('WIRE_UPDATE_SIGNED_ACK')
 
-    from pdb import set_trace
-    set_trace()
-
     # Now we really mess things up!
 
     # FIXME we need real anchor CPFP + package relay to pay fees
     l1_update_details = bitcoind.rpc.decoderawtransaction(l1_update_tx)
+    l1_settle_details = bitcoind.rpc.decoderawtransaction(l1_settle_tx)
     bitcoind.rpc.prioritisetransaction(l1_update_details["txid"], 0, 100000000)
+    bitcoind.rpc.prioritisetransaction(l1_settle_details["txid"], 0, 100000000)
     bitcoind.rpc.sendrawtransaction(l1_update_tx)
     # Mine and mature the update tx
     bitcoind.generate_block(6)
+
+    # FIXME we're here, settle tx should be shot off to mempool XXX
+    from pdb import set_trace
+    set_trace()
+
 
     # Symmetrical transactions(!), symmetrical state, mostly
     l1.daemon.wait_for_log(' to ONCHAIN')
