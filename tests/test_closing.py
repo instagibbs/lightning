@@ -777,6 +777,8 @@ def test_penalty_outhtlc(node_factory, bitcoind, executor, chainparams, anchors)
     tags = check_utxos_channel(l1, [channel_id], expected_1)
     check_utxos_channel(l2, [channel_id], expected_2, tags)
 
+# Example flags to run test
+# DEBUG_SUBD=eltoo_onchaind VALGRIND=0 BITCOIND_ELTOO_ARGS=1 BITCOIND_TEST_PATH=/home/greg/bitcoin-dev/bitcoin/src/bitcoind pytest -s tests/test_closing.py -k test_eltoo_outhtlc
 @pytest.mark.developer("needs dev-disable-commit-after")
 def test_eltoo_outhtlc(node_factory, bitcoind, executor, chainparams):
     """Test penalty transaction with an outgoing HTLC"""
@@ -795,8 +797,6 @@ def test_eltoo_outhtlc(node_factory, bitcoind, executor, chainparams):
                                             'plugin': coin_mvt_plugin}])
     channel_id = first_channel_id(l1, l2)
 
-    from pdb import set_trace
-    set_trace()
 
     # Move some across to l2. This will cause *2* updates to be sent for
     # addition and removal of HTLC
@@ -829,6 +829,9 @@ def test_eltoo_outhtlc(node_factory, bitcoind, executor, chainparams):
 
     assert l1_update_tx == l2_update_tx
     assert l1_settle_tx == l2_settle_tx
+
+    from pdb import set_trace
+    set_trace()
 
     # We can't them continue, since we'll end up blowing away old HTLCs (or having to deal with
     # old state we didn't keep)

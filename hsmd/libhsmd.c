@@ -836,9 +836,7 @@ static u8 *handle_gen_nonce(struct hsmd_client *c,
 	if (!fromwire_hsmd_gen_nonce(msg_in, &channel_id))
 		return hsmd_status_malformed_request(c, msg_in);
 
-	/* FIXME this is apparently not true */
-	//tal_free(secretstuff.musig_map);
-
+	/* FIXME Saw a strange memleak race, fix this reasoning */
     /* Shouldn't need to be freed, aside from channel teardown */
     new_musig_state = tal(NULL, struct musig_state);
     new_musig_state->channel_id = channel_id;
