@@ -76,6 +76,8 @@ static void add_eltoo_htlc_out(struct bitcoin_tx *tx,
 
     htlc_scripts[0] = make_eltoo_htlc_success_script(tx, receiver_pubkey, htlc->rhash.u.u8);
     htlc_scripts[1] = make_eltoo_htlc_timeout_script(tx, sender_pubkey, htlc->expiry.locktime);
+	printf("Settle's HTLC success script: %s\n", tal_hex(NULL, htlc_scripts[0]));
+	printf("Settle's HTLC timeout script: %s\n", tal_hex(NULL, htlc_scripts[1]));
     compute_taptree_merkle_root(&tap_merkle_root, htlc_scripts, /* num_scripts */ 2);
     bipmusig_finalize_keys(&taproot_pubkey, &keyagg_cache, pubkey_ptrs, /* n_pubkeys */ 2,
            &tap_merkle_root, tap_tweak_out);

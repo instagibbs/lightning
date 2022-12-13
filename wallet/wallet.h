@@ -943,6 +943,21 @@ static inline enum invoice_status invoice_status_in_db(enum invoice_status s)
 }
 
 /**
+ * all_wallet_htlc_stubs - Retrieve *all* HTLC stubs for the given channel
+ *
+ * This returns a `tal_arr` allocated off of @ctx with the
+ * necessary size to hold all HTLCs. Future pruning for eltoo
+ * channels can manage the state blowup here.
+ *
+ * @ctx: Allocation context for the return value
+ * @wallet: Wallet to load from
+ * @chan: Channel to fetch stubs for
+ */
+struct htlc_stub *all_wallet_htlc_stubs(const tal_t *ctx, struct wallet *wallet,
+				    struct channel *chan);
+
+
+/**
  * wallet_htlc_stubs - Retrieve HTLC stubs for the given channel
  *
  * Load minimal necessary information about HTLCs for the on-chain

@@ -274,8 +274,9 @@ static u8 **derive_htlc_success_scripts(const tal_t *ctx, const struct htlc_stub
 
     for (i = 0; i < tal_count(htlcs); i++) {
         htlc_scripts[i] = make_eltoo_htlc_success_script(htlc_scripts,
-                                   htlcs[i].owner == LOCAL ? our_htlc_pubkey : their_htlc_pubkey,
+                                   htlcs[i].owner == LOCAL ? their_htlc_pubkey : our_htlc_pubkey,
                                    htlcs[i].ripemd.u.u8);
+		status_debug("HTLC success script %lu: %s", i, tal_hex(NULL, htlc_scripts[i]));
     }
     return htlc_scripts;
 }
@@ -289,6 +290,7 @@ static u8 **derive_htlc_timeout_scripts(const tal_t *ctx, const struct htlc_stub
         htlc_scripts[i] = make_eltoo_htlc_timeout_script(htlc_scripts,
                                    htlcs[i].owner == LOCAL ? our_htlc_pubkey : their_htlc_pubkey,
                                    htlcs[i].cltv_expiry);
+		status_debug("HTLC timeout script %lu: %s", i, tal_hex(NULL, htlc_scripts[i]));
     }
     return htlc_scripts;
 }
@@ -326,9 +328,10 @@ static const size_t *eltoo_match_htlc_output(const tal_t *ctx,
     const u8 *script = tal_dup_arr(tmpctx, u8, out->script, out->script_len,
                        0);
     /* Must be a p2tr output */
-    if (!is_p2tr(script, NULL))
-        return matches;
-
+    if (!is_p2tr(script, NULL)) {
+		/* FIXME do something better than crash */
+		abort();
+	}
     for (size_t i = 0; i < tal_count(htlc_success_scripts); i++) {
         struct sha256 tap_merkle_root;
         const struct pubkey *pubkey_ptrs[2];
@@ -350,6 +353,8 @@ static const size_t *eltoo_match_htlc_output(const tal_t *ctx,
         bipmusig_finalize_keys(&taproot_pubkey, &keyagg_cache, pubkey_ptrs, /* n_pubkeys */ 2,
                &tap_merkle_root, tap_tweak_out);
         taproot_script = scriptpubkey_p2tr(ctx, &taproot_pubkey);
+
+		status_debug("Reconstructed HTLC script for comparison with output: %s", tal_hex(NULL, taproot_script));
 
         if (memeq(taproot_script, tal_count(taproot_script), script, sizeof(script))) {
             tal_arr_expand(&matches, i);
@@ -1456,6 +1461,8 @@ static struct htlcs_info *eltoo_init_reply(const tal_t *ctx, const char *what)
         htlcs_info->tell_if_missing[i] = htlcs[i].tell_if_missing;
         htlcs_info->tell_immediately[i] = htlcs[i].tell_immediately;
     }
+
+	status_debug("Handling %lu HTLC scripts for possible resolution", tal_count(htlcs_info->htlcs));
 
     return htlcs_info;
 }

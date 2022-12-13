@@ -833,6 +833,7 @@ static void send_update(struct eltoo_peer *peer)
 		return;
 	}
 
+	status_debug("Creating pair of transactions for sending update");
 	update_and_settle_txs = eltoo_channel_txs(tmpctx, &htlc_map, direct_outputs,
 			  peer->channel,
 			  peer->next_index, LOCAL);
@@ -1094,6 +1095,7 @@ static void handle_peer_update_sig(struct eltoo_peer *peer, const u8 *msg)
 
 	status_debug("Received update_sig");
 
+	status_debug("Creating pair of transactions for update we received");
 	update_and_settle_txs =
 	    eltoo_channel_txs(tmpctx, &htlc_map, /* direct_outputs */ NULL,
 			peer->channel,

@@ -795,6 +795,9 @@ def test_eltoo_outhtlc(node_factory, bitcoind, executor, chainparams):
                                             'plugin': coin_mvt_plugin}])
     channel_id = first_channel_id(l1, l2)
 
+    from pdb import set_trace
+    set_trace()
+
     # Move some across to l2. This will cause *2* updates to be sent for
     # addition and removal of HTLC
     l1.pay(l2, 200000*SAT)
@@ -850,8 +853,6 @@ def test_eltoo_outhtlc(node_factory, bitcoind, executor, chainparams):
     bitcoind.generate_block(6)
 
     # FIXME we're here, settle tx should be shot off to mempool XXX
-    from pdb import set_trace
-    set_trace()
 
 
     # Symmetrical transactions(!), symmetrical state, mostly
