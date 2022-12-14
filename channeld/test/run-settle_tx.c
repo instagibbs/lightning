@@ -775,7 +775,8 @@ static int test_htlc_output_creation(void)
     u8 *tapleaf_scripts[2];
     u8 *taproot_script;
     /* 0-value hash image */
-    unsigned char *invoice_hash = tal_arr(tmpctx, u8, 20);
+    struct ripemd160 invoice_hash;
+	memset(invoice_hash.u.u8, 0, sizeof(invoice_hash.u.u8));
     struct sha256 tap_merkle_root;
     struct pubkey inner_pubkey;
     secp256k1_xonly_pubkey xonly_inner_pubkey;
@@ -809,7 +810,7 @@ static int test_htlc_output_creation(void)
     ok = secp256k1_xonly_pubkey_serialize(secp256k1_ctx, inner_pubkey_bytes, &xonly_inner_pubkey);
     assert(ok);
 
-    htlc_success_script = make_eltoo_htlc_success_script(tmpctx, &settlement_pubkey, invoice_hash);
+    htlc_success_script = make_eltoo_htlc_success_script(tmpctx, &settlement_pubkey, &invoice_hash);
     htlc_timeout_script = make_eltoo_htlc_timeout_script(tmpctx, &settlement_pubkey, 420);
     tapleaf_scripts[0] = htlc_success_script;
     tapleaf_scripts[1] = htlc_timeout_script;

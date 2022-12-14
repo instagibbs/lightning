@@ -234,7 +234,7 @@ u8 *make_eltoo_update_script(const tal_t *ctx, u32 update_num);
 u8 *make_eltoo_funding_update_script(const tal_t *ctx);
 
 /* Creates eltoo HTLC success script, with invoice hash lock */
-u8 *make_eltoo_htlc_success_script(const tal_t *ctx, const struct pubkey *settlement_pubkey, const u8 *invoice_hash);
+u8 *make_eltoo_htlc_success_script(const tal_t *ctx, const struct pubkey *settlement_pubkey, const struct ripemd160 *invoice_hash);
 
 /* Creates eltoo HTLC timeout script, with timeout value */
 u8 *make_eltoo_htlc_timeout_script(const tal_t *ctx, const struct pubkey *settlement_pubkey, u32 htlc_timeout);

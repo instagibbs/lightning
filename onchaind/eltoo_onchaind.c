@@ -273,9 +273,10 @@ static u8 **derive_htlc_success_scripts(const tal_t *ctx, const struct htlc_stub
     u8 **htlc_scripts = tal_arr(ctx, u8 *, tal_count(htlcs));
 
     for (i = 0; i < tal_count(htlcs); i++) {
+		/* FIXME shouldn't be right ... wrong key orderring. The scripts seem to be mismatched in orderingthis way? */
         htlc_scripts[i] = make_eltoo_htlc_success_script(htlc_scripts,
-                                   htlcs[i].owner == LOCAL ? their_htlc_pubkey : our_htlc_pubkey,
-                                   htlcs[i].ripemd.u.u8);
+                                   htlcs[i].owner == LOCAL ? our_htlc_pubkey : their_htlc_pubkey,
+                                   &htlcs[i].ripemd);
 		status_debug("HTLC success script %lu: %s", i, tal_hex(NULL, htlc_scripts[i]));
     }
     return htlc_scripts;
@@ -287,8 +288,9 @@ static u8 **derive_htlc_timeout_scripts(const tal_t *ctx, const struct htlc_stub
     u8 **htlc_scripts = tal_arr(ctx, u8 *, tal_count(htlcs));
 
     for (i = 0; i < tal_count(htlcs); i++) {
+		/* FIXME shouldn't be right ... wrong key orderring. The scripts seem to be mismatched in orderingthis way? */
         htlc_scripts[i] = make_eltoo_htlc_timeout_script(htlc_scripts,
-                                   htlcs[i].owner == LOCAL ? our_htlc_pubkey : their_htlc_pubkey,
+                                   htlcs[i].owner == LOCAL ? their_htlc_pubkey : our_htlc_pubkey,
                                    htlcs[i].cltv_expiry);
 		status_debug("HTLC timeout script %lu: %s", i, tal_hex(NULL, htlc_scripts[i]));
     }
@@ -354,9 +356,10 @@ static const size_t *eltoo_match_htlc_output(const tal_t *ctx,
                &tap_merkle_root, tap_tweak_out);
         taproot_script = scriptpubkey_p2tr(ctx, &taproot_pubkey);
 
-		status_debug("Reconstructed HTLC script for comparison with output: %s", tal_hex(NULL, taproot_script));
+		status_debug("Reconstructed HTLC script %s for comparison with output: %s", tal_hex(NULL, taproot_script), tal_hex(NULL, script));
 
         if (memeq(taproot_script, tal_count(taproot_script), script, sizeof(script))) {
+			status_debug("Matched!");
             tal_arr_expand(&matches, i);
             *parity_bit = pubkey_parity(&taproot_pubkey);
         }
