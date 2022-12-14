@@ -358,7 +358,7 @@ static const size_t *eltoo_match_htlc_output(const tal_t *ctx,
 
 		status_debug("Reconstructed HTLC script %s for comparison with output: %s", tal_hex(NULL, taproot_script), tal_hex(NULL, script));
 
-        if (memeq(taproot_script, tal_count(taproot_script), script, sizeof(script))) {
+        if (memeq(taproot_script, tal_count(taproot_script), script, tal_count(script))) {
 			status_debug("Matched!");
             tal_arr_expand(&matches, i);
             *parity_bit = pubkey_parity(&taproot_pubkey);
@@ -882,54 +882,39 @@ static void track_settle_outputs(struct tracked_output ***outs,
         struct tracked_output *out;
         struct amount_sat satoshis = amount_sat(settle_out->satoshi);
         int parity_bit;
+
+		status_debug("Output script: %s", tal_hex(tmpctx, settle_out->script));
+
+
         /* (1) Ephemeral Anchor */
         if (is_ephemeral_anchor(settle_out->script)) {
             /* Anchor is lightningd's problem */
             continue;
         }
+
+		if (!is_p2tr(settle_out->script, NULL)) {
+			/* Everything should be taproot FIXME what do */
+			abort();
+		}
+
+		/* Balance outputs are self-resolving in the settle tx */
+		u8 *to_us = scriptpubkey_p2tr(tmpctx, &keyset->self_settle_key);
+		status_debug("to_us script: %s", tal_hex(tmpctx, to_us));
+		if (memcmp(settle_out->script, to_us, tal_count(to_us)) == 0) {
+			continue;
+		}
+
+		u8 *to_them = scriptpubkey_p2tr(tmpctx, &keyset->other_settle_key);
+		status_debug("to_them script: %s", tal_hex(tmpctx, to_them));
+		if (memcmp(settle_out->script, to_them, tal_count(to_them)) == 0) {
+			continue;
+		}
+
         const size_t *matches = eltoo_match_htlc_output(tmpctx, settle_out, htlc_success_scripts, htlc_timeout_scripts, &parity_bit);
         struct bitcoin_outpoint outpoint;
         outpoint.txid = tx_parts->txid;
         outpoint.n = j;
         if (tal_count(matches) == 0) {
-            if (!is_p2tr(settle_out->script, NULL)) {
-                /* Everything should be taproot FIXME what do */
-                abort();
-            }
-            /* Balance outputs are self-resolving in the settle tx */
-            status_debug("Output script: %s", tal_hex(tmpctx, settle_out->script));
-            u8 *to_us = scriptpubkey_p2tr(tmpctx, &keyset->self_settle_key);
-            status_debug("to_us script: %s", tal_hex(tmpctx, to_us));
-            if (memcmp(settle_out->script, to_us, tal_count(to_us)) == 0) {
-                /* (2) `to_node` to us */
-                //out = new_tracked_output(outs, &outpoint,
-                 //   tx_blockheight,
-                //    ELTOO_SETTLE,
-                //    satoshis,
-                //    OUTPUT_TO_US /* output_type */,
-                //    NULL /* htlc */,
-                //    NULL /* htlc_success_tapscript */,
-                //    NULL /* htlc_timeout_tapscript */);
-                /* No need to resolve or track it */
-                //ignore_output(out);
-                continue;
-            }
-            u8 *to_them = scriptpubkey_p2tr(tmpctx, &keyset->other_settle_key);
-            status_debug("to_them script: %s", tal_hex(tmpctx, to_them));
-            if (memcmp(settle_out->script, to_them, tal_count(to_them)) == 0) {
-                /* (3) `to_node` to them */
-                //out = new_tracked_output(outs, &outpoint,
-                //    tx_blockheight,
-                //    ELTOO_SETTLE,
-                //    satoshis,
-                //    OUTPUT_TO_THEM /* output_type */,
-                //    NULL /* htlc */,
-                //    NULL /* htlc_success_tapscript */,
-                //    NULL /* htlc_timeout_tapscript */);
-                /* No need to resolve it */
-                //ignore_output(out);
-                continue;
-            }
             /* Update we don't recognise :( FIXME what do */
             /* This can hit if it was a "future" settlement transaction, which terminates the process with an error */
             status_failed(STATUS_FAIL_INTERNAL_ERROR, "Couldn't match settlement output script to known output type");
