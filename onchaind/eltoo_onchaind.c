@@ -99,6 +99,7 @@ struct tracked_output {
 	struct amount_sat sat;
 	enum output_type output_type;
     u32 locktime; /* Used to detec update->settle transition */
+	u8 *scriptPubKey;
 
 	/* If it is an HTLC, this is set, tapscripts are non-NULL. */
 	struct htlc_stub htlc;
@@ -184,7 +185,7 @@ static struct bitcoin_tx *bip340_tx_to_us(const tal_t *ctx,
 
     tx = bitcoin_tx(ctx, chainparams, 1, 1, locktime);
     bitcoin_tx_add_input(tx, &out->outpoint, 0 /* sequence */,
-            NULL /* scriptSig */, out->sat, NULL /* scriptPubkey */,
+            NULL /* scriptSig */, out->sat, out->scriptPubKey /* scriptPubkey */,
             NULL /* input_wscript */, NULL /* inner_pubkey */, NULL /* tap_tree */);
 
     /* FIXME figure out taproot output support to go directly into wallet aka "our_wallet_pubkey" */
@@ -372,6 +373,7 @@ new_tracked_output(struct tracked_output ***outs,
 		   enum eltoo_tx_type tx_type,
 		   struct amount_sat sat,
 		   enum output_type output_type,
+		   u8 *scriptPubKey,
            u32 locktime,
 		   const struct htlc_stub *htlc,
 		   const u8 *htlc_success_tapscript TAKES,
@@ -393,6 +395,8 @@ new_tracked_output(struct tracked_output ***outs,
     out->locktime = locktime;
 	out->proposal = NULL;
 	out->resolved = NULL;
+	if (scriptPubKey) 
+		out->scriptPubKey = tal_dup(out, u8, scriptPubKey);
 	if (htlc)
 		out->htlc = *htlc;
 	out->htlc_success_tapscript = tal_steal(out, htlc_success_tapscript);
@@ -422,7 +426,7 @@ static void ignore_output(struct tracked_output *out)
 
 static enum wallet_tx_type onchain_txtype_to_wallet_txtype(enum eltoo_tx_type t)
 {
-    /* FIXME put eltoo_tx_type into proper wallet_tx_type */
+    /* FIXME Need to distinguish TX_THEIRS when possible (SUCCESS/TIMEOUT)  */
 	switch (t) {
 	case ELTOO_FUNDING_TRANSACTION:
 		return TX_CHANNEL_FUNDING;
@@ -432,10 +436,15 @@ static enum wallet_tx_type onchain_txtype_to_wallet_txtype(enum eltoo_tx_type t)
     case ELTOO_INVALIDATED_UPDATE:
     case ELTOO_SETTLE:
     case ELTOO_INVALIDATED_SETTLE:
+		return TX_CHANNEL_UNILATERAL;
     case ELTOO_HTLC_SUCCESS:
+		return TX_CHANNEL_HTLC_SUCCESS;
     case ELTOO_HTLC_TIMEOUT:
-    case ELTOO_IGNORING_TINY_PAYMENT:
+	case ELTOO_HTLC_TIMEOUT_TO_THEM:
+		return TX_CHANNEL_HTLC_TIMEOUT;
     case ELTOO_SELF:
+		return TX_CHANNEL_SWEEP;
+    case ELTOO_IGNORING_TINY_PAYMENT:
     case ELTOO_UNKNOWN_TXTYPE:
 		return TX_UNKNOWN;
 	}
@@ -515,13 +524,26 @@ static void eltoo_proposal_meets_depth(struct tracked_output *out)
 {
 	bool is_rbf = eltoo_proposal_is_rbfable(out->proposal);
 
-    /* We only propose something if we have something to do */
-//	if (!out->proposal->tx &&
-//        out->proposal->tx_type != ELTOO_HTLC_TIMEOUT) {
-//		ignore_output(out);
-//		return;
-//	}
-
+	/* Some transactions can be constructed just-in-time to have better fees if updated */
+	if (out->proposal->tx_type == ELTOO_HTLC_TIMEOUT) {
+		if (!out->proposal->tx) {
+			status_broken("Proposal tx already exists for HTLC timeout when it should be null. Stumbling through.");
+		} else {
+			status_debug("Creating HTLC timeout sweep transaction to be signed");
+			out->proposal->tx = bip340_tx_to_us(out,
+				htlc_timeout_to_us,
+				out,
+				out->htlc.cltv_expiry,
+				out->htlc_timeout_tapscript,
+				compute_control_block(out, out->htlc_success_tapscript /* other_script */, NULL /* annex_hint*/, &keyset->inner_pubkey, out->parity_bit),
+				&out->proposal->tx_type, /* over-written if too small to care */
+				htlc_feerate);
+		}
+	} else if (out->proposal->tx_type == ELTOO_HTLC_TIMEOUT_TO_THEM) {
+		// Not going to do anything to resolve this proposal here,
+		// instead we'll keep waiting for HTLC preimage
+		return;
+	}
 
 	status_debug("Broadcasting %s (%s) to resolve %s/%s",
 		     eltoo_tx_type_name(out->proposal->tx_type),
@@ -755,17 +777,18 @@ static void propose_resolution(struct tracked_output *out,
 
 /* HTLC resolution won't have tx pre-built */
 static void propose_htlc_timeout_resolution(struct tracked_output *out,
-                   unsigned int depth_required)
+                   unsigned int depth_required,
+				   enum eltoo_tx_type tx_type)
 {
     status_debug("Propose handling %s/%s by %s after %u blocks",
              eltoo_tx_type_name(out->tx_type),
              output_type_name(out->output_type),
-             eltoo_tx_type_name(ELTOO_HTLC_TIMEOUT),
+             eltoo_tx_type_name(tx_type),
              depth_required);
 
     out->proposal = tal(out, struct proposed_resolution);
     out->proposal->depth_required = depth_required;
-    out->proposal->tx_type = ELTOO_HTLC_TIMEOUT;
+    out->proposal->tx_type = tx_type;
 
     if (depth_required == 0)
         eltoo_proposal_meets_depth(out);
@@ -773,7 +796,7 @@ static void propose_htlc_timeout_resolution(struct tracked_output *out,
 
 /* HTLC resolution won't have tx pre-built */
 static void propose_htlc_resolution_at_block(struct tracked_output *out,
-                    unsigned int block_required,
+                    u32 block_required,
                     enum eltoo_tx_type tx_type)
 {
     u32 depth;
@@ -783,7 +806,7 @@ static void propose_htlc_resolution_at_block(struct tracked_output *out,
         depth = 0;
     else /* Note that out->tx_blockheight is already at depth 1 */
         depth = block_required - out->tx_blockheight + 1;
-    propose_htlc_timeout_resolution(out, depth);
+    propose_htlc_timeout_resolution(out, depth, tx_type);
 }
 
 static void unwatch_txid(const struct bitcoin_txid *txid)
@@ -917,26 +940,32 @@ static void track_settle_outputs(struct tracked_output ***outs,
             /* This can hit if it was a "future" settlement transaction, which terminates the process with an error */
             status_failed(STATUS_FAIL_INTERNAL_ERROR, "Couldn't match settlement output script to known output type");
         } else {
-            if (matches_direction(matches, htlcs_info->htlcs) == LOCAL) {
-                /* (4) HTLC to us */
+            if (matches_direction(matches, htlcs_info->htlcs) == REMOTE) {
+                /* (4) HTLC they own (to us) */
                 out = new_tracked_output(outs, &outpoint,
                     tx_blockheight,
                     ELTOO_SETTLE,
                     satoshis,
                     THEIR_HTLC,
+					settle_out->script,
                     0 /* locktime (unused by settle logic) */,
                     &htlcs_info->htlcs[matches[0]] /* htlc */,
                     htlc_success_scripts[matches[0]] /* htlc_success_tapscript */,
                     htlc_timeout_scripts[matches[0]] /* htlc_timeout_tapscript */);
                 out->parity_bit = parity_bit;
-                /* FIXME Proposal comes in at handle_preimage? */
+				/* We set a resolution we won't trigger ourselves, ideally we sweep via preimage
+				 * I do this mostly to satisfy the billboard notification of pending resolutions
+			     * in billboard_update
+				 */
+                propose_htlc_resolution_at_block(out, htlcs_info->htlcs[matches[0]].cltv_expiry, ELTOO_HTLC_TIMEOUT_TO_THEM);
             } else {
-                /* (5) HTLC to them */
+                /* (5) HTLC we own (to them) */
                 out = new_tracked_output(outs, &outpoint,
                     tx_blockheight,
                     ELTOO_SETTLE,
                     satoshis,
                     OUR_HTLC,
+					settle_out->script,
                     0 /* locktime (unused by settle logic) */,
                     &htlcs_info->htlcs[matches[0]] /* htlc */,
                     htlc_success_scripts[matches[0]] /* htlc_success_tapscript */,
@@ -990,6 +1019,7 @@ static void eltoo_handle_preimage(struct tracked_output **outs,
 		 * could be due to multiple identical rhashes in tx. */
 		outs[i]->proposal = tal_free(outs[i]->proposal);
 
+		status_debug("Creating HTLC success sweep transaction to be signed");
         tx = bip340_tx_to_us(outs[i],
             htlc_success_to_us,
             outs[i],
@@ -1065,7 +1095,7 @@ static void output_spent(struct tracked_output ***outs,
             outpoint.txid = tx_parts->txid;
             outpoint.n = input_num;
 
-            new_state_out = new_tracked_output(outs, &outpoint, tx_blockheight, ELTOO_UPDATE, amt, DELAYED_OUTPUT_TO_US, locktime,
+            new_state_out = new_tracked_output(outs, &outpoint, tx_blockheight, ELTOO_UPDATE, amt, DELAYED_OUTPUT_TO_US, tx_parts->outputs[input_num]->script, locktime,
                 NULL /* htlcs */, NULL /* htlc_success_tapscript */, NULL /* htlc_timeout_tapscript */);
 
             if (locktime == complete_update_tx->wtx->locktime) {
@@ -1235,20 +1265,6 @@ static void eltoo_tx_new_depth(struct tracked_output **outs,
 		if (outs[i]->proposal
 		    && bitcoin_txid_eq(&outs[i]->outpoint.txid, txid)
             && depth >= outs[i]->proposal->depth_required) {
-            /* Just-in-time creation of HTLC_TIMEOUT tx before gets broadcasted */
-            if (outs[i]->proposal->tx_type == ELTOO_HTLC_TIMEOUT) {
-                if (outs[i]->proposal->tx) {
-                    status_broken("Proposal tx already exists for HTLC timeout when it should be null");
-                }
-                outs[i]->proposal->tx = bip340_tx_to_us(outs[i],
-                    htlc_timeout_to_us,
-                    outs[i],
-                    outs[i]->htlc.cltv_expiry,
-                    outs[i]->htlc_timeout_tapscript,
-                    compute_control_block(outs[i], outs[i]->htlc_success_tapscript /* other_script */, NULL /* annex_hint*/, &keyset->inner_pubkey, outs[i]->parity_bit),
-                    &outs[i]->proposal->tx_type, /* over-written if too small to care */
-                    htlc_feerate);
-            }
 			eltoo_proposal_meets_depth(outs[i]);
 		}
 
@@ -1511,7 +1527,8 @@ static void handle_unilateral(const struct tx_parts *tx,
     asset = wally_tx_output_get_amount(tx->outputs[state_index]);
     amt = amount_asset_to_sat(&asset);
 
-    htlcs_info = eltoo_init_reply(tmpctx, "Tracking update transactions");
+	/* HTLCs have to be stored until program termination */
+    htlcs_info = eltoo_init_reply(outs, "Tracking update transactions");
 
     onchain_annotate_txin(&tx->txid, state_index, TX_CHANNEL_UNILATERAL);
 
@@ -1522,6 +1539,7 @@ static void handle_unilateral(const struct tx_parts *tx,
                  ELTOO_UPDATE,
                  amt,
                  DELAYED_OUTPUT_TO_US,
+				 tx->outputs[state_index]->script,
                  locktime,
                  NULL /* htlc */, NULL /* htlc_success_tapscript */, NULL /* htlc_timeout_tapscript */);
 
@@ -1594,6 +1612,7 @@ int main(int argc, char *argv[])
     struct bitcoin_outpoint funding;
     struct amount_sat funding_sats;
     u32 locktime, tx_blockheight;
+	/* UNUSED */
     u8 *scriptpubkey[NUM_SIDES];
 
     keyset = tal(ctx, struct eltoo_keyset);
@@ -1671,6 +1690,7 @@ int main(int argc, char *argv[])
                FUNDING_TRANSACTION,
                funding_sats,
                FUNDING_OUTPUT,
+			   NULL /* scriptPubKey*/,
                locktime, NULL /* htlc */, NULL /* htlc_success_tapscript */, NULL /* htlc_timeout_tapscript */);
 
     /* Record funding output spent */

@@ -78,6 +78,9 @@ enum eltoo_tx_type {
     ELTOO_HTLC_TIMEOUT,
     ELTOO_HTLC_SUCCESS,
 
+    /* We'll let this one time out */
+    ELTOO_HTLC_TIMEOUT_TO_THEM,
+
     /* FIXME should I have more types? */
 
 	/* Amount too small, we're just spending it to close UTXO */

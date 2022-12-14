@@ -830,9 +830,6 @@ def test_eltoo_outhtlc(node_factory, bitcoind, executor, chainparams):
     assert l1_update_tx == l2_update_tx
     assert l1_settle_tx == l2_settle_tx
 
-    from pdb import set_trace
-    set_trace()
-
     # We can't them continue, since we'll end up blowing away old HTLCs (or having to deal with
     # old state we didn't keep)
     # l1.rpc.dev_reenable_commit(l2.info['id'])
@@ -855,8 +852,8 @@ def test_eltoo_outhtlc(node_factory, bitcoind, executor, chainparams):
     # Mine and mature the update tx
     bitcoind.generate_block(6)
 
-    # FIXME we're here, settle tx should be shot off to mempool XXX
-
+    from pdb import set_trace
+    set_trace()
 
     # Symmetrical transactions(!), symmetrical state, mostly
     l1.daemon.wait_for_log(' to ONCHAIN')
@@ -871,11 +868,16 @@ def test_eltoo_outhtlc(node_factory, bitcoind, executor, chainparams):
                                    'ELTOO_UPDATE/DELAYED_OUTPUT_TO_US')
 
     # Mine it, then we should see HTLC resolution hit the mempool by the receiver
-    # since timeout hasn't occured yet
+    # since timeout hasn't occured yet, as well as a timeout tx after X blocks
     bitcoind.generate_block(1)
+
 
     l1.wait_for_onchaind_broadcast('ELTOO_HTLC_SUCCESS',
                                    'ELTOO_SETTLE/THEIR_HTLC')
+
+    # Brings its own fees, no CPFP required
+    l2.wait_for_onchaind_broadcast('ELTOO_HTLC_TIMEOUT',
+                                   'ELTOO_SETTLE/OUR_HTLC')
 
     # Now that fulfillment is in mempool, we can censor it
 
