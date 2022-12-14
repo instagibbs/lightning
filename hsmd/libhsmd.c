@@ -123,6 +123,8 @@ bool hsmd_check_client_capabilities(struct hsmd_client *client,
 	case WIRE_HSMD_SIGN_REMOTE_HTLC_TO_US:
 	case WIRE_HSMD_SIGN_PENALTY_TO_US:
 	case WIRE_HSMD_SIGN_LOCAL_HTLC_TX:
+    case WIRE_HSMD_SIGN_ELTOO_HTLC_TIMEOUT_TX:
+    case WIRE_HSMD_SIGN_ELTOO_HTLC_SUCCESS_TX:
 		return (client->capabilities & HSM_CAP_SIGN_ONCHAIN_TX) != 0;
 
 	case WIRE_HSMD_GET_PER_COMMITMENT_POINT:
@@ -139,8 +141,6 @@ bool hsmd_check_client_capabilities(struct hsmd_client *client,
     case WIRE_HSMD_PSIGN_UPDATE_TX:
     case WIRE_HSMD_COMBINE_PSIG:
     case WIRE_HSMD_READY_ELTOO_CHANNEL:
-    case WIRE_HSMD_SIGN_ELTOO_HTLC_TIMEOUT_TX:
-    case WIRE_HSMD_SIGN_ELTOO_HTLC_SUCCESS_TX:
     case WIRE_HSMD_VALIDATE_UPDATE_TX_PSIG: /* FIXME unused for now ...  */
 		return (client->capabilities & HSM_CAP_SIGN_REMOTE_TX) != 0;
 
@@ -1736,7 +1736,7 @@ static u8 *handle_sign_eltoo_htlc_tx(struct hsmd_client *c,
 
     /* FIXME still need to switch over to htlc key in spec and impl */
     ret = secp256k1_keypair_create(secp256k1_ctx, &key_pair, secrets.payment_basepoint_secret.data);
-    if (ret) {
+    if (ret != 1) {
 		return hsmd_status_bad_request(c, msg_in,
 					       "Failed to generate htlc pubkey pair");
     }
@@ -1936,7 +1936,7 @@ u8 *hsmd_handle_client_message(const tal_t *ctx, struct hsmd_client *client,
 		return handle_sign_remote_htlc_to_us(client, msg);
 	case WIRE_HSMD_SIGN_DELAYED_PAYMENT_TO_US:
 		return handle_sign_delayed_payment_to_us(client, msg);
-    /* Eltoo stuff here FIXME enable reacting to the messages*/
+    /* Eltoo stuff here */
     case WIRE_HSMD_READY_ELTOO_CHANNEL:
         return handle_ready_eltoo_channel(client, msg);
     case WIRE_HSMD_PSIGN_UPDATE_TX:
