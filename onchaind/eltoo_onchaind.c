@@ -273,9 +273,8 @@ static u8 **derive_htlc_success_scripts(const tal_t *ctx, const struct htlc_stub
     u8 **htlc_scripts = tal_arr(ctx, u8 *, tal_count(htlcs));
 
     for (i = 0; i < tal_count(htlcs); i++) {
-		/* FIXME shouldn't be right ... wrong key orderring. The scripts seem to be mismatched in orderingthis way? */
         htlc_scripts[i] = make_eltoo_htlc_success_script(htlc_scripts,
-                                   htlcs[i].owner == LOCAL ? our_htlc_pubkey : their_htlc_pubkey,
+                                   htlcs[i].owner == LOCAL ? their_htlc_pubkey : our_htlc_pubkey,
                                    &htlcs[i].ripemd);
 		status_debug("HTLC success script %lu: %s", i, tal_hex(NULL, htlc_scripts[i]));
     }
@@ -288,9 +287,8 @@ static u8 **derive_htlc_timeout_scripts(const tal_t *ctx, const struct htlc_stub
     u8 **htlc_scripts = tal_arr(ctx, u8 *, tal_count(htlcs));
 
     for (i = 0; i < tal_count(htlcs); i++) {
-		/* FIXME shouldn't be right ... wrong key orderring. The scripts seem to be mismatched in orderingthis way? */
         htlc_scripts[i] = make_eltoo_htlc_timeout_script(htlc_scripts,
-                                   htlcs[i].owner == LOCAL ? their_htlc_pubkey : our_htlc_pubkey,
+                                   htlcs[i].owner == LOCAL ? our_htlc_pubkey : their_htlc_pubkey,
                                    htlcs[i].cltv_expiry);
 		status_debug("HTLC timeout script %lu: %s", i, tal_hex(NULL, htlc_scripts[i]));
     }

@@ -48,7 +48,7 @@ bool settle_tx_amount_trimmed(const struct htlc **htlcs,
 static void add_eltoo_htlc_out(struct bitcoin_tx *tx,
 				  const struct htlc *htlc,
 				  const struct eltoo_keyset *eltoo_keyset,
-                  enum side receiver_side)
+                  enum side sender_side)
 {
 	struct ripemd160 ripemd;
     u8 *htlc_scripts[2];
@@ -61,7 +61,7 @@ static void add_eltoo_htlc_out(struct bitcoin_tx *tx,
     struct pubkey taproot_pubkey;
     unsigned char tap_tweak_out[32];
 
-    if (receiver_side == LOCAL) {
+    if (sender_side == REMOTE) {
         receiver_pubkey = &(eltoo_keyset->self_settle_key);
         sender_pubkey = &(eltoo_keyset->other_settle_key);
     } else {
