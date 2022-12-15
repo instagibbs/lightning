@@ -843,8 +843,8 @@ static int test_htlc_output(void)
 	u8 success_bytes[100];
 	char timeout_hex[] = "20abc10666592840eb562f2afaedfac56930b4482ec5d8b61b5a4485b383c2cba8ad016db1";
 	u8 timeout_bytes[100];
-	char alice_pubkey_hex[] = "02abc10666592840eb562f2afaedfac56930b4482ec5d8b61b5a4485b383c2cba8";
-	char bob_pubkey_hex[] = "022dbc0053dd6f3310d84e55eebaacfad53fe3e3ec3c2cecb1cffebdd95fa8063f";
+	char alice_pubkey_hex[] = "02e3bd38009866c9da8ec4aa99cc4ea9c6c0dd46df15c61ef0ce1f271291714e57";
+	char bob_pubkey_hex[] = "02324266de8403b3ab157a09f1f784d587af61831c998c151bcc21bb74c2b2314b";
 	//char inner_pubkey_hex[] = "034c2ef50ba924c2d69bdb070db119ed4fa8be451a39f272579215820ee55eb518";
 	char tweaked_key_hex[] = "032be81a351ad641050787eb265397054ecb025bf904982505cd5fa3446d95162c";
 	char wiz_tweaked_key_hex[] = "03ffeeefd39b3fe2515b3c4d299b2df3d711cba1c70fdfc33407ae03b1c09ba4f9";
