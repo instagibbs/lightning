@@ -5,6 +5,7 @@
 #include <common/htlc_tx.h>
 #include <common/initial_settlement_tx.h>
 #include <common/keyset.h>
+#include <common/update_tx.h>
 #include <common/permute_tx.h>
 #include <common/type_to_string.h>
 
@@ -61,6 +62,9 @@ static void add_eltoo_htlc_out(struct bitcoin_tx *tx,
     secp256k1_musig_keyagg_cache keyagg_cache;
     struct pubkey taproot_pubkey;
     unsigned char tap_tweak_out[32];
+	/* Double-checking calculation */
+	u8 *success_annex;
+    struct sha256 tap_merkle_root_annex;
 
     if (sender_side == REMOTE) {
         receiver_pubkey = &(eltoo_keyset->self_settle_key);
@@ -80,6 +84,10 @@ static void add_eltoo_htlc_out(struct bitcoin_tx *tx,
 	printf("Settle's HTLC success script: %s\n", tal_hex(NULL, htlc_scripts[0]));
 	printf("Settle's HTLC timeout script: %s\n", tal_hex(NULL, htlc_scripts[1]));
     compute_taptree_merkle_root(&tap_merkle_root, htlc_scripts, /* num_scripts */ 2);
+    success_annex = make_annex_from_script(tx, htlc_scripts[0]);
+    compute_taptree_merkle_root_with_hint(&tap_merkle_root_annex, htlc_scripts[1], success_annex);
+	assert(memcmp(tap_merkle_root.u.u8, tap_merkle_root_annex.u.u8, sizeof(tap_merkle_root.u.u8)) == 0);
+
     bipmusig_finalize_keys(&taproot_pubkey, &keyagg_cache, pubkey_ptrs, /* n_pubkeys */ 2,
            &tap_merkle_root, tap_tweak_out);
 	printf("HTLC tweaked pubkey: %s\n", type_to_string(tmpctx, struct pubkey,
