@@ -143,13 +143,15 @@ void bipmusig_inner_pubkey(struct pubkey *inner_pubkey,
  *   NULL if script path spending is used.
  * @tap_tweak_out: Set to `t` in `t = hashTapTweak(p || k_m)` of BIP341.
      N.B. if @tap_merkle_root if NULL, k_m is implicitly the empty string.
+ * @inner_pubkey: If not NULL, is over-written with untweaked MuSig2 pubkey.
  */
 void bipmusig_finalize_keys(struct pubkey *agg_pk,
            secp256k1_musig_keyagg_cache *keyagg_cache,
            const struct pubkey * const* pubkeys,
            size_t n_pubkeys,
            const struct sha256 *tap_merkle_root,
-           unsigned char *tap_tweak_out);
+           unsigned char *tap_tweak_out,
+           struct pubkey *inner_pubkey);
 
 /**
  * bipmusig_gen_nonce - Generates session id, private

@@ -184,11 +184,15 @@ static struct bitcoin_tx *bip340_tx_to_us(const tal_t *ctx,
     /* Modifying later, we need this at the end for witness construction  */
     enum eltoo_tx_type tx_type_copy = *tx_type;
 
-	status_debug("Making tx of type %s with outputs spk: %s, tapscript: %s, control block: %s, inner pubkey: %s",
+	status_debug("Making tx of type %s with outputs spk: %s, tapscript: %s, control block: %s, our funding key: %s, their funding key: %s, inner pubkey: %s",
 		eltoo_tx_type_name(*tx_type),
 		tal_hex(NULL, out->scriptPubKey),
 		tal_hex(NULL, tapscript),
 		tal_hex(NULL, control_block),
+		type_to_string(NULL, struct pubkey,
+                    &keyset->self_funding_key),
+		type_to_string(NULL, struct pubkey,
+                    &keyset->other_funding_key),
 		type_to_string(NULL, struct pubkey,
                     &keyset->inner_pubkey));
 
@@ -340,7 +344,7 @@ static const size_t *eltoo_match_htlc_output(const tal_t *ctx,
 	}
     for (size_t i = 0; i < tal_count(htlc_success_scripts); i++) {
         struct sha256 tap_merkle_root;
-        const struct pubkey *pubkey_ptrs[2];
+        const struct pubkey *funding_pubkey_ptrs[2];
         struct pubkey taproot_pubkey;
         secp256k1_musig_keyagg_cache keyagg_cache;
         unsigned char tap_tweak_out[32];
@@ -350,8 +354,8 @@ static const size_t *eltoo_match_htlc_output(const tal_t *ctx,
         htlc_scripts[0] = htlc_success_scripts[i];
         htlc_scripts[1] = htlc_timeout_scripts[i];
 
-        pubkey_ptrs[0] = &keyset->self_settle_key;
-        pubkey_ptrs[1] = &keyset->other_settle_key;
+        funding_pubkey_ptrs[0] = &keyset->self_funding_key;
+        funding_pubkey_ptrs[1] = &keyset->other_funding_key;
 
         if (!htlc_success_scripts[i] || !htlc_timeout_scripts[i])
             continue;
@@ -359,8 +363,8 @@ static const size_t *eltoo_match_htlc_output(const tal_t *ctx,
 		compute_taptree_merkle_root(&tap_merkle_root, htlc_scripts, /* num_scripts */ 2);
 		//success_annex = make_annex_from_script(tmpctx, htlc_success_scripts[i]);
 		//compute_taptree_merkle_root_with_hint(&tap_merkle_root_annex, htlc_timeout_scripts[i], success_annex);
-        bipmusig_finalize_keys(&taproot_pubkey, &keyagg_cache, pubkey_ptrs, /* n_pubkeys */ 2,
-               &tap_merkle_root, tap_tweak_out);
+        bipmusig_finalize_keys(&taproot_pubkey, &keyagg_cache, funding_pubkey_ptrs, /* n_pubkeys */ 2,
+               &tap_merkle_root, tap_tweak_out, NULL);
         taproot_script = scriptpubkey_p2tr(ctx, &taproot_pubkey);
 
 		status_debug("Reconstructed HTLC script %s for comparison with output: %s", tal_hex(NULL, taproot_script), tal_hex(NULL, script));
@@ -1526,7 +1530,7 @@ static void handle_unilateral(const struct tx_parts *tx,
     struct amount_asset asset;
     struct amount_sat amt;
     struct tracked_output *out;
-    const struct pubkey *pubkey_ptrs[2];
+    const struct pubkey *funding_pubkey_ptrs[2];
     secp256k1_musig_keyagg_cache keyagg_cache;
 
     /* State output will match index */
@@ -1555,11 +1559,11 @@ static void handle_unilateral(const struct tx_parts *tx,
                  NULL /* htlc */, NULL /* htlc_success_tapscript */, NULL /* htlc_timeout_tapscript */);
 
     /* Fill out inner pubkey to complete re-binding of update transactions going forward */
-    pubkey_ptrs[0] = &keyset->self_funding_key;
-    pubkey_ptrs[1] = &keyset->other_funding_key;
+    funding_pubkey_ptrs[0] = &keyset->self_funding_key;
+    funding_pubkey_ptrs[1] = &keyset->other_funding_key;
     bipmusig_inner_pubkey(&keyset->inner_pubkey,
            &keyagg_cache,
-           pubkey_ptrs,
+           funding_pubkey_ptrs,
            /* n_pubkeys */ 2);
 
     /* FIXME I think this logic will be the same in main loop under output_spent  */

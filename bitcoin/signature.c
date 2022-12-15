@@ -203,7 +203,8 @@ void bipmusig_finalize_keys(struct pubkey *agg_pk,
            const struct pubkey * const* pubkeys,
            size_t n_pubkeys,
            const struct sha256 *tap_merkle_root,
-           unsigned char *tap_tweak_out)
+           unsigned char *tap_tweak_out,
+		   struct pubkey *inner_pubkey)
 {
     int i, ok;
     unsigned char taptweak_preimage[64];
@@ -235,6 +236,14 @@ void bipmusig_finalize_keys(struct pubkey *agg_pk,
         n_pubkeys); 
 
     assert(ok);
+
+	if (inner_pubkey) {
+		ok = secp256k1_musig_pubkey_get(secp256k1_ctx,
+			&inner_pubkey->pubkey,
+			keyagg_cache);
+
+		assert(ok);
+	}
 
     ok = secp256k1_xonly_pubkey_serialize(secp256k1_ctx, taptweak_preimage, &agg_x_key);
 
@@ -829,7 +838,8 @@ u8 *scriptpubkey_eltoo_funding(const tal_t *ctx, const struct pubkey *pubkey1, c
            pk_ptrs,
            /* n_pubkeys */ 2,
            &tap_merkle_root,
-           tap_tweak_out);
+           tap_tweak_out,
+		   NULL);
 
     return scriptpubkey_p2tr(ctx, &taproot_pubkey);
 }

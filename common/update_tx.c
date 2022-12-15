@@ -109,7 +109,8 @@ void bind_tx_to_funding_outpoint(struct bitcoin_tx *update_tx,
            pubkey_ptrs,
            /* n_pubkeys */ 2,
            &psbt_tap_merkle_root,
-           psbt_tap_tweak);
+           psbt_tap_tweak,
+		   NULL);
 
     script_pubkey = scriptpubkey_p2tr(tmpctx, &taproot_pk);
 
@@ -189,7 +190,8 @@ void bind_update_tx_to_update_outpoint(struct bitcoin_tx *update_tx,
            pubkey_ptrs,
            /* n_pubkeys */ 2,
            &psbt_tap_merkle_root,
-           psbt_tap_tweak);
+           psbt_tap_tweak,
+		   NULL);
 
     script_pubkey = scriptpubkey_p2tr(tmpctx, &taproot_pk);
 

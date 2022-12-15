@@ -28,7 +28,7 @@ void tx_add_ephemeral_anchor_output(struct bitcoin_tx *tx)
 }
 
 void add_settlement_input(struct bitcoin_tx *tx, const struct bitcoin_outpoint *update_outpoint,
-    struct amount_sat update_outpoint_sats, u32 shared_delay, const struct pubkey *inner_pubkey, u32 obscured_update_number, const struct pubkey *pubkey_ptrs[2])
+    struct amount_sat update_outpoint_sats, u32 shared_delay, const struct pubkey *inner_pubkey, u32 obscured_update_number, const struct pubkey *funding_pubkey_ptrs[2])
 {
     u8 *dummy_script;
     int input_num;
@@ -66,10 +66,11 @@ void add_settlement_input(struct bitcoin_tx *tx, const struct bitcoin_outpoint *
     compute_taptree_merkle_root(&update_merkle_root, settle_and_update_tapscripts, /* num_scripts */ 2);
     bipmusig_finalize_keys(&update_agg_pk,
            &update_keyagg_cache,
-           pubkey_ptrs,
+           funding_pubkey_ptrs,
            /* n_pubkeys */ 2,
            &update_merkle_root,
-           update_tap_tweak);
+           update_tap_tweak,
+		   NULL);
 
     parity_bit = pubkey_parity(&update_agg_pk);
     control_block = compute_control_block(tmpctx, settle_and_update_tapscripts[1], /* annex_hint */ NULL, inner_pubkey, parity_bit);
@@ -109,7 +110,7 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
 	void *dummy_local = (void *)LOCAL, *dummy_remote = (void *)REMOTE;
 	/* There is a direct output and possibly a shared anchor output */
 	const void *output_order[NUM_SIDES + 1];
-    const struct pubkey *pubkey_ptrs[2];
+    const struct pubkey *funding_pubkey_ptrs[2];
     struct pubkey inner_pubkey;
     secp256k1_musig_keyagg_cache keyagg_cache;
 
@@ -119,13 +120,13 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
     fake_outpoint.n = 0;
 
    /* For MuSig aggregation for outputs */
-    pubkey_ptrs[0] = &(eltoo_keyset->self_funding_key);
-    pubkey_ptrs[1] = &(eltoo_keyset->other_funding_key);
+    funding_pubkey_ptrs[0] = &(eltoo_keyset->self_funding_key);
+    funding_pubkey_ptrs[1] = &(eltoo_keyset->other_funding_key);
 
     /* Channel-wide inner public key computed here */
     bipmusig_inner_pubkey(&inner_pubkey,
            &keyagg_cache,
-           pubkey_ptrs,
+           funding_pubkey_ptrs,
            /* n_pubkeys */ 2);
 
 	if (!amount_msat_add(&total_pay, self_pay, other_pay))
@@ -232,7 +233,7 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
 	 *    * `txin[0]` script bytes: 0
 	 */
 
-    add_settlement_input(tx, &fake_outpoint, update_outpoint_sats, shared_delay, &inner_pubkey, obscured_update_number, pubkey_ptrs);
+    add_settlement_input(tx, &fake_outpoint, update_outpoint_sats, shared_delay, &inner_pubkey, obscured_update_number, funding_pubkey_ptrs);
 
     /* Transaction is now ready for broadcast! */
 

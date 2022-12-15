@@ -72,7 +72,8 @@ static struct bitcoin_tx *funding_tx_eltoo(const tal_t *ctx,
            pubkeys,
            sizeof(pubkeys),
            /* tap_merkle_root */ NULL,
-           tap_tweak_out);
+           tap_tweak_out,
+			NULL);
 
 	tx = tx_spending_utxo(ctx, utxo,
 			      1, 0, BITCOIN_TX_DEFAULT_SEQUENCE);

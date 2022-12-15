@@ -57,7 +57,7 @@ static void add_eltoo_htlc_out(struct bitcoin_tx *tx,
     u8 *taproot_script;
     struct sha256 tap_merkle_root;
     const struct pubkey *sender_pubkey, *receiver_pubkey;
-    const struct pubkey *pubkey_ptrs[2];
+    const struct pubkey *funding_pubkey_ptrs[2];
    	struct amount_sat amount;
     secp256k1_musig_keyagg_cache keyagg_cache;
     struct pubkey taproot_pubkey;
@@ -74,8 +74,9 @@ static void add_eltoo_htlc_out(struct bitcoin_tx *tx,
         sender_pubkey = &(eltoo_keyset->self_settle_key);
     }
 
-    pubkey_ptrs[0] = receiver_pubkey;
-    pubkey_ptrs[1] = sender_pubkey;
+	/* For inner pubkey calculation */
+    funding_pubkey_ptrs[0] = &(eltoo_keyset->self_funding_key);
+    funding_pubkey_ptrs[1] = &(eltoo_keyset->other_funding_key);
 
 	ripemd160(&ripemd, htlc->rhash.u.u8, sizeof(htlc->rhash.u.u8));
 
@@ -88,8 +89,8 @@ static void add_eltoo_htlc_out(struct bitcoin_tx *tx,
     compute_taptree_merkle_root_with_hint(&tap_merkle_root_annex, htlc_scripts[1], success_annex);
 	assert(memcmp(tap_merkle_root.u.u8, tap_merkle_root_annex.u.u8, sizeof(tap_merkle_root.u.u8)) == 0);
 
-    bipmusig_finalize_keys(&taproot_pubkey, &keyagg_cache, pubkey_ptrs, /* n_pubkeys */ 2,
-           &tap_merkle_root, tap_tweak_out);
+    bipmusig_finalize_keys(&taproot_pubkey, &keyagg_cache, funding_pubkey_ptrs, /* n_pubkeys */ 2,
+           &tap_merkle_root, tap_tweak_out, NULL);
 	printf("HTLC tweaked pubkey: %s\n", type_to_string(tmpctx, struct pubkey,
                     &taproot_pubkey));
     taproot_script = scriptpubkey_p2tr(tx, &taproot_pubkey);
@@ -130,7 +131,7 @@ struct bitcoin_tx *settle_tx(const tal_t *ctx,
 	struct htlc *dummy_to_local = (struct htlc *)0x01,
 		*dummy_to_remote = (struct htlc *)0x02;
     struct pubkey inner_pubkey;
-    const struct pubkey *pubkey_ptrs[2];
+    const struct pubkey *funding_pubkey_ptrs[2];
     secp256k1_musig_keyagg_cache keyagg_cache;
     /* For non-initial settlement tx, we cannot safely
      * predict prevout, we will rebind this last second,
@@ -141,8 +142,8 @@ struct bitcoin_tx *settle_tx(const tal_t *ctx,
     dummy_update_outpoint.n = 0;
 
    /* For MuSig aggregation for outputs */
-    pubkey_ptrs[0] = &(eltoo_keyset->self_funding_key);
-    pubkey_ptrs[1] = &(eltoo_keyset->other_funding_key);
+    funding_pubkey_ptrs[0] = &(eltoo_keyset->self_funding_key);
+    funding_pubkey_ptrs[1] = &(eltoo_keyset->other_funding_key);
 
     printf("self update key: %s\n", tal_hexstr(ctx, &eltoo_keyset->self_funding_key, 33));
     printf("other update key: %s\n", tal_hexstr(ctx, &eltoo_keyset->other_funding_key, 33));
@@ -152,7 +153,7 @@ struct bitcoin_tx *settle_tx(const tal_t *ctx,
     /* Channel-wide inner public key computed here */
     bipmusig_inner_pubkey(&inner_pubkey,
            &keyagg_cache,
-           pubkey_ptrs,
+           funding_pubkey_ptrs,
            /* n_pubkeys */ 2);
 
 
@@ -270,7 +271,7 @@ struct bitcoin_tx *settle_tx(const tal_t *ctx,
 	 *
 	 *    * `txin[0]` sequence: upper 8 bits are 0x80, lower 24 bits are upper 24 bits of the obscured settlement number
 	 */
-    add_settlement_input(tx, &dummy_update_outpoint, update_outpoint_sats, shared_delay, &inner_pubkey, obscured_update_number, pubkey_ptrs);
+    add_settlement_input(tx, &dummy_update_outpoint, update_outpoint_sats, shared_delay, &inner_pubkey, obscured_update_number, funding_pubkey_ptrs);
 
 	/* Identify the direct outputs (to_us, to_them). */
 	if (direct_outputs != NULL) {

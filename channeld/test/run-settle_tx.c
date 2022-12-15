@@ -825,7 +825,7 @@ static int test_htlc_output_creation(void)
 	assert(memcmp(tap_merkle_root.u.u8, tap_merkle_root_annex.u.u8, sizeof(tap_merkle_root.u.u8)) == 0);
 
     bipmusig_finalize_keys(&agg_pubkey, &keyagg_cache, pubkey_ptrs, /* n_pubkeys */ 1,
-           &tap_merkle_root, tap_tweak_out);
+           &tap_merkle_root, tap_tweak_out, NULL);
     taproot_script = scriptpubkey_p2tr(tmpctx, &agg_pubkey);
     /* Size of OP_1 <tap key> script in hex output*/
     assert(tal_count(taproot_script) == 1+1+32);
@@ -834,6 +834,92 @@ static int test_htlc_output_creation(void)
     printf("Tap hex: %s\n", tap_hex);
     assert(!memcmp(tap_hex, hex_script, tal_count(tap_hex)));
     return 0;
+}
+
+static int test_htlc_output(void)
+{
+	/* Static example that was failing */
+	char success_hex[] = "202dbc0053dd6f3310d84e55eebaacfad53fe3e3ec3c2cecb1cffebdd95fa8063fad82012088a914f66d3a95a552244b5217f8e78c1c14b7a85447de87";
+	u8 success_bytes[100];
+	char timeout_hex[] = "20abc10666592840eb562f2afaedfac56930b4482ec5d8b61b5a4485b383c2cba8ad016db1";
+	u8 timeout_bytes[100];
+	char alice_pubkey_hex[] = "02abc10666592840eb562f2afaedfac56930b4482ec5d8b61b5a4485b383c2cba8";
+	char bob_pubkey_hex[] = "022dbc0053dd6f3310d84e55eebaacfad53fe3e3ec3c2cecb1cffebdd95fa8063f";
+	//char inner_pubkey_hex[] = "034c2ef50ba924c2d69bdb070db119ed4fa8be451a39f272579215820ee55eb518";
+	char tweaked_key_hex[] = "032be81a351ad641050787eb265397054ecb025bf904982505cd5fa3446d95162c";
+	char wiz_tweaked_key_hex[] = "03ffeeefd39b3fe2515b3c4d299b2df3d711cba1c70fdfc33407ae03b1c09ba4f9";
+	struct pubkey alice_pubkey;
+	struct pubkey bob_pubkey;
+	struct pubkey tweaked_key;
+	struct pubkey wiz_tweaked_key;
+
+    u8 *tapleaf_scripts[2];
+    struct sha256 tap_merkle_root;
+	struct pubkey agg_pubkey;
+    secp256k1_musig_keyagg_cache keyagg_cache;
+    secp256k1_musig_keyagg_cache keyagg_cache2;
+    unsigned char tap_tweak_out[32];
+    const struct pubkey * pubkey_ptrs[2];
+	u8 *merkle_root;
+	struct pubkey inner_pubkey;
+	struct pubkey inner_pubkey2;
+
+	pubkey_from_hexstr(alice_pubkey_hex, strlen(alice_pubkey_hex), &alice_pubkey);
+	pubkey_from_hexstr(bob_pubkey_hex, strlen(bob_pubkey_hex), &bob_pubkey);
+	//pubkey_from_hexstr(inner_pubkey_hex, strlen(inner_pubkey_hex), &inner_pubkey);
+	pubkey_from_hexstr(tweaked_key_hex, strlen(tweaked_key_hex), &tweaked_key);
+	pubkey_from_hexstr(wiz_tweaked_key_hex, strlen(wiz_tweaked_key_hex), &wiz_tweaked_key);
+
+
+	printf("Alice key: %s\n",
+		type_to_string(NULL, struct pubkey,
+                    &alice_pubkey));
+
+	printf("Bob key: %s\n",
+		type_to_string(NULL, struct pubkey,
+                    &bob_pubkey));
+
+
+	hex_decode(success_hex, sizeof(success_hex), success_bytes, sizeof(success_bytes));
+	hex_decode(timeout_hex, sizeof(timeout_hex), timeout_bytes, sizeof(timeout_bytes));
+
+
+	/* Compute merkle root*/
+    tapleaf_scripts[0] = tal_dup_arr(NULL, u8, success_bytes, strlen(success_hex)/2, 0);
+    tapleaf_scripts[1] = tal_dup_arr(NULL, u8, timeout_bytes, strlen(timeout_hex)/2, 0);
+	printf("Success script: %s\nTimeout script: %s\n", tal_hex(NULL, tapleaf_scripts[0]), tal_hex(NULL, tapleaf_scripts[1]));
+    compute_taptree_merkle_root(&tap_merkle_root, tapleaf_scripts, /* num_scripts */ 2);
+	merkle_root = tal_dup_arr(NULL, u8, tap_merkle_root.u.u8, sizeof(tap_merkle_root.u.u8), 0);
+
+	printf("Merkle root hash: %s\n", tal_hex(NULL, merkle_root));
+
+	/* Compute final tweaked pubkey */
+	pubkey_ptrs[0] = &alice_pubkey;
+	pubkey_ptrs[1] = &bob_pubkey;
+    bipmusig_finalize_keys(&agg_pubkey, &keyagg_cache, pubkey_ptrs, /* n_pubkeys */ 2,
+           &tap_merkle_root, tap_tweak_out, &inner_pubkey);
+
+	bipmusig_inner_pubkey(&inner_pubkey2, &keyagg_cache2, pubkey_ptrs, 2);
+
+	printf("Inner key: %s\n",
+		type_to_string(NULL, struct pubkey,
+                    &inner_pubkey));
+
+	printf("Inner key 2: %s\n",
+		type_to_string(NULL, struct pubkey,
+                    &inner_pubkey2));
+
+	printf("Final key: %s\n",
+		type_to_string(NULL, struct pubkey,
+                    &agg_pubkey));
+
+	printf("Scriptwiz' key: %s\n",
+		type_to_string(NULL, struct pubkey,
+                    &wiz_tweaked_key));
+
+
+	return 0;
+
 }
 
 int main(int argc, const char *argv[])
@@ -854,6 +940,9 @@ int main(int argc, const char *argv[])
     assert(!err);
 
     err |= test_invalid_update_tx();
+    assert(!err);
+
+    err |= test_htlc_output();
     assert(!err);
 
     printf("Tests succeeded!\n");
