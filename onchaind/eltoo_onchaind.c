@@ -213,8 +213,10 @@ static struct bitcoin_tx *bip340_tx_to_us(const tal_t *ctx,
         tal_count(control_block) +
         1 + /* tapscript size*/
         tal_count(tapscript) +
+		1 + /* elem size */
+		elem_size +
         1 + /* signature size */
-        65 /* BIP340 sig with non-default sighash flag */;
+        64 /* BIP340 sig with default sighash flag */;
 
     /* FIXME elements support */
     max_weight += 0;

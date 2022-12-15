@@ -454,13 +454,13 @@ void sign_tx_taproot_input(const struct bitcoin_tx *tx,
     struct privkey privkey;
 
 	/* FIXME assert sighashes we actually support assert(sighash_type_valid(sighash_type)); */
-	bitcoin_tx_taproot_hash_for_sig(tx, input_index, sighash_type, tapleaf_script, NULL /* annex */,  &hash);
+	bitcoin_tx_taproot_hash_for_sig(tx, input_index, sighash_type, tapleaf_script, NULL /* annex */, &hash);
 
     /* TODO just have it take keypair? */
     ret = secp256k1_keypair_xonly_pub(secp256k1_ctx, &pubkey, NULL /* pk_parity */, key_pair);
     assert(ret);
     x_key.pubkey = pubkey;
-	dump_tx("Signing", tx, input_index, tapleaf_script, NULL /* key */, &x_key, &hash);
+	dump_tx("Signing taproot input:", tx, input_index, tapleaf_script, NULL /* key */, &x_key, &hash);
     ret = secp256k1_keypair_sec(secp256k1_ctx, privkey.secret.data, key_pair);
     assert(ret);
 	bip340_sign_hash(&privkey, &hash, sig);

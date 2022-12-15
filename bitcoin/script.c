@@ -631,8 +631,8 @@ u8 **bitcoin_witness_bip340sig_and_element(const tal_t *ctx,
 
         witness[3] = tal_dup_talarr(witness, u8, control_block);
         witness[2] = tal_dup_talarr(witness, u8, tapscript);
-	    witness[1] = tal_dup_arr(witness, u8, elem, elemsize, 0);
-        witness[0] = stack_bip340sig(witness, sig, SIGHASH_DEFAULT);
+        witness[1] = stack_bip340sig(witness, sig, SIGHASH_DEFAULT);
+	    witness[0] = tal_dup_arr(witness, u8, elem, elemsize, 0);
 
         return witness;
     } else {

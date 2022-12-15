@@ -1746,7 +1746,7 @@ static u8 *handle_sign_eltoo_htlc_tx(struct hsmd_client *c,
 
     sign_tx_taproot_input(htlc_tx,
         0 /* input_index */,
-        SIGHASH_ALL,
+        SIGHASH_DEFAULT,
         tapleaf_script,
         &key_pair,
         &sig);
