@@ -1710,7 +1710,7 @@ static u8 *handle_validate_revocation(struct hsmd_client *c, const u8 *msg_in)
 	return towire_hsmd_validate_revocation_reply(NULL);
 }
 
-/* FIXME: do more introspection*/
+/* FIXME: do more introspection. split functionality */
 static u8 *handle_sign_eltoo_htlc_tx(struct hsmd_client *c,
 					 const u8 *msg_in)
 {
@@ -1725,6 +1725,9 @@ static u8 *handle_sign_eltoo_htlc_tx(struct hsmd_client *c,
     int ret;
 
     if (!fromwire_hsmd_sign_eltoo_htlc_timeout_tx(tmpctx, msg_in,
+                            &htlc_tx,
+                            &tapleaf_script) &&
+		!fromwire_hsmd_sign_eltoo_htlc_success_tx(tmpctx, msg_in,
                             &htlc_tx,
                             &tapleaf_script)) {
         return hsmd_status_malformed_request(c, msg_in);

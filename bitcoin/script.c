@@ -1099,8 +1099,9 @@ void compute_taptree_merkle_root(struct sha256 *hash_out, u8 **scripts, size_t n
     unsigned char tag_hash_buf[1000]; /* Needs to be large enough for HTLC scripts */
     unsigned char tap_hashes[64]; /* To store the leaves for comparison */
 
-    /* Only what's required for eltoo et al for now, sue me */
-    assert(num_scripts <= 2);
+    /* FIXME 2 scripts is broken somehow, use compute_taptree_merkle_root_with_hint instead
+     * Only what's required for eltoo et al for now, sue me */
+    assert(num_scripts == 1 || num_scripts == 2);
     if (num_scripts == 1) {
         size_t script_len = tal_count(scripts[0]);
         unsigned char *p = tag_hash_buf;
@@ -1115,20 +1116,32 @@ void compute_taptree_merkle_root(struct sha256 *hash_out, u8 **scripts, size_t n
         ok = wally_tagged_hash(tag_hash_buf, p - tag_hash_buf, "TapLeaf", hash_out->u.u8);
         assert(ok == WALLY_OK);
     } else if (num_scripts == 2) {
-        int i;
-        for (i=0; i<num_scripts; ++i) {
-            size_t script_len = tal_count(scripts[i]);
-            unsigned char *p = tag_hash_buf;
-            /* Let k0 = hashTapLeaf(v || compact_size(size of s) || s); also call it the tapleaf hash. */
-            p[0] = leaf_version;
-            p++;
-            p += varint_put(p, script_len);
-            memcpy(p, scripts[i], script_len);
-            p += script_len;
+		/* First script */
+		size_t script_len = tal_count(scripts[0]);
+		unsigned char *p = tag_hash_buf;
+		/* Let k0 = hashTapLeaf(v || compact_size(size of s) || s); also call it the tapleaf hash. */
+		p[0] = leaf_version;
+		p++;
+		p += varint_put(p, script_len);
+		memcpy(p, scripts[0], script_len);
+		p += script_len;
 
-            ok = wally_tagged_hash(tag_hash_buf, p - tag_hash_buf, "TapLeaf", tap_hashes + (i*32));
-            assert(ok == WALLY_OK);
-        }
+		ok = wally_tagged_hash(tag_hash_buf, p - tag_hash_buf, "TapLeaf", tap_hashes);
+		assert(ok == WALLY_OK);
+
+		/* Second script */
+		script_len = tal_count(scripts[1]);
+		p = tag_hash_buf;
+		/* Let k0 = hashTapLeaf(v || compact_size(size of s) || s); also call it the tapleaf hash. */
+		p[0] = leaf_version;
+		p++;
+		p += varint_put(p, script_len);
+		memcpy(p, scripts[1], script_len);
+		p += script_len;
+
+		ok = wally_tagged_hash(tag_hash_buf, p - tag_hash_buf, "TapLeaf", tap_hashes + 32);
+		assert(ok == WALLY_OK);
+
         /* If kj ≥ ej: kj+1 = hashTapBranch(ej || kj), swap them*/
         if (memcmp(tap_hashes, tap_hashes + 32, 32) >= 0) {
             memcpy(tag_hash_buf, tap_hashes, 32);

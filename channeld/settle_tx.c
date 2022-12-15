@@ -6,6 +6,7 @@
 #include <common/initial_settlement_tx.h>
 #include <common/keyset.h>
 #include <common/permute_tx.h>
+#include <common/type_to_string.h>
 
 #include <stdio.h>
 
@@ -81,6 +82,8 @@ static void add_eltoo_htlc_out(struct bitcoin_tx *tx,
     compute_taptree_merkle_root(&tap_merkle_root, htlc_scripts, /* num_scripts */ 2);
     bipmusig_finalize_keys(&taproot_pubkey, &keyagg_cache, pubkey_ptrs, /* n_pubkeys */ 2,
            &tap_merkle_root, tap_tweak_out);
+	printf("HTLC tweaked pubkey: %s\n", type_to_string(tmpctx, struct pubkey,
+                    &taproot_pubkey));
     taproot_script = scriptpubkey_p2tr(tx, &taproot_pubkey);
 
 	amount = amount_msat_to_sat_round_down(htlc->amount);

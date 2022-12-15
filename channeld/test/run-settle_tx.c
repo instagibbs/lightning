@@ -774,10 +774,11 @@ static int test_htlc_output_creation(void)
     u8 *htlc_timeout_script;
     u8 *tapleaf_scripts[2];
     u8 *taproot_script;
+	u8 *success_annex;
     /* 0-value hash image */
     struct ripemd160 invoice_hash;
 	memset(invoice_hash.u.u8, 0, sizeof(invoice_hash.u.u8));
-    struct sha256 tap_merkle_root;
+    struct sha256 tap_merkle_root, tap_merkle_root_annex;
     struct pubkey inner_pubkey;
     secp256k1_xonly_pubkey xonly_inner_pubkey;
     unsigned char inner_pubkey_bytes[32];
@@ -814,7 +815,15 @@ static int test_htlc_output_creation(void)
     htlc_timeout_script = make_eltoo_htlc_timeout_script(tmpctx, &settlement_pubkey, 420);
     tapleaf_scripts[0] = htlc_success_script;
     tapleaf_scripts[1] = htlc_timeout_script;
+
+	/* Cross-check merkle root calculations between functions */
     compute_taptree_merkle_root(&tap_merkle_root, tapleaf_scripts, /* num_scripts */ 2);
+	success_annex = make_annex_from_script(tmpctx, htlc_success_script);
+	assert(tal_count(success_annex) == 33); /* TapLeaf hash + annex prefix */
+	assert(success_annex[0] == 0x50);
+	compute_taptree_merkle_root_with_hint(&tap_merkle_root_annex, htlc_timeout_script, success_annex);
+	assert(memcmp(tap_merkle_root.u.u8, tap_merkle_root_annex.u.u8, sizeof(tap_merkle_root.u.u8)) == 0);
+
     bipmusig_finalize_keys(&agg_pubkey, &keyagg_cache, pubkey_ptrs, /* n_pubkeys */ 1,
            &tap_merkle_root, tap_tweak_out);
     taproot_script = scriptpubkey_p2tr(tmpctx, &agg_pubkey);

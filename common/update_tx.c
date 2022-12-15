@@ -24,13 +24,12 @@ int tx_add_state_output(struct bitcoin_tx *update_tx, const struct bitcoin_tx *s
         update_tx, settle_tx->psbt->inputs[0].witness_utxo->script, /* wscript */ NULL, amount /* FIXME pass in psbt fields for tap outputs */);
 }
 
-u8 *make_eltoo_annex(const tal_t *ctx, const struct bitcoin_tx *settle_tx)
+u8 *make_annex_from_script(const tal_t *ctx, const u8 *script)
 {
     int ok;
     struct sha256 result;
     u8 *preimage_cursor;
-    u8 *settle_tapscript = make_eltoo_settle_script(tmpctx, settle_tx, /* input_num */ 0);
-    u64 tapscript_len = tal_count(settle_tapscript);
+    u64 tapscript_len = tal_count(script);
     u8 *tapleaf_preimage = tal_arr(ctx, u8, 1 + varint_size(tapscript_len) + tapscript_len);
     /* Enough space for annex flag plus the one hash we want published */
     u8 *annex = tal_arr(ctx, u8, 1 + sizeof(result.u.u8));
@@ -39,7 +38,7 @@ u8 *make_eltoo_annex(const tal_t *ctx, const struct bitcoin_tx *settle_tx)
     preimage_cursor[0] = 0xC0;
     preimage_cursor++;
     preimage_cursor += varint_put(preimage_cursor, tapscript_len);
-    memcpy(preimage_cursor, settle_tapscript, tapscript_len);
+    memcpy(preimage_cursor, script, tapscript_len);
     preimage_cursor += tapscript_len;
 
     assert(tal_count(tapleaf_preimage) == preimage_cursor - tapleaf_preimage);
@@ -49,6 +48,12 @@ u8 *make_eltoo_annex(const tal_t *ctx, const struct bitcoin_tx *settle_tx)
     annex[0] = 0x50; /* annex flag */
     memcpy(annex + 1, result.u.u8, sizeof(result));
     return annex;
+}
+
+u8 *make_eltoo_annex(const tal_t *ctx, const struct bitcoin_tx *settle_tx)
+{
+    u8 *settle_tapscript = make_eltoo_settle_script(ctx, settle_tx, /* input_num */ 0);
+	return make_annex_from_script(ctx, settle_tapscript);
 }
 
 void tx_add_unbound_input(struct bitcoin_tx *update_tx, struct amount_sat funding_sats, const struct pubkey *inner_pubkey)

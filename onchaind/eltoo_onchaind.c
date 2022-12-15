@@ -172,7 +172,8 @@ static struct bitcoin_tx *bip340_tx_to_us(const tal_t *ctx,
                    const u8 *tapscript,
                    const u8 *control_block,
                    enum eltoo_tx_type *tx_type,
-                   u32 feerate)
+                   u32 feerate,
+                   const void *elem, size_t elem_size)
 {
     struct bitcoin_tx *tx;
     size_t max_weight;
@@ -182,6 +183,14 @@ static struct bitcoin_tx *bip340_tx_to_us(const tal_t *ctx,
     u8 **witness;
     /* Modifying later, we need this at the end for witness construction  */
     enum eltoo_tx_type tx_type_copy = *tx_type;
+
+	status_debug("Making tx of type %s with outputs spk: %s, tapscript: %s, control block: %s, inner pubkey: %s",
+		eltoo_tx_type_name(*tx_type),
+		tal_hex(NULL, out->scriptPubKey),
+		tal_hex(NULL, tapscript),
+		tal_hex(NULL, control_block),
+		type_to_string(NULL, struct pubkey,
+                    &keyset->inner_pubkey));
 
     tx = bitcoin_tx(ctx, chainparams, 1, 1, locktime);
     bitcoin_tx_add_input(tx, &out->outpoint, 0 /* sequence */,
@@ -251,13 +260,9 @@ static struct bitcoin_tx *bip340_tx_to_us(const tal_t *ctx,
                   tal_hex(tmpctx, msg));
     }
 
-    if (tx_type_copy == ELTOO_HTLC_TIMEOUT) {
-        witness = bitcoin_witness_bip340sig_and_element(tx, &sig, NULL /* elem */,
-                          0 /* elemsize */, tapscript, control_block);
-    } else if (tx_type_copy == ELTOO_HTLC_SUCCESS) {
-        witness = bitcoin_witness_bip340sig_and_element(tx, &sig, out->payment_hash.u.u8 /* elem */,
-                          32 /* elemsize */, tapscript, control_block);
-
+    if (tx_type_copy == ELTOO_HTLC_TIMEOUT || tx_type_copy == ELTOO_HTLC_SUCCESS) {
+        witness = bitcoin_witness_bip340sig_and_element(tx, &sig, elem,
+                          elem_size, tapscript, control_block);
     } else {
         /* Should only be called for HTLC resolutions for now */
         abort();
@@ -341,6 +346,7 @@ static const size_t *eltoo_match_htlc_output(const tal_t *ctx,
         unsigned char tap_tweak_out[32];
         u8 *htlc_scripts[2];
         u8 *taproot_script;
+		//u8 *success_annex;
         htlc_scripts[0] = htlc_success_scripts[i];
         htlc_scripts[1] = htlc_timeout_scripts[i];
 
@@ -350,7 +356,9 @@ static const size_t *eltoo_match_htlc_output(const tal_t *ctx,
         if (!htlc_success_scripts[i] || !htlc_timeout_scripts[i])
             continue;
 
-        compute_taptree_merkle_root(&tap_merkle_root, htlc_scripts, /* num_scripts */ 2);
+		compute_taptree_merkle_root(&tap_merkle_root, htlc_scripts, /* num_scripts */ 2);
+		//success_annex = make_annex_from_script(tmpctx, htlc_success_scripts[i]);
+		//compute_taptree_merkle_root_with_hint(&tap_merkle_root_annex, htlc_timeout_scripts[i], success_annex);
         bipmusig_finalize_keys(&taproot_pubkey, &keyagg_cache, pubkey_ptrs, /* n_pubkeys */ 2,
                &tap_merkle_root, tap_tweak_out);
         taproot_script = scriptpubkey_p2tr(ctx, &taproot_pubkey);
@@ -396,7 +404,7 @@ new_tracked_output(struct tracked_output ***outs,
 	out->proposal = NULL;
 	out->resolved = NULL;
 	if (scriptPubKey) 
-		out->scriptPubKey = tal_dup(out, u8, scriptPubKey);
+		out->scriptPubKey = tal_dup_talarr(out, u8, scriptPubKey);
 	if (htlc)
 		out->htlc = *htlc;
 	out->htlc_success_tapscript = tal_steal(out, htlc_success_tapscript);
@@ -537,7 +545,8 @@ static void eltoo_proposal_meets_depth(struct tracked_output *out)
 				out->htlc_timeout_tapscript,
 				compute_control_block(out, out->htlc_success_tapscript /* other_script */, NULL /* annex_hint*/, &keyset->inner_pubkey, out->parity_bit),
 				&out->proposal->tx_type, /* over-written if too small to care */
-				htlc_feerate);
+				htlc_feerate,
+				NULL /* elem */, 0 /* elem_size */);
 		}
 	} else if (out->proposal->tx_type == ELTOO_HTLC_TIMEOUT_TO_THEM) {
 		// Not going to do anything to resolve this proposal here,
@@ -1025,9 +1034,11 @@ static void eltoo_handle_preimage(struct tracked_output **outs,
             outs[i],
             0 /* locktime */,
             outs[i]->htlc_success_tapscript,
-            compute_control_block(outs[i], outs[i]->htlc_success_tapscript /* other_script */, NULL /* annex_hint*/, &keyset->inner_pubkey, outs[i]->parity_bit),
+            compute_control_block(outs[i], outs[i]->htlc_timeout_tapscript /* other_script */, NULL /* annex_hint*/, &keyset->inner_pubkey, outs[i]->parity_bit),
             &tx_type, /* over-written if too small to care */
-            htlc_feerate);
+            htlc_feerate,
+			&preimage,
+			sizeof(preimage));
 
         propose_resolution(outs[i], tx, 0 /* depth_required */, tx_type);
 	}
