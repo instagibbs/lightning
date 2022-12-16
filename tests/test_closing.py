@@ -781,7 +781,7 @@ def test_penalty_outhtlc(node_factory, bitcoind, executor, chainparams, anchors)
 # DEBUG_SUBD=eltoo_onchaind VALGRIND=0 BITCOIND_ELTOO_ARGS=1 BITCOIND_TEST_PATH=/home/greg/bitcoin-dev/bitcoin/src/bitcoind pytest -s tests/test_closing.py -k test_eltoo_outhtlc
 @pytest.mark.developer("needs dev-disable-commit-after")
 def test_eltoo_outhtlc(node_factory, bitcoind, executor, chainparams):
-    """Test penalty transaction with an outgoing HTLC"""
+    """Test HTLC resolution via eltoo_onchaind"""
 
     # We track channel balances, to verify that accounting is ok.
     coin_mvt_plugin = os.path.join(os.getcwd(), 'tests/plugins/coin_movements.py')
@@ -829,17 +829,6 @@ def test_eltoo_outhtlc(node_factory, bitcoind, executor, chainparams):
 
     assert l1_update_tx == l2_update_tx
     assert l1_settle_tx == l2_settle_tx
-
-    # We can't them continue, since we'll end up blowing away old HTLCs (or having to deal with
-    # old state we didn't keep)
-    # l1.rpc.dev_reenable_commit(l2.info['id'])
-
-    # Thread should complete.
-#    t.result(timeout=10)
-
-    # Make sure both sides got revoke_and_ack for final.
-#    l1.daemon.wait_for_log('WIRE_UPDATE_SIGNED_ACK')
-#    l2.daemon.wait_for_log('WIRE_UPDATE_SIGNED_ACK')
 
     # Now we really mess things up!
 
