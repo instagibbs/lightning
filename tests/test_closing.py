@@ -884,19 +884,37 @@ def test_eltoo_outhtlc(node_factory, bitcoind, executor, chainparams):
     from pdb import set_trace
     set_trace()
 
+    winning_tx = bitcoind.rpc.getrawtransaction(bitcoind.rpc.getrawmempool()[0], 1)
+    if len(winning_tx['vin'][0]['txinwitness']) == 4:
+        # Check requires tx to be in mempool to return
+        l1.wait_for_onchaind_broadcast('ELTOO_HTLC_SUCCESS',
+                                   'ELTOO_SETTLE/THEIR_HTLC')
+    else:
+        assert len(winning_tx['vin'][0]['txinwitness']) == 3
+        l2.wait_for_onchaind_broadcast('ELTOO_HTLC_TIMEOUT',
+                                       'ELTOO_SETTLE/OUR_HTLC')
+        # block the stream to allow us to put HTLC to chain
+        # following block post-rebroadcast of SUCCESS
+        bitcoind.rpc.prioritisetransaction(winning_tx['txid'], 0, -100000000)
+        bitcoind.generate_block(1)
+        l1.wait_for_onchaind_broadcast('ELTOO_HTLC_SUCCESS',
+                                   'ELTOO_SETTLE/THEIR_HTLC')
+
+    # Should have SUCCESS
+    while len(bitcoind.rpc.getrawmempool()) != 1:
+        time.sleep(0.1)
+
+    success_tx = bitcoind.rpc.getrawtransaction(bitcoind.rpc.getrawmempool()[0], 1)
+    assert len(success_tx['vin'][0]['txinwitness']) == 4
+
     bitcoind.generate_block(1)
 
-
-    #l1.wait_for_onchaind_broadcast('ELTOO_HTLC_SUCCESS',
-    #                               'ELTOO_SETTLE/THEIR_HTLC')
-    #l2.wait_for_onchaind_broadcast('ELTOO_HTLC_TIMEOUT',
-    #                               'ELTOO_SETTLE/OUR_HTLC')
-
+    # FIXME Check wallet related things, balances
+    # FIXME The mounds of memleaks
     
     # Mine enough blocks to closed out onchaind
     bitcoind.generate_block(99)
 
-    # FIXME Check wallet related things, balances
 
 
 @unittest.skipIf(TEST_NETWORK != 'regtest', 'elementsd doesnt yet support PSBT features we need')
