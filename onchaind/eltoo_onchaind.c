@@ -848,7 +848,7 @@ static void handle_eltoo_htlc_onchain_fulfill(struct tracked_output *out,
         /* BOLTXX
          *   The recipient node can redeem the HTLC with the witness:
          *
-         *      <recipient_settlement_pubkey_signature> <payment_preimage>
+         *      <payment_preimage> <recipient_settlement_pubkey_signature>
          */
 		if (tx_parts->inputs[htlc_outpoint->n]->witness->num_items != 4) /* +2 for script/control block */
 			status_failed(STATUS_FAIL_INTERNAL_ERROR,
@@ -857,8 +857,7 @@ static void handle_eltoo_htlc_onchain_fulfill(struct tracked_output *out,
 				      output_type_name(out->output_type),
 				      tx_parts->inputs[htlc_outpoint->n]->witness->num_items);
 
-        /* FIXME figure out proper index */
-		preimage_item = &tx_parts->inputs[htlc_outpoint->n]->witness->items[1];
+		preimage_item = &tx_parts->inputs[htlc_outpoint->n]->witness->items[0];
 	} else
 		status_failed(STATUS_FAIL_INTERNAL_ERROR,
 			      "onchain_fulfill for %s/%s?",

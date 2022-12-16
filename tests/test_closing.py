@@ -849,17 +849,16 @@ def test_eltoo_outhtlc(node_factory, bitcoind, executor, chainparams):
     bitcoind.rpc.prioritisetransaction(l1_update_details["txid"], 0, 100000000)
     bitcoind.rpc.prioritisetransaction(l1_settle_details["txid"], 0, 100000000)
     bitcoind.rpc.sendrawtransaction(l1_update_tx)
+
     # Mine and mature the update tx
     bitcoind.generate_block(6)
-
-    from pdb import set_trace
-    set_trace()
 
     # Symmetrical transactions(!), symmetrical state, mostly
     l1.daemon.wait_for_log(' to ONCHAIN')
     l2.daemon.wait_for_log(' to ONCHAIN')
 
-    needle = l2.daemon.logsearch_start
+    needle_1 = l1.daemon.logsearch_start
+    needle_2 = l2.daemon.logsearch_start
 
     # The settle transaction should hit the mempool for both!
     l1.wait_for_onchaind_broadcast('ELTOO_SETTLE',
@@ -869,87 +868,35 @@ def test_eltoo_outhtlc(node_factory, bitcoind, executor, chainparams):
 
     # Mine it, then we should see HTLC resolution hit the mempool by the receiver
     # since timeout hasn't occured yet, as well as a timeout tx after X blocks
+    assert len(bitcoind.rpc.getrawmempool()) == 1
+    bitcoind.generate_block(1)
+    assert len(bitcoind.rpc.getrawmempool()) == 0
+
+    while len(bitcoind.rpc.getrawmempool()) != 1:
+        time.sleep(0.1)
+
+    # Right now this test is racey, we don't know which tx
+    # will be mined. Probably can take first in mempool
+    # check what kind it is, run the proper test
+    # censor it, mine a block to have it RBF'd
+    # and check the other tx out
+
+    from pdb import set_trace
+    set_trace()
+
     bitcoind.generate_block(1)
 
 
-    l1.wait_for_onchaind_broadcast('ELTOO_HTLC_SUCCESS',
-                                   'ELTOO_SETTLE/THEIR_HTLC')
+    #l1.wait_for_onchaind_broadcast('ELTOO_HTLC_SUCCESS',
+    #                               'ELTOO_SETTLE/THEIR_HTLC')
+    #l2.wait_for_onchaind_broadcast('ELTOO_HTLC_TIMEOUT',
+    #                               'ELTOO_SETTLE/OUR_HTLC')
 
-    # Brings its own fees, no CPFP required
-    l2.wait_for_onchaind_broadcast('ELTOO_HTLC_TIMEOUT',
-                                   'ELTOO_SETTLE/OUR_HTLC')
+    
+    # Mine enough blocks to closed out onchaind
+    bitcoind.generate_block(99)
 
-    # Now that fulfillment is in mempool, we can censor it
-
-    # Then mine blocks until HTLC timeout path can be taken by offerer
-
-    # Timeout should knock out the censored fulfillment tx
-
-    # 100 blocks later, all resolved
-
-    return
-
-    l2.daemon.logsearch_start = needle
-    l2.wait_for_onchaind_broadcast('OUR_PENALTY_TX',
-                                   'THEIR_REVOKED_UNILATERAL/OUR_HTLC')
-
-    l2.daemon.logsearch_start = needle
-    l2.daemon.wait_for_log('Ignoring output.*: THEIR_REVOKED_UNILATERAL/OUTPUT_TO_US')
-
-    # FIXME: test HTLC tx race!
-
-    # 100 blocks later, all resolved.
-    bitcoind.generate_block(100)
-
-    sync_blockheight(bitcoind, [l1, l2])
-    wait_for(lambda: len(l2.rpc.listpeers()['peers']) == 0)
-
-    # Do one last pass over the logs to extract the reactions l2 sent
-    l2.daemon.logsearch_start = needle
-    needles = [
-        r'Resolved FUNDING_TRANSACTION/FUNDING_OUTPUT by THEIR_REVOKED_UNILATERAL .([a-f0-9]{64}).',
-        r'Resolved THEIR_REVOKED_UNILATERAL/DELAYED_CHEAT_OUTPUT_TO_THEM by our proposal OUR_PENALTY_TX .([a-f0-9]{64}).',
-        r'Resolved THEIR_REVOKED_UNILATERAL/OUR_HTLC by our proposal OUR_PENALTY_TX .([a-f0-9]{64}).',
-    ]
-    matches = list(map(l2.daemon.is_in_log, needles))
-
-    # Now extract the txids for these responses
-    txids = set([re.search(r'\(([0-9a-f]{64})\)', m).group(1) for m in matches])
-
-    # We should have one confirmed output for each of the above reactions in
-    # the list of funds we own.
-    outputs = l2.rpc.listfunds()['outputs']
-
-    assert [o['status'] for o in outputs] == ['confirmed'] * 3
-    assert set([o['txid'] for o in outputs]) == txids
-    assert account_balance(l1, channel_id) == 0
-    assert account_balance(l2, channel_id) == 0
-
-    # l1 loses all of their channel balance to the peer, as penalties
-    expected_1 = {
-        '0': [('wallet', ['deposit'], ['withdrawal'], 'A')],
-        'A': [('wallet', ['deposit'], None, None), ('cid1', ['channel_open', 'opener'], ['channel_close'], 'B')],
-        'B': [('external', ['penalty'], None, None), ('external', ['penalty'], None, None), ('external', ['penalty'], None, None)],
-    }
-
-    # l2 sweeps all of l1's closing outputs
-    expected_2 = {
-        'A': [('cid1', ['channel_open'], ['channel_close'], 'B')],
-        'B': [('wallet', ['deposit'], None, None), ('cid1', ['penalty'], ['to_wallet'], 'C'), ('cid1', ['penalty'], ['to_wallet'], 'D')],
-        'C': [('wallet', ['deposit'], None, None)],
-        'D': [('wallet', ['deposit'], None, None)]
-    }
-
-    if anchor_expected():
-        expected_1['B'].append(('external', ['anchor'], None, None))
-        expected_2['B'].append(('external', ['anchor'], None, None))
-        expected_1['B'].append(('wallet', ['anchor'], None, None))
-        expected_2['B'].append(('wallet', ['anchor'], None, None))
-
-    # We use a subset of tags in expected_2 that are used in expected_1
-    tags = check_utxos_channel(l1, [channel_id], expected_1)
-    check_utxos_channel(l2, [channel_id], expected_2, tags)
-
+    # FIXME Check wallet related things, balances
 
 
 @unittest.skipIf(TEST_NETWORK != 'regtest', 'elementsd doesnt yet support PSBT features we need')

@@ -1520,7 +1520,7 @@ class LightningNode(object):
         """Wait for onchaind to drop tx name to resolve (if any)"""
         if resolve:
             r = self.daemon.wait_for_log('Broadcasting {} .* to resolve {}'
-                                         .format(name, resolve))
+                                         .format(name, resolve, 1))
         else:
             r = self.daemon.wait_for_log('Broadcasting {} .* to resolve '
                                          .format(name))
