@@ -881,9 +881,6 @@ def test_eltoo_outhtlc(node_factory, bitcoind, executor, chainparams):
     # censor it, mine a block to have it RBF'd
     # and check the other tx out
 
-    from pdb import set_trace
-    set_trace()
-
     winning_tx = bitcoind.rpc.getrawtransaction(bitcoind.rpc.getrawmempool()[0], 1)
     if len(winning_tx['vin'][0]['txinwitness']) == 4:
         # Check requires tx to be in mempool to return
