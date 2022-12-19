@@ -782,8 +782,6 @@ def test_eltoo_unannounced_hop(node_factory, bitcoind):
     # Make three nodes, two private channels
     l1, l2, l3 = node_factory.line_graph(3,
                                      opts=[{}, {}, {}], announce_channels=False) # Channel announcement unsupported, doing private hops)
-    channel_id = first_channel_id(l1, l2)
-    channel_id = first_channel_id(l1, l2)
 
     # l1 can pay l2
     l1.pay(l2, 100000*SAT)
