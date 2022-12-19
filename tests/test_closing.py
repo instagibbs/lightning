@@ -879,10 +879,7 @@ def test_eltoo_htlc(node_factory, bitcoind, executor, chainparams):
 
     bitcoind.generate_block(1)
 
-    # Wait until known tx is swapped out via RBF
-    wait_for(lambda: bitcoind.rpc.getrawmempool() != [timeout_tx['txid']])
-
-    # Now that it's in mempool, do the log/pool check
+    # Should hit mempool; do the log/pool check
     l1.wait_for_onchaind_broadcast('ELTOO_HTLC_SUCCESS',
                                'ELTOO_SETTLE/THEIR_HTLC')
 
