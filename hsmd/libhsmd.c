@@ -8,6 +8,7 @@
 #include <common/hash_u5.h>
 #include <common/key_derive.h>
 #include <common/lease_rates.h>
+#include <common/memleak.h>
 #include <common/pseudorand.h>
 #include <common/type_to_string.h>
 #include <common/update_tx.h>
@@ -836,9 +837,10 @@ static u8 *handle_gen_nonce(struct hsmd_client *c,
 	if (!fromwire_hsmd_gen_nonce(msg_in, &channel_id))
 		return hsmd_status_malformed_request(c, msg_in);
 
-	/* FIXME Saw a strange memleak race, fix this reasoning */
     /* Shouldn't need to be freed, aside from channel teardown */
     new_musig_state = tal(NULL, struct musig_state);
+	/* FIXME this will allow leaks... let's free the map before shutdown somehow */
+	tal_steal(NULL, notleak(new_musig_state));
     new_musig_state->channel_id = channel_id;
 
     /* Generate privkey for additional nonce entropy */
