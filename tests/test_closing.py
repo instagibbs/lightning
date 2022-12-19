@@ -20,7 +20,6 @@ import pytest
 import re
 import subprocess
 import threading
-import time
 import unittest
 
 # In msats
@@ -778,9 +777,9 @@ def test_penalty_outhtlc(node_factory, bitcoind, executor, chainparams, anchors)
     check_utxos_channel(l2, [channel_id], expected_2, tags)
 
 # Example flags to run test
-# DEBUG_SUBD=eltoo_onchaind VALGRIND=0 BITCOIND_ELTOO_ARGS=1 BITCOIND_TEST_PATH=/home/greg/bitcoin-dev/bitcoin/src/bitcoind pytest -s tests/test_closing.py -k test_eltoo_outhtlc
+# DEBUG_SUBD=eltoo_onchaind VALGRIND=0 BITCOIND_ELTOO_ARGS=1 BITCOIND_TEST_PATH=/home/greg/bitcoin-dev/bitcoin/src/bitcoind pytest -s tests/test_closing.py -k test_eltoo_htlc
 @pytest.mark.developer("needs dev-disable-commit-after")
-def test_eltoo_outhtlc(node_factory, bitcoind, executor, chainparams):
+def test_eltoo_htlc(node_factory, bitcoind, executor, chainparams):
     """Test HTLC resolution via eltoo_onchaind"""
 
     # We track channel balances, to verify that accounting is ok.
@@ -855,40 +854,37 @@ def test_eltoo_outhtlc(node_factory, bitcoind, executor, chainparams):
     l2.wait_for_onchaind_broadcast('ELTOO_SETTLE',
                                    'ELTOO_UPDATE/DELAYED_OUTPUT_TO_US')
 
-    # Mine it, then we should see HTLC resolution hit the mempool by the receiver
-    # since timeout hasn't occured yet, as well as a timeout tx after X blocks
     assert len(bitcoind.rpc.getrawmempool()) == 1
+
+    # We're going to disable transaction relay for the SUCCESS transaction
+    # To allow us to test broadcast of one transaction at a time
+    def censoring_sendrawtx(r):
+        return {'id': r['id'], 'result': {}}
+
+    l1.daemon.rpcproxy.mock_rpc('sendrawtransaction', censoring_sendrawtx)
+
+    # Mine settle tx, then we should see HTLC timeout resolution hit the mempool by the receiver
     bitcoind.generate_block(1)
-    assert len(bitcoind.rpc.getrawmempool()) == 0
 
-    while len(bitcoind.rpc.getrawmempool()) != 1:
-        time.sleep(0.1)
+    wait_for(lambda: len(bitcoind.rpc.getrawmempool()) == 1)
 
-    # Right now this test is racey, we don't know which tx
-    # will be mined. Probably can take first in mempool
-    # check what kind it is, run the proper test
-    # censor it, mine a block to have it RBF'd
-    # and check the other tx out
+    timeout_tx = bitcoind.rpc.getrawtransaction(bitcoind.rpc.getrawmempool()[0], 1)
+    assert len(timeout_tx['vin'][0]['txinwitness']) == 3
+    l2.wait_for_onchaind_broadcast('ELTOO_HTLC_TIMEOUT',
+                                   'ELTOO_SETTLE/OUR_HTLC')
+    # Stop mining of tx for this next block
+    bitcoind.rpc.prioritisetransaction(timeout_tx['txid'], 0, -100000000)
+    # Allow SUCCESS tx to hit mempool next block
+    l1.daemon.rpcproxy.mock_rpc('sendrawtransaction', None)
 
-    winning_tx = bitcoind.rpc.getrawtransaction(bitcoind.rpc.getrawmempool()[0], 1)
-    if len(winning_tx['vin'][0]['txinwitness']) == 4:
-        # Check requires tx to be in mempool to return
-        l1.wait_for_onchaind_broadcast('ELTOO_HTLC_SUCCESS',
-                                   'ELTOO_SETTLE/THEIR_HTLC')
-    else:
-        assert len(winning_tx['vin'][0]['txinwitness']) == 3
-        l2.wait_for_onchaind_broadcast('ELTOO_HTLC_TIMEOUT',
-                                       'ELTOO_SETTLE/OUR_HTLC')
-        # block the stream to allow us to put HTLC to chain
-        # following block post-rebroadcast of SUCCESS
-        bitcoind.rpc.prioritisetransaction(winning_tx['txid'], 0, -100000000)
-        bitcoind.generate_block(1)
-        l1.wait_for_onchaind_broadcast('ELTOO_HTLC_SUCCESS',
-                                   'ELTOO_SETTLE/THEIR_HTLC')
+    bitcoind.generate_block(1)
 
-    # Should have SUCCESS
-    while len(bitcoind.rpc.getrawmempool()) != 1:
-        time.sleep(0.1)
+    # Wait until known tx is swapped out via RBF
+    wait_for(lambda: bitcoind.rpc.getrawmempool() != [timeout_tx['txid']])
+
+    # Now that it's in mempool, do the log/pool check
+    l1.wait_for_onchaind_broadcast('ELTOO_HTLC_SUCCESS',
+                               'ELTOO_SETTLE/THEIR_HTLC')
 
     success_tx = bitcoind.rpc.getrawtransaction(bitcoind.rpc.getrawmempool()[0], 1)
     assert len(success_tx['vin'][0]['txinwitness']) == 4
@@ -900,8 +896,8 @@ def test_eltoo_outhtlc(node_factory, bitcoind, executor, chainparams):
     
     # Mine enough blocks to closed out onchaind
     bitcoind.generate_block(99)
-
-
+    l1.daemon.wait_for_log('onchaind complete, forgetting peer')
+    l2.daemon.wait_for_log('onchaind complete, forgetting peer')
 
 @unittest.skipIf(TEST_NETWORK != 'regtest', 'elementsd doesnt yet support PSBT features we need')
 @pytest.mark.openchannel('v2')
