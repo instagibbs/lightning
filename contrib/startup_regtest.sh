@@ -148,6 +148,7 @@ start_ln() {
 	echo "	bt-cli, stop_ln"
 }
 
+# These two scenarios are now covered in black box testing
 onchain_ln() {
     # Test eltoo_onchaind handling
     l1addr=$(l1-cli newaddr | jq -r .bech32)

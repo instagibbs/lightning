@@ -776,11 +776,36 @@ def test_penalty_outhtlc(node_factory, bitcoind, executor, chainparams, anchors)
     tags = check_utxos_channel(l1, [channel_id], expected_1)
     check_utxos_channel(l2, [channel_id], expected_2, tags)
 
+def test_eltoo_unannounced_hop(node_factory, bitcoind):
+    """Test eltoo payments work over hops"""
+
+    # Make three nodes, two private channels
+    l1, l2, l3 = node_factory.line_graph(3,
+                                     opts=[{}, {}, {}], announce_channels=False) # Channel announcement unsupported, doing private hops)
+    channel_id = first_channel_id(l1, l2)
+    channel_id = first_channel_id(l1, l2)
+
+    # l1 can pay l2
+    l1.pay(l2, 100000*SAT)
+
+    # l2 can pay back l1
+    l1.pay(l2, 5000*SAT)
+
+    # l2 can pay l3
+    l2.pay(l3, 200000*SAT)
+
+    # With proper hints exposed,
+    # l1 can pay l3
+    scid = l3.rpc.listchannels()['channels'][0]['short_channel_id']
+    invoice = l3.rpc.invoice(msatoshi=10000, label='hop', description='test', exposeprivatechannels=scid)
+    l1.rpc.pay(invoice['bolt11'])
+    wait_for(lambda: l3.rpc.listpeers()['peers'][0]['channels'][0]['in_fulfilled_msat'] == Millisatoshi(200010000))
+
 # Example flags to run test
 # DEBUG_SUBD=eltoo_onchaind VALGRIND=0 BITCOIND_ELTOO_ARGS=1 BITCOIND_TEST_PATH=/home/greg/bitcoin-dev/bitcoin/src/bitcoind pytest -s tests/test_closing.py -k test_eltoo_htlc
 @pytest.mark.developer("needs dev-disable-commit-after")
 def test_eltoo_htlc(node_factory, bitcoind, executor, chainparams):
-    """Test HTLC resolution via eltoo_onchaind"""
+    """Test HTLC resolution via eltoo_onchaind after a single successful payment"""
 
     # We track channel balances, to verify that accounting is ok.
     coin_mvt_plugin = os.path.join(os.getcwd(), 'tests/plugins/coin_movements.py')
