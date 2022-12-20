@@ -125,6 +125,10 @@ struct eltoo_peer {
 	bool stfu_sent[NUM_SIDES];
 	/* Updates master asked, which we've deferred while quiescing */
 	struct msg_queue *update_queue;
+	/* Who's turn is it? */
+    enum side turn;
+    /* Can we yield? i.e. have we not yet sent updates during our turn? (or not our turn at all) */
+    bool can_yield;
 #endif
 
 #if DEVELOPER
@@ -271,14 +275,30 @@ static void handle_stfu(struct eltoo_peer *peer, const u8 *stfu)
 	maybe_send_stfu(peer);
 }
 
+static bool is_our_turn(const struct eltoo_peer *peer)
+{
+    return peer->turn == LOCAL;
+}
+
 /* Returns true if we queued this for later handling (steals if true) */
 static bool handle_master_request_later(struct eltoo_peer *peer, const u8 *msg)
 {
 	if (peer->stfu) {
+		status_debug("queueing master update for later...");
 		msg_enqueue(peer->update_queue, take(msg));
 		return true;
-	}
-	return false;
+    } else if (!is_our_turn(peer)) {
+        /* We use a noop update to request they yield once,
+        then only queue up later messages while waiting. */
+        if (msg_queue_length(peer->update_queue) == 0) {
+            u8 *noop = towire_update_noop(NULL, &peer->channel_id);
+            peer_write(peer->pps, take(noop));
+        }
+        status_debug("queueing master update for later turn...");
+        msg_enqueue(peer->update_queue, take(msg));
+        return true;
+    }
+    return false;
 }
 
 #else /* !EXPERIMENTAL_FEATURES */
@@ -770,6 +790,14 @@ static u8 *master_wait_sync_reply(const tal_t *ctx,
 	return reply;
 }
 
+static void change_turn(struct eltoo_peer *peer, enum side turn)
+{
+    assert(peer->turn == !turn);
+    peer->turn = turn;
+    peer->can_yield = true;
+    status_debug("turn is now %s", side_to_str(turn));
+}
+
 static void send_update(struct eltoo_peer *peer)
 {
 	u8 *msg;
@@ -913,6 +941,8 @@ static void send_update(struct eltoo_peer *peer)
 	status_debug("Sending update_sig");
 
 	peer->next_index++;
+	/* Cannot yield after sending an update */
+	peer->can_yield = false;
 
 	msg = towire_update_signed(NULL, &peer->channel_id,
 				       &peer->channel->eltoo_keyset.last_committed_state.self_psig,
@@ -920,6 +950,17 @@ static void send_update(struct eltoo_peer *peer)
 	peer_write(peer->pps, take(msg));
 
 	maybe_send_shutdown(peer);
+
+	/*
+	 * - MUST give up its turn when:
+     * - sending `update_signed`
+	 */
+	if (is_our_turn(peer)){
+		change_turn(peer, REMOTE);
+	} else {
+		/* We are not doing optimistic updates */
+		status_broken("We're proposing updates out of turn?");
+	}
 
 	/* Timer now considered expired, you can add a new one. */
 	peer->commit_timer = NULL;
@@ -1175,6 +1216,16 @@ static void handle_peer_update_sig(struct eltoo_peer *peer, const u8 *msg)
     if (!channel_sending_sign_ack(peer->channel, &changed_htlcs)) {
         status_debug("Failed to increment HTLC state after sending ACK...");
     }*/
+
+	/*
+  	 * - MUST accept its turn when:
+     * - receiving `update_signed`
+	 */
+	if (!is_our_turn(peer)) {
+		change_turn(peer, LOCAL);
+	} else {
+		status_broken("We are processing remote's update during our turn?");
+	}
 
     /* Tell master about this exchange, then the peer.
        Note: We do not persist nonces, as they will not outlive
@@ -1534,6 +1585,90 @@ static void handle_unexpected_reestablish(struct eltoo_peer *peer, const u8 *msg
 				       &channel_id));
 }
 
+/* Simplified Update machinery starts */
+
+static bool allow_their_turn(struct eltoo_peer *peer)
+{
+    /* BOLT-option_simplified_update #2:
+     *
+     * - During this node's turn:
+     *     - if it receives an update message:
+     *       - if it has sent its own update:
+     *         - MUST ignore the message
+     *       - otherwise:
+     *         - MUST reply with `yield` and process the message.
+     */
+    if (peer->turn == REMOTE)
+        return true;
+
+    if (peer->turn == LOCAL && peer->can_yield) {
+        peer_write(peer->pps,
+                  take(towire_yield(NULL,
+                            &peer->channel_id)));
+        /* BOLT-option_simplified_update #2:
+         *  - MUST give up its turn when:
+         *...
+         *    - sending a `yield`
+         */
+        change_turn(peer, REMOTE);
+        return true;
+    }
+
+    /* Sorry, we've already sent updates. */
+    status_debug("Sorry, ignoring your message");
+    return false;
+}
+
+static void handle_yield(struct eltoo_peer *peer, const u8 *yield)
+{
+    struct channel_id channel_id;
+
+    if (!fromwire_yield(yield, &channel_id))
+        peer_failed_warn(peer->pps, &peer->channel_id,
+                 "Bad yield %s", tal_hex(peer, yield));
+
+    /* is this lightningd's fault? */
+    if (!channel_id_eq(&channel_id, &peer->channel_id)) {
+        peer_failed_err(peer->pps, &channel_id,
+                "Wrong yield channel_id: expected %s, got %s",
+                type_to_string(tmpctx, struct channel_id,
+                           &peer->channel_id),
+                type_to_string(tmpctx, struct channel_id,
+                           &channel_id));
+    }
+
+    /* Sanity check; change_turn assumes this has been caught */
+    if (is_our_turn(peer)) {
+        peer_failed_err(peer->pps, &channel_id,
+                "yield when it's not your turn!");
+    }
+
+    /* BOLT-option_simplified_update #2:
+     * - MUST accept its turn when:
+     *     - receiving `revoke_and_ack`
+     *     - receiving a `yield`
+     */
+    change_turn(peer, LOCAL);
+
+    /* That will unplug the dequeue from update_queue */
+}
+
+static bool modifies_channel_tx_or_nop(enum peer_wire type)
+{
+    switch (type) {
+    case WIRE_UPDATE_ADD_HTLC:
+    case WIRE_UPDATE_FULFILL_HTLC:
+    case WIRE_UPDATE_FAIL_HTLC:
+    case WIRE_UPDATE_FAIL_MALFORMED_HTLC:
+    case WIRE_UPDATE_NOOP:
+        return true;
+    default:
+        return false;
+    };
+}
+
+/* Simplified Update machinery ends */
+
 static void peer_in(struct eltoo_peer *peer, const u8 *msg)
 {
 	enum peer_wire type = fromwire_peektype(msg);
@@ -1555,6 +1690,14 @@ static void peer_in(struct eltoo_peer *peer, const u8 *msg)
 					 peer_wire_name(type), type);
 		}
 	}
+
+    /* Early return from messages we will not service.
+        This will send off a yield message as
+        appropriate when it's our turn and are willing
+        to service it. */
+    if (modifies_channel_tx_or_nop(type) && !allow_their_turn(peer)) {
+        return;
+    }
 
 	switch (type) {
 	case WIRE_FUNDING_LOCKED_ELTOO:
@@ -1597,10 +1740,14 @@ static void peer_in(struct eltoo_peer *peer, const u8 *msg)
 	case WIRE_SHUTDOWN:
 		handle_peer_shutdown(peer, msg);
 		return;
-    /* FIXME below */
     case WIRE_UPDATE_NOOP:
+		/* 
+		 *- if it received `update_noop`:
+		 * - MUST otherwise ignore the message
+		 */
+		return;
     case WIRE_YIELD:
-        /* FIXME handle these messages */
+		handle_yield(peer, msg);
         return;
 
 #if EXPERIMENTAL_FEATURES
@@ -1687,12 +1834,14 @@ static void send_fail_or_fulfill(struct eltoo_peer *peer, const struct htlc *h)
 				 "HTLC %"PRIu64" state %s not failed/fulfilled",
 				 h->id, htlc_state_name(h->state));
 	peer_write(peer->pps, take(msg));
+	peer->can_yield = false;
 }
 
 /* FIXME Reconnect fun! Let's compile first. :) */
 static void peer_reconnect(struct eltoo_peer *peer,
 			   bool reestablish_only)
 {
+	/* Need to determine who's turn it is here */
 }
 
 /* ignores the funding_depth unless depth >= minimum_depth
@@ -1808,6 +1957,7 @@ static void handle_offer_htlc(struct eltoo_peer *peer, const u8 *inmsg)
 						      0, "");
 		wire_sync_write(MASTER_FD, take(msg));
 		peer->htlc_id++;
+		peer->can_yield = false;
 		return;
 	case CHANNEL_ERR_INVALID_EXPIRY:
 		failwiremsg = towire_incorrect_cltv_expiry(inmsg, cltv_expiry, get_cupdate(peer));
@@ -2328,11 +2478,17 @@ static void init_channel(struct eltoo_peer *peer)
 	/* from now we need keep watch over WIRE_CHANNELD_FUNDING_DEPTH */
 	peer->depth_togo = minimum_depth;
 
+	/* We don't send updates out of turn so this is always true */
+	peer->can_yield = true;
+
 	/* OK, now we can process peer messages. */
 	if (reconnected)
 		peer_reconnect(peer, reestablish_only);
-	else
+	else {
 		assert(!reestablish_only);
+		peer->turn = 
+			node_id_cmp(&(peer->node_ids[LOCAL]), &(peer->node_ids[REMOTE])) < 0 ? LOCAL : REMOTE;
+	}
 
 	/* If we have a messages to send, send them immediately */
 	if (fwd_msg)
@@ -2371,6 +2527,7 @@ int main(int argc, char *argv[])
 	peer->stfu = false;
 	peer->stfu_sent[LOCAL] = peer->stfu_sent[REMOTE] = false;
 	peer->update_queue = msg_queue_new(peer, false);
+	/* peer->our_turn is decided in init_channel */
 #endif
 
 	/* We send these to HSM to get real signatures; don't have valgrind
@@ -2407,7 +2564,7 @@ int main(int argc, char *argv[])
 		/* Free any temporary allocations */
 		clean_tmpctx();
 
-		/* For simplicity, we process one event at a time. */
+		/* For simplicity, we process one event from master at a time. */
 		msg = msg_dequeue(peer->from_master);
 		if (msg) {
 			status_debug("Now dealing with deferred %s",
@@ -2417,6 +2574,19 @@ int main(int argc, char *argv[])
 			tal_free(msg);
 			continue;
 		}
+
+        /* And one at a time from peers */
+        if (!peer->stfu && is_our_turn(peer)
+            && (msg = msg_dequeue(peer->update_queue))) {
+            status_debug("Now dealing with deferred update %s",
+                     channeld_wire_name(
+                         fromwire_peektype(msg)));
+            req_in(peer, msg);
+            tal_free(msg);
+            continue;
+        } else if (msg_queue_length(peer->update_queue)) {
+            status_debug("Ignoring deferred updates...");
+        }
 
 		expired = timers_expire(&peer->timers, now);
 		if (expired) {
