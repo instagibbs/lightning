@@ -185,6 +185,20 @@ static void billboard_update(const struct eltoo_peer *peer)
 	peer_billboard(false, update);
 }
 
+/* Moves state in lockstep */
+static void migrate_committed_to_complete(struct eltoo_peer *peer)
+{
+    peer->channel->eltoo_keyset.last_complete_state = peer->channel->eltoo_keyset.last_committed_state;
+    tal_free(peer->channel->eltoo_keyset.complete_update_tx);
+    tal_free(peer->channel->eltoo_keyset.complete_settle_tx);
+	peer->channel->eltoo_keyset.complete_update_tx =
+		tal_steal(peer->channel, peer->channel->eltoo_keyset.committed_update_tx);
+	peer->channel->eltoo_keyset.complete_settle_tx =
+		tal_steal(peer->channel, peer->channel->eltoo_keyset.committed_settle_tx);
+	peer->channel->eltoo_keyset.committed_update_tx = NULL;
+	peer->channel->eltoo_keyset.committed_settle_tx = NULL;
+}
+
 const u8 *hsm_req(const tal_t *ctx, const u8 *req TAKES)
 {
 	u8 *msg;
@@ -1142,19 +1156,25 @@ static void handle_peer_update_sig(struct eltoo_peer *peer, const u8 *msg)
 			peer->channel,
 			peer->next_index, LOCAL);
 
+	/* Put into committed stated until we promptly sign ourselves */
+	tal_free(peer->channel->eltoo_keyset.committed_update_tx);
+	tal_free(peer->channel->eltoo_keyset.committed_settle_tx);
+	peer->channel->eltoo_keyset.committed_update_tx = tal_steal(peer->channel, update_and_settle_txs[0]);
+	peer->channel->eltoo_keyset.committed_settle_tx = tal_steal(peer->channel, update_and_settle_txs[1]);
+
     /* We sign the same update transaction as peer should have signed */
     msg = towire_hsmd_psign_update_tx(NULL,
                            &peer->channel_id,
-                           update_and_settle_txs[0],
-                           update_and_settle_txs[1],
+                           peer->channel->eltoo_keyset.committed_update_tx,
+                           peer->channel->eltoo_keyset.committed_settle_tx,
                            &peer->channel->eltoo_keyset.other_funding_key,
                            &peer->channel->eltoo_keyset.other_next_nonce,
                            &peer->channel->eltoo_keyset.self_next_nonce);
 
     status_debug("partial signature req %s on update tx %s, settle tx %s, using our key %s, their key %s, inner pubkey %s, OLD our nonce %s, OLD their nonce %s",
              type_to_string(tmpctx, struct partial_sig, &peer->channel->eltoo_keyset.last_committed_state.self_psig),
-             type_to_string(tmpctx, struct bitcoin_tx, update_and_settle_txs[0]),
-             type_to_string(tmpctx, struct bitcoin_tx, update_and_settle_txs[1]),
+             type_to_string(tmpctx, struct bitcoin_tx, peer->channel->eltoo_keyset.committed_update_tx),
+             type_to_string(tmpctx, struct bitcoin_tx, peer->channel->eltoo_keyset.committed_settle_tx),
              type_to_string(tmpctx, struct pubkey,
                     &peer->channel->eltoo_keyset.self_funding_key),
              type_to_string(tmpctx, struct pubkey,
@@ -1178,8 +1198,8 @@ static void handle_peer_update_sig(struct eltoo_peer *peer, const u8 *msg)
     status_debug("partial signature combine our_psig %s their_psig %s on update tx %s, settle tx %s, using our key %s, their key %s, inner pubkey %s, NEW our nonce %s, NEW their nonce %s, session %s",
              type_to_string(tmpctx, struct partial_sig, &peer->channel->eltoo_keyset.last_committed_state.self_psig),
              type_to_string(tmpctx, struct partial_sig, &peer->channel->eltoo_keyset.last_committed_state.other_psig),
-             type_to_string(tmpctx, struct bitcoin_tx, update_and_settle_txs[0]),
-             type_to_string(tmpctx, struct bitcoin_tx, update_and_settle_txs[1]),
+             type_to_string(tmpctx, struct bitcoin_tx, peer->channel->eltoo_keyset.committed_update_tx),
+             type_to_string(tmpctx, struct bitcoin_tx, peer->channel->eltoo_keyset.committed_settle_tx),
              type_to_string(tmpctx, struct pubkey,
                     &peer->channel->eltoo_keyset.self_funding_key),
              type_to_string(tmpctx, struct pubkey,
@@ -1198,8 +1218,8 @@ static void handle_peer_update_sig(struct eltoo_peer *peer, const u8 *msg)
                             &peer->channel->eltoo_keyset.last_committed_state.self_psig,
                             &peer->channel->eltoo_keyset.last_committed_state.other_psig,
                             &peer->channel->eltoo_keyset.last_committed_state.session,
-                            update_and_settle_txs[0],
-                            update_and_settle_txs[1],
+                            peer->channel->eltoo_keyset.committed_update_tx,
+                            peer->channel->eltoo_keyset.committed_settle_tx,
                             &peer->channel->eltoo_keyset.inner_pubkey);
     wire_sync_write(HSM_FD, take(msg));
     msg = wire_sync_read(tmpctx, HSM_FD);
@@ -1209,14 +1229,8 @@ static void handle_peer_update_sig(struct eltoo_peer *peer, const u8 *msg)
     }
 
     /* Now that we've checked the update, migrate all signing state from last_committed_state to last_complete_state */
-    peer->channel->eltoo_keyset.last_complete_state = peer->channel->eltoo_keyset.last_committed_state;
+	migrate_committed_to_complete(peer);
     
-    /* FIXME do we just bump on lightningd side? We are about to send an update, increment HTLCs to sent state
-        this was aping peer_sending_revocation
-    if (!channel_sending_sign_ack(peer->channel, &changed_htlcs)) {
-        status_debug("Failed to increment HTLC state after sending ACK...");
-    }*/
-
 	/*
   	 * - MUST accept its turn when:
      * - receiving `update_signed`
@@ -1235,8 +1249,8 @@ static void handle_peer_update_sig(struct eltoo_peer *peer, const u8 *msg)
         &peer->channel->eltoo_keyset.last_complete_state.self_psig,
         &peer->channel->eltoo_keyset.last_complete_state.other_psig,
         &peer->channel->eltoo_keyset.last_complete_state.session,
-        update_and_settle_txs[0],
-        update_and_settle_txs[1]);
+        peer->channel->eltoo_keyset.complete_update_tx,
+        peer->channel->eltoo_keyset.complete_settle_tx);
 
 	/* We may now be quiescent on our side. */
 	maybe_send_stfu(peer);
@@ -1316,8 +1330,8 @@ static void handle_peer_update_sig_ack(struct eltoo_peer *peer, const u8 *msg)
 			      "Bad hsmd_combine_psig_reply: %s",
 			      tal_hex(tmpctx, comb_msg));
 
-    /* Update looks good, move completed state over */
-    peer->channel->eltoo_keyset.last_complete_state = peer->channel->eltoo_keyset.last_committed_state;
+    /* Update looks good, move state over and wipe committed */
+	migrate_committed_to_complete(peer);
 
 	/* We start timer even if this returns false: we might have delayed
 	 * commit because we were waiting for this! */
