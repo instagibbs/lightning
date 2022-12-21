@@ -1851,11 +1851,45 @@ static void send_fail_or_fulfill(struct eltoo_peer *peer, const struct htlc *h)
 	peer->can_yield = false;
 }
 
-/* FIXME Reconnect fun! Let's compile first. :) */
 static void peer_reconnect(struct eltoo_peer *peer,
 			   bool reestablish_only)
 {
-	/* Need to determine who's turn it is here */
+	u8 *msg;
+	u32 last_update_num = peer->channel->eltoo_keyset.committed_update_tx ?
+		peer->channel->eltoo_keyset.committed_update_tx->wtx->locktime : peer->channel->eltoo_keyset.complete_update_tx->wtx->locktime;
+	struct eltoo_sign *state = peer->channel->eltoo_keyset.committed_update_tx ?
+		&peer->channel->eltoo_keyset.last_committed_state : &peer->channel->eltoo_keyset.last_complete_state;
+
+	/*   - MUST set `last_update_number` to the value of the channel state number of the last
+     * partial signature the node has sent to its peer.
+	 *   - MUST set `update_psig` to the `last_update_number` channel state
+     * update transaction's partial signature.
+	 * - MUST set `fresh_nonce` to the new nonce to be used for the next channel update partial signature.
+	 */
+
+    /* Refresh and fetch MuSig nonce */
+    msg = towire_hsmd_gen_nonce(NULL, &peer->channel_id);
+    wire_sync_write(HSM_FD, take(msg));
+
+    msg = wire_sync_read(tmpctx, HSM_FD);
+    if (!fromwire_hsmd_gen_nonce_reply(msg, &peer->channel->eltoo_keyset.self_next_nonce)) {
+        peer_failed_err(peer->pps,
+                &peer->channel_id,
+                "Failed to get nonce for channel reestablishment: %s", tal_hex(msg, msg));
+    }
+
+	/* Exchange reestablishment message with peer */
+	msg = towire_channel_reestablish_eltoo(tmpctx,
+										   	&peer->channel_id,
+											last_update_num,
+											&state->self_psig,
+											&peer->channel->eltoo_keyset.self_next_nonce);
+
+	peer_write(peer->pps, take(msg));
+
+	peer_billboard(false, "Sent reestablish, waiting for theirs");
+
+	/* FIXME read in message, act on it */
 }
 
 /* ignores the funding_depth unless depth >= minimum_depth

@@ -615,3 +615,12 @@ msgdata,hsmd_sign_eltoo_htlc_success_tx,tapscript,u8,tapscript_len
 # Reply for all the above requests.
 msgtype,hsmd_sign_eltoo_tx_reply,212
 msgdata,hsmd_sign_eltoo_tx_reply,sig,bip340sig,
+
+# Regenerate musig public nonce for already funded channel
+# e.g., channel reestablishment
+msgtype,hsmd_regen_nonce,98
+msgdata,hsmd_regen_nonce,channel_id,channel_id,
+
+msgtype,hsmd_regen_nonce_reply,198
+msgdata,hsmd_regen_nonce_reply,pubnonce,nonce,
+

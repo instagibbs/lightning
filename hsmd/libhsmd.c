@@ -138,6 +138,7 @@ bool hsmd_check_client_capabilities(struct hsmd_client *client,
 	case WIRE_HSMD_VALIDATE_COMMITMENT_TX:
 	case WIRE_HSMD_VALIDATE_REVOCATION:
     case WIRE_HSMD_GEN_NONCE:
+    case WIRE_HSMD_REGEN_NONCE:
     case WIRE_HSMD_MIGRATE_NONCE:
     case WIRE_HSMD_PSIGN_UPDATE_TX:
     case WIRE_HSMD_COMBINE_PSIG:
@@ -195,6 +196,7 @@ bool hsmd_check_client_capabilities(struct hsmd_client *client,
     case WIRE_HSMD_COMBINE_PSIG_REPLY:
     case WIRE_HSMD_VALIDATE_UPDATE_TX_PSIG_REPLY:
     case WIRE_HSMD_GEN_NONCE_REPLY:
+    case WIRE_HSMD_REGEN_NONCE_REPLY:
     case WIRE_HSMD_MIGRATE_NONCE_REPLY:
     case WIRE_HSMD_SIGN_ELTOO_TX_REPLY:
 		break;
@@ -1560,8 +1562,6 @@ static u8 *handle_psign_update_tx(struct hsmd_client *c, const u8 *msg_in)
     pubnonce_ptrs[0] = &remote_nonce.nonce;
     pubnonce_ptrs[1] = &local_nonce.nonce;
 
-    /* FIXME assert we have secnonce already... though if we don't this call will already crash... */
-
     /* Find secnonce in map */
     musig_state_lookup = musig_state_map_get(&secretstuff.musig_map, &channel_id);
     if (!musig_state_lookup) {
@@ -1588,6 +1588,38 @@ static u8 *handle_psign_update_tx(struct hsmd_client *c, const u8 *msg_in)
 	return towire_hsmd_psign_update_tx_reply(NULL, &p_sig, &session, &local_nonce, &inner_pubkey);
 }
 
+/* Should only be used if nonce for funded channel exists and new one will be sent to co-signer
+ * e.g., during channel reestblishment
+ */
+static u8 *handle_regen_nonce(struct hsmd_client *c, const u8 *msg_in)
+{
+    struct channel_id channel_id;
+    struct musig_state *musig_state_lookup;
+	struct secret channel_seed;
+	struct secrets secrets;
+	struct nonce fresh_nonce;
+
+	if (!fromwire_hsmd_gen_nonce(msg_in, &channel_id))
+		return hsmd_status_malformed_request(c, msg_in);
+
+	get_channel_seed(&c->id, c->dbid, &channel_seed);
+	derive_basepoints(&channel_seed,
+			  NULL, NULL, &secrets, NULL);
+
+    musig_state_lookup = musig_state_map_get(&secretstuff.musig_map, &channel_id);
+    if (!musig_state_lookup) {
+		return hsmd_status_bad_request(c, msg_in,
+					       "No secret nonce found for this regen request");
+    }
+
+    bipmusig_gen_nonce(&musig_state_lookup->sec_nonce,
+           &fresh_nonce.nonce,
+           &secrets.funding_privkey,
+           NULL /* keyagg_cache */,
+           channel_id.id /* doesn't hurt; not strictly needed */);
+
+	return towire_hsmd_regen_nonce_reply(NULL, &fresh_nonce);
+}
 
 /*~ This is another lightningd-only interface; signing a commit transaction.
  * This is dangerous, since if we sign a revoked commitment tx we'll lose
@@ -1959,6 +1991,8 @@ u8 *hsmd_handle_client_message(const tal_t *ctx, struct hsmd_client *client,
     case WIRE_HSMD_SIGN_ELTOO_HTLC_TIMEOUT_TX:
     case WIRE_HSMD_SIGN_ELTOO_HTLC_SUCCESS_TX:
         return handle_sign_eltoo_htlc_tx(client, msg);
+    case WIRE_HSMD_REGEN_NONCE:
+        return handle_regen_nonce(client, msg);
     /* Eltoo stuff ends */
 	case WIRE_HSMD_DEV_MEMLEAK:
 	case WIRE_HSMD_ECDH_RESP:
@@ -1989,6 +2023,7 @@ u8 *hsmd_handle_client_message(const tal_t *ctx, struct hsmd_client *client,
     case WIRE_HSMD_COMBINE_PSIG_REPLY:
     case WIRE_HSMD_VALIDATE_UPDATE_TX_PSIG_REPLY:
     case WIRE_HSMD_GEN_NONCE_REPLY:
+    case WIRE_HSMD_REGEN_NONCE_REPLY:
     case WIRE_HSMD_MIGRATE_NONCE_REPLY:
     case WIRE_HSMD_SIGN_ELTOO_TX_REPLY:
 		break;
