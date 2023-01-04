@@ -402,6 +402,8 @@ msgdata,channeld_init_eltoo,local_node_id,node_id,
 msgdata,channeld_init_eltoo,remote_node_id,node_id,
 msgdata,channeld_init_eltoo,commit_msec,u32,
 msgdata,channeld_init_eltoo,cltv_delta,u16,
+msgdata,channeld_init_eltoo,num_last_sent_commit,u16,
+msgdata,channeld_init_eltoo,last_sent_commit,changed_htlc,num_last_sent_commit
 msgdata,channeld_init_eltoo,next_index,u64,
 msgdata,channeld_init_eltoo,updates_received,u64,
 msgdata,channeld_init_eltoo,next_htlc_id,u64,

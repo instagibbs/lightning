@@ -139,9 +139,9 @@ struct eltoo_peer {
 	bool dev_fast_gossip;
 #endif
 	/* Information used for reestablishment. */
+	struct changed_htlc *last_sent_commit;
     /* FIXME figure out what goes here 
 	bool last_was_revoke;
-	struct changed_htlc *last_sent_commit;
 	u64 revocations_received;
     */
 	u8 channel_flags;
@@ -1851,10 +1851,131 @@ static void send_fail_or_fulfill(struct eltoo_peer *peer, const struct htlc *h)
 	peer->can_yield = false;
 }
 
+/* Older LND sometimes sends funding_locked before reestablish! */
+/* ... or announcement_signatures.  Sigh, let's handle whatever they send. */
+static bool capture_premature_msg(const u8 ***shit_lnd_says, const u8 *msg)
+{
+    if (fromwire_peektype(msg) == WIRE_CHANNEL_REESTABLISH_ELTOO)
+        return false;
+
+    /* Don't allow infinite memory consumption. */
+    if (tal_count(*shit_lnd_says) > 10)
+        return false;
+
+    status_debug("Stashing early %s msg!",
+             peer_wire_name(fromwire_peektype(msg)));
+
+    tal_arr_expand(shit_lnd_says, tal_steal(*shit_lnd_says, msg));
+    return true;
+}
+
+static int cmp_changed_htlc_id(const struct changed_htlc *a,
+                   const struct changed_htlc *b,
+                   void *unused)
+{
+    /* ids can be the same (sender and receiver are indep) but in
+     * that case we don't care about order. */
+    if (a->id > b->id)
+        return 1;
+    else if (a->id < b->id)
+        return -1;
+    return 0;
+}
+
+static void resend_updates(struct eltoo_peer *peer, struct changed_htlc *last)
+{
+    size_t i;
+    u8 *msg;
+
+    status_debug("Retransmitting update");
+
+    /* Note that HTLCs must be *added* in order.  Simplest thing to do
+     * is to sort them all into ascending ID order here (we could do
+     * this when we save them in channel_sending_commit, but older versions
+     * won't have them sorted in the db, so doing it here is better). */
+    asort(last, tal_count(last), cmp_changed_htlc_id, NULL);
+
+    /* In our case, we consider ourselves already committed to this, so
+     * retransmission is simplest. */
+    /* We need to send fulfills/failures before adds, so we split them
+     * up into two loops -- this is the 'fulfill/fail' loop */
+    for (i = 0; i < tal_count(last); i++) {
+        const struct htlc *h;
+
+        h = eltoo_channel_get_htlc(peer->channel,
+                     htlc_state_owner(last[i].newstate),
+                     last[i].id);
+        /* FIXME necessary? I think this can happen if we actually received revoke_and_ack
+         * then they asked for a retransmit */
+        if (!h)
+            peer_failed_warn(peer->pps, &peer->channel_id,
+                     "Can't find HTLC %"PRIu64" to resend",
+                     last[i].id);
+
+        if (h->state == SENT_REMOVE_UPDATE)
+            send_fail_or_fulfill(peer, h);
+    }
+
+    /* We need to send fulfills/failures before adds, so we split them
+     * up into two loops -- this is the 'add' loop */
+    for (i = 0; i < tal_count(last); i++) {
+        const struct htlc *h;
+
+        h = eltoo_channel_get_htlc(peer->channel,
+                     htlc_state_owner(last[i].newstate),
+                     last[i].id);
+
+        /* FIXME necessary? I think this can happen if we actually received revoke_and_ack
+         * then they asked for a retransmit */
+        if (!h)
+            peer_failed_warn(peer->pps, &peer->channel_id,
+                     "Can't find HTLC %"PRIu64" to resend",
+                     last[i].id);
+
+        if (h->state == SENT_ADD_UPDATE) {
+#if EXPERIMENTAL_FEATURES
+            struct tlv_update_add_tlvs *tlvs;
+            if (h->blinding) {
+                tlvs = tlv_update_add_tlvs_new(tmpctx);
+                tlvs->blinding = tal_dup(tlvs, struct pubkey,
+                             h->blinding);
+            } else
+                tlvs = NULL;
+#endif
+            u8 *msg = towire_update_add_htlc(NULL, &peer->channel_id,
+                             h->id, h->amount,
+                             &h->rhash,
+                             abs_locktime_to_blocks(
+                                 &h->expiry),
+                             h->routing
+#if EXPERIMENTAL_FEATURES
+                             , tlvs
+#endif
+                );
+            peer_write(peer->pps, take(msg));
+        }
+    }
+
+	/* No fee information required */
+
+	/* No blockheight info (yet) */
+
+	/* Resend psig and FRESH nonce */
+	msg = towire_update_signed(NULL, &peer->channel_id,
+				       &peer->channel->eltoo_keyset.last_committed_state.self_psig,
+				       &peer->channel->eltoo_keyset.self_next_nonce);
+    peer_write(peer->pps, take(msg));
+}
+
 static void peer_reconnect(struct eltoo_peer *peer,
 			   bool reestablish_only)
 {
 	u8 *msg;
+	struct channel_id channel_id;
+	u64 remote_last_update_num;
+	struct partial_sig remote_update_psig;
+	struct nonce remote_fresh_nonce;
+	const u8 **premature_msgs = tal_arr(peer, const u8 *, 0);
 	u32 last_update_num = peer->channel->eltoo_keyset.committed_update_tx ?
 		peer->channel->eltoo_keyset.committed_update_tx->wtx->locktime : peer->channel->eltoo_keyset.complete_update_tx->wtx->locktime;
 	struct eltoo_sign *state = peer->channel->eltoo_keyset.committed_update_tx ?
@@ -1889,7 +2010,86 @@ static void peer_reconnect(struct eltoo_peer *peer,
 
 	peer_billboard(false, "Sent reestablish, waiting for theirs");
 
-	/* FIXME read in message, act on it */
+    /* Read until they say something interesting (don't forward
+     * gossip *to* them yet: we might try sending channel_update
+     * before we've reestablished channel). */
+    do {
+        clean_tmpctx();
+        msg = peer_read(tmpctx, peer->pps);
+
+        /* connectd promised us the msg was reestablish? */
+        if (reestablish_only) {
+            if (fromwire_peektype(msg) != WIRE_CHANNEL_REESTABLISH_ELTOO)
+                status_failed(STATUS_FAIL_INTERNAL_ERROR,
+                          "Expected reestablish, got: %s",
+                          tal_hex(tmpctx, msg));
+        }
+    } while (handle_peer_error(peer->pps, &peer->channel_id, msg) ||
+         capture_premature_msg(&premature_msgs, msg));
+
+
+    if (!fromwire_channel_reestablish_eltoo(msg,
+                    &channel_id,
+                    &remote_last_update_num,
+					&remote_update_psig,
+					&remote_fresh_nonce)) {
+        peer_failed_warn(peer->pps,
+                 &peer->channel_id,
+                 "bad reestablish msg: %s %s",
+                 peer_wire_name(fromwire_peektype(msg)),
+                 tal_hex(msg, msg));
+
+	}
+
+    if (peer->funding_locked[LOCAL]
+        && last_update_num == 0
+        && remote_last_update_num == 0) {
+        u8 *msg;
+
+        status_debug("Retransmitting funding_locked_eltoo for channel %s",
+                     type_to_string(tmpctx, struct channel_id, &peer->channel_id));
+        msg = towire_funding_locked_eltoo(NULL,
+                        &peer->channel_id);
+        peer_write(peer->pps, take(msg));
+    }
+
+
+	if (last_update_num == remote_last_update_num) {
+		/* Everything is ok, start next round */
+	} else if (last_update_num == remote_last_update_num + 1) {
+		/* We committed but didn't get an ACK */
+		peer->turn = LOCAL;
+		resend_updates(peer, peer->last_sent_commit);
+	} else if (remote_last_update_num == last_update_num + 1) {
+		/* They committed but didn't get an ACK
+		 * It's their turn; return to normal operation.
+		 */
+		peer->turn = REMOTE;
+	} else {
+		/* Something bad has happened */
+        peer_failed_err(peer->pps,
+                &peer->channel_id,
+                "bad reestablish last_update_number: %"PRIu64
+                " vs %"PRIu32,
+                remote_last_update_num,
+                last_update_num);
+	}
+
+    /* We allow peer to send us tx-sigs, until funding locked received */
+    peer->tx_sigs_allowed = true;
+    peer_billboard(true, "Reconnected, and reestablished.");
+
+    /* BOLT #2:
+     *   - upon reconnection:
+     *...
+     *       - MUST transmit `channel_reestablish` for each channel.
+     *       - MUST wait to receive the other node's `channel_reestablish`
+     *         message before sending any other messages for that channel.
+     */
+    /* LND doesn't wait. */
+    for (size_t i = 0; i < tal_count(premature_msgs); i++)
+        peer_in(peer, premature_msgs[i]);
+    tal_free(premature_msgs);
 }
 
 /* ignores the funding_depth unless depth >= minimum_depth
@@ -2425,6 +2625,7 @@ static void init_channel(struct eltoo_peer *peer)
 				    &peer->node_ids[REMOTE],
 				    &peer->commit_msec,
 				    &peer->cltv_delta,
+					&peer->last_sent_commit,
 				    &peer->next_index,
 				    &peer->updates_received,
 				    &peer->htlc_id,
@@ -2529,13 +2730,15 @@ static void init_channel(struct eltoo_peer *peer)
 	/* We don't send updates out of turn so this is always true */
 	peer->can_yield = true;
 
+	/* Reconnect logic may overwrite this value due to unfinished turn */
+	peer->turn = 
+		node_id_cmp(&(peer->node_ids[LOCAL]), &(peer->node_ids[REMOTE])) < 0 ? LOCAL : REMOTE;
+
 	/* OK, now we can process peer messages. */
 	if (reconnected)
 		peer_reconnect(peer, reestablish_only);
 	else {
 		assert(!reestablish_only);
-		peer->turn = 
-			node_id_cmp(&(peer->node_ids[LOCAL]), &(peer->node_ids[REMOTE])) < 0 ? LOCAL : REMOTE;
 	}
 
 	/* If we have a messages to send, send them immediately */
@@ -2652,7 +2855,6 @@ int main(int argc, char *argv[])
 		}
 
 
-        status_debug("***SELECT***");
 		if (select(nfds, &rfds, NULL, NULL, tptr) < 0) {
 			/* Signals OK, eg. SIGUSR1 */
 			if (errno == EINTR)
@@ -2660,7 +2862,6 @@ int main(int argc, char *argv[])
 			status_failed(STATUS_FAIL_INTERNAL_ERROR,
 				      "select failed: %s", strerror(errno));
 		}
-        status_debug("***UNSELECT***");
 
 		if (FD_ISSET(MASTER_FD, &rfds)) {
 			msg = wire_sync_read(tmpctx, MASTER_FD);
