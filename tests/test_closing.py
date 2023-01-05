@@ -776,6 +776,45 @@ def test_penalty_outhtlc(node_factory, bitcoind, executor, chainparams, anchors)
     tags = check_utxos_channel(l1, [channel_id], expected_1)
     check_utxos_channel(l2, [channel_id], expected_2, tags)
 
+
+def test_eltoo_empty_reestablishment(node_factory, bitcoind):
+    """Test that channel reestablishment does the expected thing"""
+
+    l1, l2 = node_factory.line_graph(2,
+                                    opts=[{'may_reconnect': True}, {'may_reconnect': True}])
+
+    # Simple reestblishment where funding is locked   
+    l1.rpc.disconnect(l2.info['id'], force=True)
+    l1.rpc.connect(l2.info['id'], 'localhost', l2.port)
+
+    # We should see funding_locked messages be passed around, then
+    # normal operation
+    l1.daemon.wait_for_log('Reconnected, and reestablished')
+    l2.daemon.wait_for_log('Reconnected, and reestablished')
+
+    l1_update_tx = l1.rpc.listpeers(l2.info['id'])["peers"][0]["channels"][0]['last_update_tx']
+    l1_settle_tx = l1.rpc.listpeers(l2.info['id'])["peers"][0]["channels"][0]['last_settle_tx']
+
+    l2_update_tx = l2.rpc.listpeers(l1.info['id'])["peers"][0]["channels"][0]['last_update_tx']
+    l2_settle_tx = l2.rpc.listpeers(l1.info['id'])["peers"][0]["channels"][0]['last_settle_tx']
+
+    assert l1_update_tx == l2_update_tx
+    assert l1_settle_tx == l2_settle_tx
+
+    l1_update_details = bitcoind.rpc.decoderawtransaction(l1_update_tx)
+    l1_settle_details = bitcoind.rpc.decoderawtransaction(l1_settle_tx)
+
+    # First update recovered
+    assert l1_update_details["locktime"] == 500000000
+    assert l1_settle_details["locktime"] == 500000000
+
+    from pdb import set_trace
+    set_trace()
+
+    # l1 can pay l2
+    l1.pay(l2, 100000*SAT)
+
+
 def test_eltoo_unannounced_hop(node_factory, bitcoind):
     """Test eltoo payments work over hops"""
 

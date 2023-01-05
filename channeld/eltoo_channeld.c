@@ -54,7 +54,7 @@
 struct eltoo_peer {
 	struct per_peer_state *pps;
 	bool funding_locked[NUM_SIDES];
-	u64 next_index;
+	u64 next_index; /* update number for next update_* messages */
 
 	/* Features peer supports. */
 	u8 *their_features;
@@ -1974,12 +1974,10 @@ static void peer_reconnect(struct eltoo_peer *peer,
 	struct channel_id channel_id;
 	u64 remote_last_update_num;
 	struct partial_sig remote_update_psig;
-	struct nonce remote_fresh_nonce;
 	const u8 **premature_msgs = tal_arr(peer, const u8 *, 0);
-	u32 last_update_num = peer->channel->eltoo_keyset.committed_update_tx ?
-		peer->channel->eltoo_keyset.committed_update_tx->wtx->locktime : peer->channel->eltoo_keyset.complete_update_tx->wtx->locktime;
-	struct eltoo_sign *state = peer->channel->eltoo_keyset.committed_update_tx ?
-		&peer->channel->eltoo_keyset.last_committed_state : &peer->channel->eltoo_keyset.last_complete_state;
+	u32 last_update_num = peer->next_index - 1;
+	/* This should still be valid even if we received an ack for this committed state */
+	struct eltoo_sign *state = &peer->channel->eltoo_keyset.last_committed_state;
 
 	/*   - MUST set `last_update_number` to the value of the channel state number of the last
      * partial signature the node has sent to its peer.
@@ -2028,11 +2026,13 @@ static void peer_reconnect(struct eltoo_peer *peer,
          capture_premature_msg(&premature_msgs, msg));
 
 
+	/* Their psig might be for our complete state
+	   */
     if (!fromwire_channel_reestablish_eltoo(msg,
                     &channel_id,
                     &remote_last_update_num,
 					&remote_update_psig,
-					&remote_fresh_nonce)) {
+					&peer->channel->eltoo_keyset.other_next_nonce)) {
         peer_failed_warn(peer->pps,
                  &peer->channel_id,
                  "bad reestablish msg: %s %s",
@@ -2055,14 +2055,69 @@ static void peer_reconnect(struct eltoo_peer *peer,
 
 
 	if (last_update_num == remote_last_update_num) {
-		/* Everything is ok, start next round */
+
+		/* They say they sent a response we didn't get yet */
+		if (peer->channel->eltoo_keyset.committed_update_tx) {
+			/* This section is(?) a carbon copy of normal operation of receiving ack */
+			const struct htlc **changed_htlcs = tal_arr(msg, const struct htlc *, 0);
+			struct bip340sig update_sig;
+
+//		if (memcmp(remote_update_psig.p_sig.data,
+//			peer->channel->eltoo_keyset->last_complete_state.other_psig,
+//			sizeof(remote_update_psig.p_sig.data)) != 0) {
+
+			peer->channel->eltoo_keyset.last_committed_state.other_psig = remote_update_psig;
+
+			/* Check psig */
+			msg = towire_hsmd_combine_psig(NULL,
+									&peer->channel_id,
+									&peer->channel->eltoo_keyset.last_committed_state.self_psig,
+									&peer->channel->eltoo_keyset.last_committed_state.other_psig,
+									&peer->channel->eltoo_keyset.last_committed_state.session,
+									peer->channel->eltoo_keyset.committed_update_tx,
+									peer->channel->eltoo_keyset.committed_settle_tx,
+									&peer->channel->eltoo_keyset.inner_pubkey);
+			wire_sync_write(HSM_FD, take(msg));
+			msg = wire_sync_read(tmpctx, HSM_FD);
+			if (!fromwire_hsmd_combine_psig_reply(msg, &update_sig)) {
+				status_failed(STATUS_FAIL_HSM_IO,
+						  "Bad combine_psig reply %s", tal_hex(tmpctx, msg));
+			}
+
+			/* Migrate over and continue */
+			migrate_committed_to_complete(peer);
+
+			/* Fill out changed htlcs */
+			if (channel_rcvd_update_sign_ack(peer->channel, &changed_htlcs)) {
+				/* FIXME I don't think this is possible? */
+				status_debug("Commits outstanding after recv update_sign_ack");
+			} else {
+				status_debug("No commits outstanding after recv update_sign_ack");
+			}
+
+			/* Tell master about things this locks in(and final signature), wait for response */
+			msg = got_signed_ack_msg(peer, peer->next_index,
+						 changed_htlcs, &peer->channel->eltoo_keyset.last_complete_state.other_psig, &peer->channel->eltoo_keyset.last_complete_state.self_psig,
+						 &peer->channel->eltoo_keyset.last_complete_state.session);
+			master_wait_sync_reply(tmpctx, peer, take(msg),
+						   WIRE_CHANNELD_GOT_ACK_REPLY);
+
+			status_debug("update_signed_ack %s: update = %lu",
+					 side_to_str(peer->channel->opener), peer->next_index - 1);
+		}
+
+		/* Everything is ok, return to normal operation */
+		
 	} else if (last_update_num == remote_last_update_num + 1) {
-		/* We committed but didn't get an ACK */
+		/* We committed but remote claims they didn't get it.
+		 * We ignore their psig and replay our turn with fresh nonces.
+		 */
 		peer->turn = LOCAL;
 		resend_updates(peer, peer->last_sent_commit);
 	} else if (remote_last_update_num == last_update_num + 1) {
-		/* They committed but didn't get an ACK
-		 * It's their turn; return to normal operation.
+		/* They say they committed but we didn't get it.
+		 * We will not use the psig.
+		 * It's their turn; return to normal operation with fresh nonces.
 		 */
 		peer->turn = REMOTE;
 	} else {
@@ -2588,6 +2643,8 @@ static void init_channel(struct eltoo_peer *peer)
 	struct channel_type *channel_type;
 	u32 *dev_disable_commit; /* Always NULL */
 	bool dev_fast_gossip;
+	struct bitcoin_tx *complete_update_tx, *complete_settle_tx;
+	struct bitcoin_tx *committed_update_tx, *committed_settle_tx;
 #if !DEVELOPER
 	bool dev_fail_process_onionpacket; /* Ignored */
 #endif
@@ -2611,6 +2668,10 @@ static void init_channel(struct eltoo_peer *peer)
 				    &committed_state.session,
                     &nonces[REMOTE],
                     &nonces[LOCAL],
+					&complete_update_tx,
+					&complete_settle_tx,
+					&committed_update_tx,
+					&committed_settle_tx,
 				    &funding_pubkey[REMOTE],
                     &settle_pubkey[REMOTE],
 				    &opener,
@@ -2709,9 +2770,17 @@ static void init_channel(struct eltoo_peer *peer)
 							 OPT_LARGE_CHANNELS),
 					 opener);
 
-    /* FIXME new_full_eltoo_channel should take the nonces... */
+    /* FIXME new_full_eltoo_channel should take the nonces and txns... */
     peer->channel->eltoo_keyset.other_next_nonce = nonces[REMOTE];
     peer->channel->eltoo_keyset.self_next_nonce = nonces[LOCAL];
+//	if (complete_update_tx) {
+        peer->channel->eltoo_keyset.complete_update_tx = tal_steal(peer, complete_update_tx);
+        peer->channel->eltoo_keyset.complete_settle_tx = tal_steal(peer, complete_settle_tx);
+//	}
+//	if (committed_update_tx) {
+        peer->channel->eltoo_keyset.committed_update_tx = tal_steal(peer, committed_update_tx);
+        peer->channel->eltoo_keyset.committed_settle_tx = tal_steal(peer, committed_settle_tx);
+//	}
 
 	if (!channel_force_htlcs(peer->channel,
 			 cast_const2(const struct existing_htlc **, htlcs)))

@@ -35,7 +35,8 @@ struct eltoo_keyset {
     struct bitcoin_tx *complete_settle_tx;
     /* State we have committed to but have incomplete signatures for.
      * This may be used in channel reestablishment or for reacting
-       to the appearance of the state on-chain.  */
+       to the appearance of the state on-chain. It should always contain
+       the most recent partial signatures and session for a node.  */
     struct eltoo_sign last_committed_state;
     /* Will be stolen, so needs to be not copied directly with other state */
     struct bitcoin_tx *committed_update_tx;
