@@ -1987,11 +1987,11 @@ static void peer_reconnect(struct eltoo_peer *peer,
 	 */
 
     /* Refresh and fetch MuSig nonce */
-    msg = towire_hsmd_gen_nonce(NULL, &peer->channel_id);
+    msg = towire_hsmd_regen_nonce(NULL, &peer->channel_id);
     wire_sync_write(HSM_FD, take(msg));
 
     msg = wire_sync_read(tmpctx, HSM_FD);
-    if (!fromwire_hsmd_gen_nonce_reply(msg, &peer->channel->eltoo_keyset.self_next_nonce)) {
+    if (!fromwire_hsmd_regen_nonce_reply(msg, &peer->channel->eltoo_keyset.self_next_nonce)) {
         peer_failed_err(peer->pps,
                 &peer->channel_id,
                 "Failed to get nonce for channel reestablishment: %s", tal_hex(msg, msg));

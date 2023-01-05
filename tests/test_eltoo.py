@@ -52,12 +52,9 @@ def test_eltoo_empty_reestablishment(node_factory, bitcoind):
     assert l1_update_details["locktime"] == 500000000
     assert l1_settle_details["locktime"] == 500000000
 
-    from pdb import set_trace
-    set_trace()
-
     # l1 can pay l2
     l1.pay(l2, 100000*SAT)
-
+    wait_for(lambda: l2.rpc.listpeers()['peers'][0]['channels'][0]['in_fulfilled_msat'] == Millisatoshi(100000000))
 
 def test_eltoo_unannounced_hop(node_factory, bitcoind):
     """Test eltoo payments work over hops"""

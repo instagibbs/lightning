@@ -1599,7 +1599,7 @@ static u8 *handle_regen_nonce(struct hsmd_client *c, const u8 *msg_in)
 	struct secrets secrets;
 	struct nonce fresh_nonce;
 
-	if (!fromwire_hsmd_gen_nonce(msg_in, &channel_id))
+	if (!fromwire_hsmd_regen_nonce(msg_in, &channel_id))
 		return hsmd_status_malformed_request(c, msg_in);
 
 	get_channel_seed(&c->id, c->dbid, &channel_seed);
