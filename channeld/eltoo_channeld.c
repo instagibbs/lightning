@@ -2081,7 +2081,7 @@ static void peer_reconnect(struct eltoo_peer *peer,
 			msg = wire_sync_read(tmpctx, HSM_FD);
 			if (!fromwire_hsmd_combine_psig_reply(msg, &update_sig)) {
 				status_failed(STATUS_FAIL_HSM_IO,
-						  "Bad combine_psig reply %s", tal_hex(tmpctx, msg));
+						  "Bad reestablish combine_psig reply %s", tal_hex(tmpctx, msg));
 			}
 
 			/* Migrate over and continue */
@@ -2102,7 +2102,7 @@ static void peer_reconnect(struct eltoo_peer *peer,
 			master_wait_sync_reply(tmpctx, peer, take(msg),
 						   WIRE_CHANNELD_GOT_ACK_REPLY);
 
-			status_debug("update_signed_ack %s: update = %lu",
+			status_debug("reestablishment update_signed_ack %s: update = %lu",
 					 side_to_str(peer->channel->opener), peer->next_index - 1);
 		}
 

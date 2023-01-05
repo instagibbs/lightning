@@ -21,8 +21,35 @@ import unittest
 # In msats
 SAT = 1000
 
-def test_eltoo_empty_reestablishment(node_factory, bitcoind):
-    """Test that channel reestablishment does the expected thing"""
+def test_eltoo_offerer_ack_reestablishment(node_factory, bitcoind):
+    """Test that channel reestablishment does the expected thing when 
+       update signed ack didn't make it back to offerer. Reestablishment
+       flow is essentially the offerer getting the ACK back on reconnect """
+
+    from pdb import set_trace
+    set_trace()
+    # Want receiving node to disconnect right before sending off update_signed_ack
+    disconnects = ['-WIRE_UPDATE_SIGNED_ACK']
+
+    l1, l2 = node_factory.line_graph(2,
+                                    opts=[{'may_reconnect': True}, {'may_reconnect': True, 'disconnect': disconnects}])
+
+    # Pay comment will cause disconnect, but should recover
+    l1.pay(l2, 100000*SAT)
+
+
+
+def test_eltoo_uneven_reestablishment(node_factory, bitcoind):
+    """Test that channel reestablishment does the expected thing when 
+       an update signed message was sent but not received by the recipient
+       before disconnect """
+
+    l1, l2 = node_factory.line_graph(2,
+                                    opts=[{'may_reconnect': True}, {'may_reconnect': True}])
+
+
+def test_eltoo_base_reestablishment(node_factory, bitcoind):
+    """Test that channel reestablishment does the expected thing when all prior messages completed """
 
     l1, l2 = node_factory.line_graph(2,
                                     opts=[{'may_reconnect': True}, {'may_reconnect': True}])
