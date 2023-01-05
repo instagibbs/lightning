@@ -37,6 +37,8 @@ def test_eltoo_offerer_ack_reestablishment(node_factory, bitcoind):
     # Pay comment will cause disconnect, but should recover
     l1.pay(l2, 100000*SAT)
 
+    wait_for(lambda: l2.rpc.listpeers()['peers'][0]['channels'][0]['in_fulfilled_msat'] == Millisatoshi(100000000))
+
 
 
 def test_eltoo_uneven_reestablishment(node_factory, bitcoind):
@@ -44,9 +46,16 @@ def test_eltoo_uneven_reestablishment(node_factory, bitcoind):
        an update signed message was sent but not received by the recipient
        before disconnect """
 
-    l1, l2 = node_factory.line_graph(2,
-                                    opts=[{'may_reconnect': True}, {'may_reconnect': True}])
+    # Want offering node to disconnect right before sending off update_signed
+    disconnects = ['+WIRE_UPDATE_SIGNED']
 
+    l1, l2 = node_factory.line_graph(2,
+                                    opts=[{'may_reconnect': True, 'disconnect': disconnects}, {'may_reconnect': True}])
+
+    # Pay comment will cause disconnect, but should recover
+    l1.pay(l2, 100000*SAT)
+
+    wait_for(lambda: l2.rpc.listpeers()['peers'][0]['channels'][0]['in_fulfilled_msat'] == Millisatoshi(100000000))
 
 def test_eltoo_base_reestablishment(node_factory, bitcoind):
     """Test that channel reestablishment does the expected thing when all prior messages completed """
