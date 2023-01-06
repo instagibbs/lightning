@@ -2193,16 +2193,20 @@ static void peer_reconnect(struct eltoo_peer *peer,
      * pending, but now they're cleared by restart, and we're actually
      * complete.  In that case, their `shutdown` will trigger us. */
 
+	/* FIXME FIXME we can't send these unless it's our turn! Need to defer
+	 * actions, or something */
 	/* Now, re-send any that we're supposed to be failing/fulfilling. */
     for (resend_htlc = htlc_map_first(peer->channel->htlcs, &resend_it);
          resend_htlc;
          resend_htlc = htlc_map_next(peer->channel->htlcs, &resend_it)) {
-        if (resend_htlc->state == SENT_REMOVE_HTLC)
+        if (resend_htlc->state == SENT_REMOVE_HTLC) {
             send_fail_or_fulfill(peer, resend_htlc);
+			/* FIXME this will obviously(?) break if we sent removal updates
+			   but not an update, then lose our turn on reconnect?  */
+			assert(is_our_turn(peer));
+		}
     }
-
-	/* Reset timer again since we just added more */
- 	start_update_timer(peer);
+	start_update_timer(peer);
 
     /* We allow peer to send us tx-sigs, until funding locked received */
     peer->tx_sigs_allowed = true;
