@@ -26,13 +26,14 @@ def test_eltoo_offerer_ack_reestablishment(node_factory, bitcoind):
        update signed ack didn't make it back to offerer. Reestablishment
        flow is essentially the offerer getting the ACK back on reconnect """
 
-    from pdb import set_trace
-    set_trace()
     # Want receiving node to disconnect right before sending off update_signed_ack
     disconnects = ['-WIRE_UPDATE_SIGNED_ACK']
 
     l1, l2 = node_factory.line_graph(2,
                                     opts=[{'may_reconnect': True}, {'may_reconnect': True, 'disconnect': disconnects}])
+
+    from pdb import set_trace
+    set_trace()
 
     # Pay comment will cause disconnect, but should recover
     l1.pay(l2, 100000*SAT)

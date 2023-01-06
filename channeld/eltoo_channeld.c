@@ -1094,6 +1094,10 @@ static void send_update_sign_ack(struct eltoo_peer *peer,
 
 	/* Tell master daemon about update_sig (and by implication, that we're
 	 * sending update_sig_ack), then wait for it to ack. */
+	status_debug("Sending our_psig to master right before sending off ACK: %s",
+             type_to_string(tmpctx, struct partial_sig, our_update_psig));
+	status_debug("Sending their_psig to master right before sending off ACK: %s",
+             type_to_string(tmpctx, struct partial_sig, their_update_psig));
 	msg_for_master
 		= towire_channeld_got_updatesig(NULL,
 					       peer->next_index - 1,
@@ -1997,6 +2001,14 @@ static void peer_reconnect(struct eltoo_peer *peer,
                 "Failed to get nonce for channel reestablishment: %s", tal_hex(msg, msg));
     }
 
+	status_debug("sending eltoo reestablishment update %u, self_psig: %s, next_nonce: %s, session: %s",
+		 last_update_num,
+		 type_to_string(tmpctx, struct partial_sig, &peer->channel->eltoo_keyset.last_committed_state.self_psig),
+		 type_to_string(tmpctx, struct nonce,
+				&peer->channel->eltoo_keyset.self_next_nonce),
+		 type_to_string(tmpctx, struct musig_session, &peer->channel->eltoo_keyset.last_committed_state.session));
+
+
 	/* Exchange reestablishment message with peer */
 	msg = towire_channel_reestablish_eltoo(tmpctx,
 										   	&peer->channel_id,
@@ -2067,6 +2079,23 @@ static void peer_reconnect(struct eltoo_peer *peer,
 //			sizeof(remote_update_psig.p_sig.data)) != 0) {
 
 			peer->channel->eltoo_keyset.last_committed_state.other_psig = remote_update_psig;
+
+			status_debug("partial signature reestablish combine our_psig %s their_psig %s on update tx %s, settle tx %s, using our key %s, their key %s, inner pubkey %s, NEW our nonce %s, NEW their nonce %s, session %s",
+				 type_to_string(tmpctx, struct partial_sig, &peer->channel->eltoo_keyset.last_committed_state.self_psig),
+				 type_to_string(tmpctx, struct partial_sig, &peer->channel->eltoo_keyset.last_committed_state.other_psig),
+				 type_to_string(tmpctx, struct bitcoin_tx, peer->channel->eltoo_keyset.committed_update_tx),
+				 type_to_string(tmpctx, struct bitcoin_tx, peer->channel->eltoo_keyset.committed_settle_tx),
+				 type_to_string(tmpctx, struct pubkey,
+						&peer->channel->eltoo_keyset.self_funding_key),
+				 type_to_string(tmpctx, struct pubkey,
+						&peer->channel->eltoo_keyset.other_funding_key),
+				 type_to_string(tmpctx, struct pubkey,
+						&peer->channel->eltoo_keyset.inner_pubkey),
+				 type_to_string(tmpctx, struct nonce,
+						&peer->channel->eltoo_keyset.self_next_nonce),
+				 type_to_string(tmpctx, struct nonce,
+						&peer->channel->eltoo_keyset.other_next_nonce),
+				 type_to_string(tmpctx, struct musig_session, &peer->channel->eltoo_keyset.last_committed_state.session));
 
 			/* Check psig */
 			msg = towire_hsmd_combine_psig(NULL,
@@ -2715,6 +2744,10 @@ static void init_channel(struct eltoo_peer *peer)
 				    &peer->channel_update)) {
 		master_badmsg(WIRE_CHANNELD_INIT, msg);
 	}
+	status_debug("Self psig for committed state: %s",
+             type_to_string(tmpctx, struct partial_sig, &committed_state.self_psig));
+	status_debug("Self psig for complete state: %s",
+             type_to_string(tmpctx, struct partial_sig, &complete_state.self_psig));
 
 	peer->final_index = tal_dup(peer, u32, &final_index);
 	peer->final_ext_key = tal_dup(peer, struct ext_key, &final_ext_key);
@@ -2809,6 +2842,8 @@ static void init_channel(struct eltoo_peer *peer)
 	else {
 		assert(!reestablish_only);
 	}
+
+	status_debug("Turn: %s", side_to_str(peer->turn));
 
 	/* If we have a messages to send, send them immediately */
 	if (fwd_msg)
