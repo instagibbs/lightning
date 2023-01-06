@@ -32,9 +32,6 @@ def test_eltoo_offerer_ack_reestablishment(node_factory, bitcoind):
     l1, l2 = node_factory.line_graph(2,
                                     opts=[{'may_reconnect': True}, {'may_reconnect': True, 'disconnect': disconnects}])
 
-    from pdb import set_trace
-    set_trace()
-
     # Pay comment will cause disconnect, but should recover
     l1.pay(l2, 100000*SAT)
 

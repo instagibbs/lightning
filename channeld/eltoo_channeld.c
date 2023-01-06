@@ -146,8 +146,11 @@ struct eltoo_peer {
     */
 	u8 channel_flags;
 
-    /* Number of update_signed(_ack) messages received by peer */
-	u64 updates_received;
+    /* Number of update_signed(_ack) messages received by peer.
+	 * Should be the same as the update number of the latest
+	 * complete tx.
+	 */
+	u64 sigs_received;
 
 	bool announce_depth_reached;
 	bool channel_local_active;
@@ -716,7 +719,7 @@ static bool shutdown_complete(const struct eltoo_peer *peer)
 	return peer->shutdown_sent[LOCAL]
 		&& peer->shutdown_sent[REMOTE]
 		&& num_channel_htlcs(peer->channel) == 0
-		&& peer->updates_received == peer->next_index - 1;
+		&& peer->sigs_received == peer->next_index - 1;
 }
 
 /* BOLT #2:
@@ -830,8 +833,8 @@ static void send_update(struct eltoo_peer *peer)
 
 	/* FIXME: Document this requirement in BOLT 2! */
 	/* We can't send two commits in a row. */
-	if (peer->updates_received != peer->next_index - 1) {
-		assert(peer->updates_received
+	if (peer->sigs_received != peer->next_index - 1) {
+		assert(peer->sigs_received
 		       == peer->next_index - 2);
 		peer->commit_timer_attempts++;
 		/* Only report this in extreme cases */
@@ -844,6 +847,8 @@ static void send_update(struct eltoo_peer *peer)
 		peer->commit_timer = NULL;
 		start_update_timer(peer);
 		return;
+	} else {
+		peer->commit_timer_attempts = 0;
 	}
 
 	/* BOLT #2:
@@ -987,7 +992,6 @@ static void start_update_timer(struct eltoo_peer *peer)
 	if (peer->commit_timer)
 		return;
 
-	peer->commit_timer_attempts = 0;
 	peer->commit_timer = new_reltimer(&peer->timers, peer,
 					  time_from_msec(peer->commit_msec),
 					  send_update, peer);
@@ -1150,7 +1154,7 @@ static void handle_peer_update_sig(struct eltoo_peer *peer, const u8 *msg)
 		peer_failed_warn(peer->pps, &peer->channel_id,
 				 "Bad update_signed %s", tal_hex(msg, msg));
 
-    peer->updates_received++;
+    peer->sigs_received++;
 
 	status_debug("Received update_sig");
 
@@ -1303,7 +1307,7 @@ static void handle_peer_update_sig_ack(struct eltoo_peer *peer, const u8 *msg)
 				 "Bad update_signed_ack %s", tal_hex(msg, msg));
 	}
 
-    peer->updates_received++;
+    peer->sigs_received++;
 
     status_debug("partial signature combine req on update tx %s, settle tx %s, our_psig: %s,"
                 " their_psig: %s, session %s, OLD our nonce %s, OLD their nonce %s",
@@ -1893,6 +1897,8 @@ static void resend_updates(struct eltoo_peer *peer, struct changed_htlc *last)
 
     status_debug("Retransmitting update");
 
+	peer->can_yield = false;
+
     /* Note that HTLCs must be *added* in order.  Simplest thing to do
      * is to sort them all into ascending ID order here (we could do
      * this when we save them in channel_sending_commit, but older versions
@@ -1964,6 +1970,14 @@ static void resend_updates(struct eltoo_peer *peer, struct changed_htlc *last)
 
 	/* No blockheight info (yet) */
 
+	/* Give up our turn */
+	if (is_our_turn(peer)){
+		change_turn(peer, REMOTE);
+	} else {
+		/* We are not doing optimistic updates */
+		status_broken("We're proposing updates out of turn?");
+	}
+
 	/* Resend psig and FRESH nonce */
 	msg = towire_update_signed(NULL, &peer->channel_id,
 				       &peer->channel->eltoo_keyset.last_committed_state.self_psig,
@@ -1978,6 +1992,8 @@ static void peer_reconnect(struct eltoo_peer *peer,
 	struct channel_id channel_id;
 	u64 remote_last_update_num;
 	struct partial_sig remote_update_psig;
+	const struct htlc *resend_htlc;
+	struct htlc_map_iter resend_it;
 	const u8 **premature_msgs = tal_arr(peer, const u8 *, 0);
 	u32 last_update_num = peer->next_index - 1;
 	/* This should still be valid even if we received an ack for this committed state */
@@ -2142,6 +2158,7 @@ static void peer_reconnect(struct eltoo_peer *peer,
 		 * We ignore their psig and replay our turn with fresh nonces.
 		 */
 		peer->turn = LOCAL;
+		/* This directly sends update, no commit timer. */
 		resend_updates(peer, peer->last_sent_commit);
 	} else if (remote_last_update_num == last_update_num + 1) {
 		/* They say they committed but we didn't get it.
@@ -2158,6 +2175,34 @@ static void peer_reconnect(struct eltoo_peer *peer,
                 remote_last_update_num,
                 last_update_num);
 	}
+
+    /* Now stop, we've been polite long enough. */
+    if (reestablish_only) {
+        /* If we were successfully closing, we still go to closingd. */
+        if (shutdown_complete(peer)) {
+            send_shutdown_complete(peer);
+            daemon_shutdown();
+            exit(0);
+        }
+        peer_failed_err(peer->pps,
+                &peer->channel_id,
+                "Channel is already closed");
+    }
+
+    /* Corner case: we didn't send shutdown before because update_add_htlc
+     * pending, but now they're cleared by restart, and we're actually
+     * complete.  In that case, their `shutdown` will trigger us. */
+
+	/* Now, re-send any that we're supposed to be failing/fulfilling. */
+    for (resend_htlc = htlc_map_first(peer->channel->htlcs, &resend_it);
+         resend_htlc;
+         resend_htlc = htlc_map_next(peer->channel->htlcs, &resend_it)) {
+        if (resend_htlc->state == SENT_REMOVE_HTLC)
+            send_fail_or_fulfill(peer, resend_htlc);
+    }
+
+	/* Reset timer again since we just added more */
+ 	start_update_timer(peer);
 
     /* We allow peer to send us tx-sigs, until funding locked received */
     peer->tx_sigs_allowed = true;
@@ -2717,7 +2762,7 @@ static void init_channel(struct eltoo_peer *peer)
 				    &peer->cltv_delta,
 					&peer->last_sent_commit,
 				    &peer->next_index,
-				    &peer->updates_received,
+				    &peer->sigs_received,
 				    &peer->htlc_id,
 				    &htlcs,
 				    &peer->funding_locked[LOCAL],
@@ -2749,6 +2794,13 @@ static void init_channel(struct eltoo_peer *peer)
 	status_debug("Self psig for complete state: %s",
              type_to_string(tmpctx, struct partial_sig, &complete_state.self_psig));
 
+	/* FIXME Never set/updated on master side, don't need it */
+	assert(peer->sigs_received == 0);
+	if (complete_update_tx) {
+		/* If it's complete, that means I received that update */
+		peer->sigs_received = complete_update_tx->wtx->locktime - 500000000;
+	}
+
 	peer->final_index = tal_dup(peer, u32, &final_index);
 	peer->final_ext_key = tal_dup(peer, struct ext_key, &final_ext_key);
 
@@ -2763,10 +2815,10 @@ static void init_channel(struct eltoo_peer *peer)
 
 	status_debug("init %s: "
 		     " next_idx = %"PRIu64
-		     " updates_received = %"PRIu64,
+		     " sigs_received = %"PRIu64,
 		     side_to_str(opener),
 		     peer->next_index,
-		     peer->updates_received);
+		     peer->sigs_received);
 
 	if (remote_ann_node_sig && remote_ann_bitcoin_sig) {
 		peer->announcement_node_sigs[REMOTE] = *remote_ann_node_sig;
