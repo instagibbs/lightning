@@ -16,12 +16,13 @@ import pytest
 import re
 import subprocess
 import threading
+import time
 import unittest
 
 # In msats
 SAT = 1000
 
-def test_uncommitted_reestablishment(node_factory, bitcoind):
+def test_uncommitted_removal_reestablishment(node_factory, bitcoind):
 
     # Want offering node to disconnect right afer sending off update_xxx_htlc
     disconnects = ['+WIRE_UPDATE_FULFILL_HTLC']
@@ -33,6 +34,28 @@ def test_uncommitted_reestablishment(node_factory, bitcoind):
     l1.pay(l2, 100000*1000)
 
     wait_for(lambda: l2.rpc.listpeers()['peers'][0]['channels'][0]['in_fulfilled_msat'] == Millisatoshi(100000000))
+
+def test_uncommitted_addition_reestablishment(node_factory, bitcoind):
+
+    # Want offering node to disconnect right afer sending off update_xxx_htlc
+    disconnects = ['+WIRE_UPDATE_ADD_HTLC']
+
+    l1, l2 = node_factory.line_graph(2,
+                                    opts=[{'may_reconnect': True, 'disconnect': disconnects}, {'may_reconnect': True}])
+
+    # Pay comment will cause disconnect, and payment should fail hard
+    try:
+        l1.pay(l2, 100000*1000)
+        raise Exception('Should have raised RPCError')
+    except RpcError:
+        # FIXME better way of waiting for channel to be ready?
+        time.sleep(5)
+        pass
+
+    # But otherwise be ok on follow-up attempts
+    l1.pay(l2, 150000*1000)
+
+    wait_for(lambda: l2.rpc.listpeers()['peers'][0]['channels'][0]['in_fulfilled_msat'] == Millisatoshi(150000000))
 
 def test_eltoo_offerer_ack_reestablishment(node_factory, bitcoind):
     """Test that channel reestablishment does the expected thing when 
