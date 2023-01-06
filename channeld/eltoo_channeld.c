@@ -140,6 +140,7 @@ struct eltoo_peer {
 #endif
 	/* Information used for reestablishment. */
 	struct changed_htlc *last_sent_commit;
+	bool sent_uncommitted_removals; /* Have we sent uncommitted removals on reconnect? */
     /* FIXME figure out what goes here 
 	bool last_was_revoke;
 	u64 revocations_received;
@@ -807,12 +808,34 @@ static u8 *master_wait_sync_reply(const tal_t *ctx,
 	return reply;
 }
 
+static void send_fail_or_fulfill(struct eltoo_peer *peer, const struct htlc *h);
+
+static void maybe_send_uncommitted_removals(struct eltoo_peer *peer)
+{
+    const struct htlc *resend_htlc;
+    struct htlc_map_iter resend_it;
+	if (is_our_turn(peer) && !peer->sent_uncommitted_removals) {
+		for (resend_htlc = htlc_map_first(peer->channel->htlcs, &resend_it);
+			 resend_htlc;
+			 resend_htlc = htlc_map_next(peer->channel->htlcs, &resend_it)) {
+			if (resend_htlc->state == SENT_REMOVE_HTLC) {
+				send_fail_or_fulfill(peer, resend_htlc);
+			}
+		}
+		/* May have sent something */
+		start_update_timer(peer);
+		peer->sent_uncommitted_removals = true;
+	}
+}
+
 static void change_turn(struct eltoo_peer *peer, enum side turn)
 {
     assert(peer->turn == !turn);
     peer->turn = turn;
     peer->can_yield = true;
     status_debug("turn is now %s", side_to_str(turn));
+
+	maybe_send_uncommitted_removals(peer);
 }
 
 static void send_update(struct eltoo_peer *peer)
@@ -1992,8 +2015,6 @@ static void peer_reconnect(struct eltoo_peer *peer,
 	struct channel_id channel_id;
 	u64 remote_last_update_num;
 	struct partial_sig remote_update_psig;
-	const struct htlc *resend_htlc;
-	struct htlc_map_iter resend_it;
 	const u8 **premature_msgs = tal_arr(peer, const u8 *, 0);
 	u32 last_update_num = peer->next_index - 1;
 	/* This should still be valid even if we received an ack for this committed state */
@@ -2193,20 +2214,9 @@ static void peer_reconnect(struct eltoo_peer *peer,
      * pending, but now they're cleared by restart, and we're actually
      * complete.  In that case, their `shutdown` will trigger us. */
 
-	/* FIXME FIXME we can't send these unless it's our turn! Need to defer
-	 * actions, or something */
-	/* Now, re-send any that we're supposed to be failing/fulfilling. */
-    for (resend_htlc = htlc_map_first(peer->channel->htlcs, &resend_it);
-         resend_htlc;
-         resend_htlc = htlc_map_next(peer->channel->htlcs, &resend_it)) {
-        if (resend_htlc->state == SENT_REMOVE_HTLC) {
-            send_fail_or_fulfill(peer, resend_htlc);
-			/* FIXME this will obviously(?) break if we sent removal updates
-			   but not an update, then lose our turn on reconnect?  */
-			assert(is_our_turn(peer));
-		}
-    }
-	start_update_timer(peer);
+	/* Now, re-send any that we're supposed to be failing. (or send later as soon
+	 * as it's our turn) */
+	maybe_send_uncommitted_removals(peer);
 
     /* We allow peer to send us tx-sigs, until funding locked received */
     peer->tx_sigs_allowed = true;
@@ -2934,6 +2944,7 @@ int main(int argc, char *argv[])
 	peer->shutdown_wrong_funding = NULL;
 	peer->last_update_timestamp = 0;
 	peer->last_empty_commitment = 0;
+	peer->sent_uncommitted_removals = false;
 #if EXPERIMENTAL_FEATURES
 	peer->stfu = false;
 	peer->stfu_sent[LOCAL] = peer->stfu_sent[REMOTE] = false;

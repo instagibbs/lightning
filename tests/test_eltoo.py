@@ -21,6 +21,19 @@ import unittest
 # In msats
 SAT = 1000
 
+def test_uncommitted_reestablishment(node_factory, bitcoind):
+
+    # Want offering node to disconnect right afer sending off update_xxx_htlc
+    disconnects = ['+WIRE_UPDATE_FULFILL_HTLC']
+
+    l1, l2 = node_factory.line_graph(2,
+                                    opts=[{'may_reconnect': True}, {'may_reconnect': True, 'disconnect': disconnects}])
+
+    # Pay comment will cause disconnect, but should recover
+    l1.pay(l2, 100000*1000)
+
+    wait_for(lambda: l2.rpc.listpeers()['peers'][0]['channels'][0]['in_fulfilled_msat'] == Millisatoshi(100000000))
+
 def test_eltoo_offerer_ack_reestablishment(node_factory, bitcoind):
     """Test that channel reestablishment does the expected thing when 
        update signed ack didn't make it back to offerer. Reestablishment
@@ -36,8 +49,6 @@ def test_eltoo_offerer_ack_reestablishment(node_factory, bitcoind):
     l1.pay(l2, 100000*SAT)
 
     wait_for(lambda: l2.rpc.listpeers()['peers'][0]['channels'][0]['in_fulfilled_msat'] == Millisatoshi(100000000))
-
-
 
 def test_eltoo_uneven_reestablishment(node_factory, bitcoind):
     """Test that channel reestablishment does the expected thing when 
