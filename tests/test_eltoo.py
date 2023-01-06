@@ -71,21 +71,30 @@ def test_eltoo_offerer_ack_reestablishment(node_factory, bitcoind):
     # Pay comment will cause disconnect, but should recover
     l1.pay(l2, 100000*SAT)
 
+    # Offerer gets new partial sig on reestablishment
+    l1.daemon.wait_for_log("partial signature reestablish combine our_psig")
+
     wait_for(lambda: l2.rpc.listpeers()['peers'][0]['channels'][0]['in_fulfilled_msat'] == Millisatoshi(100000000))
 
+# FIXME getting psig combiner error here on the pay command
 def test_eltoo_uneven_reestablishment(node_factory, bitcoind):
     """Test that channel reestablishment does the expected thing when 
-       an update signed message was sent but not received by the recipient
+       an update signed message was "sent" but not received by the recipient
        before disconnect """
 
     # Want offering node to disconnect right before sending off update_signed
-    disconnects = ['+WIRE_UPDATE_SIGNED']
+    # So on reconnect offerer must replay all updates.
+    disconnects = ['-WIRE_UPDATE_SIGNED']
 
     l1, l2 = node_factory.line_graph(2,
                                     opts=[{'may_reconnect': True, 'disconnect': disconnects}, {'may_reconnect': True}])
 
     # Pay comment will cause disconnect, but should recover
     l1.pay(l2, 100000*SAT)
+
+    # Offerer sends whole update again
+    l1.daemon.wait_for_log('Retransmitting update')
+    l2.daemon.wait_for_log('Received update_sig')
 
     wait_for(lambda: l2.rpc.listpeers()['peers'][0]['channels'][0]['in_fulfilled_msat'] == Millisatoshi(100000000))
 

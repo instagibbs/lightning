@@ -2111,10 +2111,6 @@ static void peer_reconnect(struct eltoo_peer *peer,
 			const struct htlc **changed_htlcs = tal_arr(msg, const struct htlc *, 0);
 			struct bip340sig update_sig;
 
-//		if (memcmp(remote_update_psig.p_sig.data,
-//			peer->channel->eltoo_keyset->last_complete_state.other_psig,
-//			sizeof(remote_update_psig.p_sig.data)) != 0) {
-
 			peer->channel->eltoo_keyset.last_committed_state.other_psig = remote_update_psig;
 
 			status_debug("partial signature reestablish combine our_psig %s their_psig %s on update tx %s, settle tx %s, using our key %s, their key %s, inner pubkey %s, NEW our nonce %s, NEW their nonce %s, session %s",
