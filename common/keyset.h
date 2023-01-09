@@ -27,6 +27,10 @@ struct eltoo_keyset {
     /* MuSig2 key using funding keys as input, session
      non-empty once partial sig created locally! */
     struct pubkey inner_pubkey;
+    /* Cache for partial signature verification when checking
+     * sigs against inner_pubkey
+     */
+    struct musig_keyagg_cache inner_cache;
     struct nonce self_next_nonce, other_next_nonce;
     /* State we can go to chain with at any point. */
     struct eltoo_sign last_complete_state;

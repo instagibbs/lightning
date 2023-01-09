@@ -499,3 +499,12 @@ msgdata,channeld_sending_updatesig,settle_tx,bitcoin_tx,
 
 # Wait for reply, to make sure it's on disk before we send commit.
 msgtype,channeld_sending_updatesig_reply,1180
+
+# Reestablishment message to update MuSig2 signing state
+msgtype,channeld_resending_updatesig,1085
+msgdata,channeld_resending_updatesig,update_num,u64,
+msgdata,channeld_resending_updatesig,our_update_p_sig,partial_sig,
+msgdata,channeld_resending_updatesig,session,musig_session,
+
+# Wait for reply, to make sure it's on disk before we send commit.
+msgtype,channeld_resending_updatesig_reply,1185

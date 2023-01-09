@@ -1481,8 +1481,8 @@ static u8 *handle_combine_psig(struct hsmd_client *c, const u8 *msg_in)
                &session.session,
                &hash_out,
                &sig)) {
-        /* FIXME better complaint from hsmd */
-        return hsmd_status_malformed_request(c, msg_in);
+		return hsmd_status_bad_request(c, msg_in,
+				   "Failed to verify combined psigs");
     }
     return towire_hsmd_combine_psig_reply(NULL, &sig);
 }
@@ -1504,7 +1504,7 @@ static u8 *handle_psign_update_tx(struct hsmd_client *c, const u8 *msg_in)
 
     /* MuSig stuff */
     struct pubkey inner_pubkey;
-    secp256k1_musig_keyagg_cache keyagg_cache;
+    struct musig_keyagg_cache cache;
     const struct pubkey *pubkey_ptrs[2];
     const secp256k1_musig_pubnonce *pubnonce_ptrs[2];
     u8 *annex;
@@ -1544,7 +1544,7 @@ static u8 *handle_psign_update_tx(struct hsmd_client *c, const u8 *msg_in)
     pubkey_ptrs[0] = &remote_funding_pubkey;
     pubkey_ptrs[1] = &local_funding_pubkey;
     bipmusig_inner_pubkey(&inner_pubkey,
-               &keyagg_cache,
+               &cache.cache,
                pubkey_ptrs,
                /* n_pubkeys */ 2);
 
@@ -1574,7 +1574,7 @@ static u8 *handle_psign_update_tx(struct hsmd_client *c, const u8 *msg_in)
            pubnonce_ptrs,
            /* num_signers */ 2,
            &hash_out,
-           &keyagg_cache,
+           &cache.cache,
            &session.session,
            &p_sig.p_sig);
 
@@ -1582,10 +1582,10 @@ static u8 *handle_psign_update_tx(struct hsmd_client *c, const u8 *msg_in)
     bipmusig_gen_nonce(&musig_state_lookup->sec_nonce,
            &local_nonce.nonce,
            &secrets.funding_privkey,
-           &keyagg_cache,
+           &cache.cache,
            hash_out.sha.u.u8);
 
-	return towire_hsmd_psign_update_tx_reply(NULL, &p_sig, &session, &local_nonce, &inner_pubkey);
+	return towire_hsmd_psign_update_tx_reply(NULL, &p_sig, &session, &local_nonce, &inner_pubkey, &cache);
 }
 
 /* Should only be used if nonce for funded channel exists and new one will be sent to co-signer

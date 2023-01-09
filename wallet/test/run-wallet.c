@@ -313,6 +313,9 @@ bool fromwire_channeld_got_updatesig(const tal_t *ctx UNNEEDED, const void *p UN
 /* Generated stub for fromwire_channeld_offer_htlc_reply */
 bool fromwire_channeld_offer_htlc_reply(const tal_t *ctx UNNEEDED, const void *p UNNEEDED, u64 *id UNNEEDED, u8 **failuremsg UNNEEDED, wirestring **failurestr UNNEEDED)
 { fprintf(stderr, "fromwire_channeld_offer_htlc_reply called!\n"); abort(); }
+/* Generated stub for fromwire_channeld_resending_updatesig */
+bool fromwire_channeld_resending_updatesig(const void *p UNNEEDED, u64 *update_num UNNEEDED, struct partial_sig *our_update_p_sig UNNEEDED, struct musig_session *session UNNEEDED)
+{ fprintf(stderr, "fromwire_channeld_resending_updatesig called!\n"); abort(); }
 /* Generated stub for fromwire_channeld_sending_commitsig */
 bool fromwire_channeld_sending_commitsig(const tal_t *ctx UNNEEDED, const void *p UNNEEDED, u64 *commitnum UNNEEDED, struct penalty_base **pbase UNNEEDED, struct fee_states **fee_states UNNEEDED, struct height_states **blockheight_states UNNEEDED, struct changed_htlc **changed UNNEEDED)
 { fprintf(stderr, "fromwire_channeld_sending_commitsig called!\n"); abort(); }
@@ -704,6 +707,9 @@ u8 *towire_channeld_got_updatesig_reply(const tal_t *ctx UNNEEDED)
 /* Generated stub for towire_channeld_offer_htlc */
 u8 *towire_channeld_offer_htlc(const tal_t *ctx UNNEEDED, struct amount_msat amount_msat UNNEEDED, u32 cltv_expiry UNNEEDED, const struct sha256 *payment_hash UNNEEDED, const u8 onion_routing_packet[1366] UNNEEDED, const struct pubkey *path_key UNNEEDED, const u8 *extra_tlvs UNNEEDED)
 { fprintf(stderr, "towire_channeld_offer_htlc called!\n"); abort(); }
+/* Generated stub for towire_channeld_resending_updatesig_reply */
+u8 *towire_channeld_resending_updatesig_reply(const tal_t *ctx UNNEEDED)
+{ fprintf(stderr, "towire_channeld_resending_updatesig_reply called!\n"); abort(); }
 /* Generated stub for towire_channeld_sending_commitsig_reply */
 u8 *towire_channeld_sending_commitsig_reply(const tal_t *ctx UNNEEDED)
 { fprintf(stderr, "towire_channeld_sending_commitsig_reply called!\n"); abort(); }

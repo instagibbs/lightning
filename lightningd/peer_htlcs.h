@@ -24,6 +24,7 @@ void peer_got_commitsig(struct channel *channel, const u8 *msg);
 void peer_got_revoke(struct channel *channel, const u8 *msg);
 
 void peer_sending_updatesig(struct channel *channel, const u8 *msg);
+void peer_resending_updatesig(struct channel *channel, const u8 *msg);
 void peer_got_updatesig(struct channel *channel, const u8 *msg);
 void peer_got_ack(struct channel *channel, const u8 *msg);
 

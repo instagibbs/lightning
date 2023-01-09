@@ -463,6 +463,7 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
 	struct channel_id cid;
 	struct wally_tx_output *direct_outputs[NUM_SIDES];
     struct bip340sig update_sig;
+	struct musig_keyagg_cache cache;
 
     /* Dummy fields since they're unused at time of channel creation */
     struct eltoo_sign dummy_complete_state;
@@ -595,7 +596,7 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
 
 	msg = wire_sync_read(tmpctx, HSM_FD);
 	if (!fromwire_hsmd_psign_update_tx_reply(msg, &state->channel->eltoo_keyset.last_committed_state.self_psig,
-        &state->channel->eltoo_keyset.last_committed_state.session, &state->channel->eltoo_keyset.self_next_nonce, &state->channel->eltoo_keyset.inner_pubkey))
+        &state->channel->eltoo_keyset.last_committed_state.session, &state->channel->eltoo_keyset.self_next_nonce, &state->channel->eltoo_keyset.inner_pubkey, &cache))
 		status_failed(STATUS_FAIL_HSM_IO, "Bad sign_tx_reply %s",
 			      tal_hex(tmpctx, msg));
 
@@ -778,6 +779,7 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 	struct wally_tx_output *direct_outputs[NUM_SIDES];
     /* Stored here before channel struct is made, then copied in */
     struct nonce their_second_nonce;
+	struct musig_keyagg_cache cache;
 
     /* Dummy fields since they're unused at time of channel creation */
     struct eltoo_sign dummy_complete_state;
@@ -1119,7 +1121,7 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
     /* Reply puts next nonce into keyset and xmitted with funding_signed_eltoo */
 	if (!fromwire_hsmd_psign_update_tx_reply(msg,
         &state->channel->eltoo_keyset.last_committed_state.self_psig, &state->channel->eltoo_keyset.last_committed_state.session,
-        &state->channel->eltoo_keyset.self_next_nonce, &state->channel->eltoo_keyset.inner_pubkey))
+        &state->channel->eltoo_keyset.self_next_nonce, &state->channel->eltoo_keyset.inner_pubkey, &cache))
 		status_failed(STATUS_FAIL_HSM_IO,
 			      "Bad sign_tx_reply %s", tal_hex(tmpctx, msg));
 

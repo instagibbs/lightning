@@ -1,6 +1,7 @@
 #ifndef LIGHTNING_BITCOIN_SIGNATURE_H
 #define LIGHTNING_BITCOIN_SIGNATURE_H
 #include "config.h"
+#include <bitcoin/pubkey.h>
 #include <ccan/short_types/short_types.h>
 #include <ccan/tal/tal.h>
 #include <secp256k1.h>
@@ -37,6 +38,11 @@ struct partial_sig {
 /* State required(along with pubkey) to bring partial_sig's together */
 struct musig_session {
     secp256k1_musig_session session;
+};
+
+/* Primarily used to validate partial signatures separately */
+struct musig_keyagg_cache {
+    secp256k1_musig_keyagg_cache cache;
 };
 
 #define SIGHASH_MASK 0x7F
@@ -218,6 +224,15 @@ bool bipmusig_partial_sigs_combine(const secp256k1_musig_partial_sig * const *p_
            struct bip340sig *sig);
 
 /**
+ * bipmusig_partial_sig_verify - Verifies partial signatures separately
+ */
+bool bipmusig_partial_sig_verify(const struct partial_sig *p_sig,
+                                const struct nonce *signer_nonce,
+                                const struct pubkey *signer_pk,
+                                const struct musig_keyagg_cache *keyagg_cache,
+                                struct musig_session *session);
+
+/**
  * check_signed_hash - check a raw secp256k1 signature.
  * @h: hash which was signed.
  * @signature: signature.
@@ -336,6 +351,10 @@ void fromwire_partial_sig(const u8 **cursor, size_t *max,
 void towire_musig_session(u8 **pptr, const struct musig_session *session);
 void fromwire_musig_session(const u8 **cursor, size_t *max,
 			struct musig_session *session);
+
+void towire_musig_keyagg_cache(u8 **pptr, const struct musig_keyagg_cache *cache);
+void fromwire_musig_keyagg_cache(const u8 **cursor, size_t *max,
+            struct musig_keyagg_cache *cache);
 
 /* Get a hex string sig */
 char *fmt_signature(const tal_t *ctx, const secp256k1_ecdsa_signature *sig);
