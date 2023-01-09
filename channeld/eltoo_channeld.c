@@ -2278,8 +2278,9 @@ static void peer_reconnect(struct eltoo_peer *peer,
 		resend_updates(peer, peer->last_sent_commit);
 	} else if (remote_last_update_num == last_update_num + 1) {
 		/* They say they committed but we didn't get it.
-		 * We will not use the psig.
-		 * It's their turn; return to normal operation with fresh nonces.
+		 * We will not use the psig in this message.
+		 * It's their turn; return to normal operation with fresh nonces
+		 * since we expect rebroadcast.
 		 */
 		peer->turn = REMOTE;
 	} else {
