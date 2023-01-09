@@ -1283,8 +1283,8 @@ static void handle_peer_update_sig(struct eltoo_peer *peer, const u8 *msg)
     wire_sync_write(HSM_FD, take(msg));
     msg = wire_sync_read(tmpctx, HSM_FD);
     if (!fromwire_hsmd_combine_psig_reply(msg, &update_sig)) {
-        status_failed(STATUS_FAIL_HSM_IO,
-                  "Bad combine_psig reply %s", tal_hex(tmpctx, msg));
+		peer_failed_warn(peer->pps, &peer->channel_id,
+			"Bad update_sig %s", tal_hex(msg, msg));
     }
 
     /* Now that we've checked the update, migrate all signing state from last_committed_state to last_complete_state */
@@ -1385,21 +1385,9 @@ static void handle_peer_update_sig_ack(struct eltoo_peer *peer, const u8 *msg)
     wire_sync_write(HSM_FD, take(comb_msg));
     comb_msg = wire_sync_read(tmpctx, HSM_FD);
 
-// FIXME FIXME failure?
-//	/* Keyagg cache/session etc lets us verify partial sig; do that for blame purposes */
-//	if (!bipmusig_partial_sig_verify(&peer->channel->eltoo_keyset.last_committed_state.other_psig,
-//			&peer->channel->eltoo_keyset.other_next_nonce,
-//			&peer->channel->eltoo_keyset.other_funding_key,
-//			&cache,
-//			&peer->channel->eltoo_keyset.last_committed_state.session)) {
-//		peer_failed_warn(peer->pps, &peer->channel_id,
-//				 "Bad update_signed; invalid partial signature %s", tal_hex(msg, msg));
-//	}
-
 	if (!fromwire_hsmd_combine_psig_reply(comb_msg, &update_sig))
-		status_failed(STATUS_FAIL_HSM_IO,
-			      "Bad hsmd_combine_psig_reply: %s",
-			      tal_hex(tmpctx, comb_msg));
+		peer_failed_warn(peer->pps, &peer->channel_id,
+				 "Bad update_signed_ack %s", tal_hex(msg, msg));
 
     /* Update looks good, move state over and wipe committed */
 	migrate_committed_to_complete(peer);
@@ -2253,8 +2241,8 @@ static void peer_reconnect(struct eltoo_peer *peer,
 			wire_sync_write(HSM_FD, take(msg));
 			msg = wire_sync_read(tmpctx, HSM_FD);
 			if (!fromwire_hsmd_combine_psig_reply(msg, &update_sig)) {
-				status_failed(STATUS_FAIL_HSM_IO,
-						  "Bad reestablish combine_psig reply %s", tal_hex(tmpctx, msg));
+				peer_failed_warn(peer->pps, &peer->channel_id,
+					"Bad reestablish psig %s", tal_hex(msg, msg));
 			}
 
 			/* Migrate over and continue */
