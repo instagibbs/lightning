@@ -1357,6 +1357,7 @@ migrate_inflight_last_tx_to_psbt(struct lightningd *ld, struct db *db,
 		if (!psbt_input_set_signature(last_tx->psbt, 0,
 					      &remote_funding_pubkey, &last_sig))
 			abort();
+		/* FIXME crashes below */
 		psbt_input_add_pubkey(last_tx->psbt, 0,
 		    &local_funding_pubkey);
 		psbt_input_add_pubkey(last_tx->psbt, 0,
@@ -1432,7 +1433,6 @@ void migrate_last_tx_to_psbt(struct lightningd *ld, struct db *db,
 
 		funding_wscript = bitcoin_redeem_2of2(stmt, &local_funding_pubkey,
 						      &remote_funding_pubkey);
-
 
 		psbt_input_set_wit_utxo(last_tx->psbt, 0,
 					scriptpubkey_p2wsh(last_tx->psbt, funding_wscript),

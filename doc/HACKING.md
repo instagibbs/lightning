@@ -174,6 +174,15 @@ Re-run `configure` and build using `make`:
 make -j$(nproc)
 ```
 
+Messing with subtrees:
+```
+> edit .gitmodule file
+git submodule sync --recursive
+cd external/<module>
+git fetch
+cd ../..
+# Do this any time you have an update ready for the branch
+git submodule update --remote external/<module>
 
 Testing
 -------

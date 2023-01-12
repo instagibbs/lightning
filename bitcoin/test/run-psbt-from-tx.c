@@ -105,7 +105,8 @@ int main(int argc, char *argv[])
 
 	/* Witness/scriptsig data is saved down into psbt */
 	assert(tx2->psbt->num_inputs == 1);
-	assert(tx2->psbt->inputs[0].final_scriptsig_len > 0);
+	const struct wally_map_item *final_scriptsig = wally_map_get_integer(&tx2->psbt->inputs[0].psbt_fields, /* PSBT_IN_FINAL_SCRIPTSIG */ 0x07);
+	assert(final_scriptsig->value_len > 0);
 	assert(tx2->psbt->inputs[0].final_witness != NULL);
 
 	common_shutdown();
