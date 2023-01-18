@@ -82,7 +82,7 @@ SLOW_MACHINE = env("SLOW_MACHINE", "0") == "1"
 DEPRECATED_APIS = env("DEPRECATED_APIS", "0") == "1"
 TIMEOUT = int(env("TIMEOUT", 180 if SLOW_MACHINE else 60))
 EXPERIMENTAL_DUAL_FUND = env("EXPERIMENTAL_DUAL_FUND", "0") == "1"
-GDB = env("GDBLIGHTD", "0") == "1"
+
 
 def wait_for(success, timeout=TIMEOUT):
     start_time = time.time()
@@ -794,9 +794,6 @@ class LightningNode(object):
             # Reduce precision of errors, speeding startup and reducing memory greatly:
             if SLOW_MACHINE:
                 self.daemon.cmd_prefix += ['--read-inline-info=no']
-        if GDB:
-            self.daemon.cmd_prefix += ['gdb']
-            self.daemon.cmd_prefix += ['--args']
 
     def _create_rpc(self, jsonschemas):
         """Prepares anything related to the RPC.
