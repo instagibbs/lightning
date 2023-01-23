@@ -846,3 +846,30 @@ struct amount_sat psbt_compute_fee(const struct wally_psbt *psbt)
 
 	return fee;
 }
+
+u32 psbt_get_tx_locktime(const struct wally_psbt *psbt)
+{
+	u32 locktime = 0; /* TIME based lock only */
+	u32 lockheight = 0;
+	for (size_t i = 0; i < psbt->num_inputs; i++) {
+		if (psbt->inputs[i].required_locktime  > locktime) {
+			locktime = psbt->inputs[i].required_locktime;
+		}
+		if (psbt->inputs[i].required_lockheight > lockheight) {
+			lockheight = psbt->inputs[i].required_lockheight;
+		}
+	}
+	if (lockheight > 0) {
+		/* Input heights dominate */
+		return lockheight;
+	} else if (locktime > 0) {
+		/* Then input times */
+		return locktime;
+	} else if (psbt->has_fallback_locktime) {
+		/* Finally fallback */
+		return psbt->fallback_locktime;
+	} else {
+		/* Which has a default of 0 */
+		return 0;
+	}
+}
