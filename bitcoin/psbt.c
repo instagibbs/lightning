@@ -68,7 +68,7 @@ struct wally_psbt *new_psbt(const tal_t *ctx, const struct wally_tx *wtx)
 
 	/* locktime set in create_psbt for now */
 	psbt->tx_version = wtx->version;
-	psbt->tx_modifiable_flags = 1;
+	psbt->tx_modifiable_flags = WALLY_PSBT_TXMOD_INPUTS | WALLY_PSBT_TXMOD_OUTPUTS;
 
 	for (size_t i = 0; i < wtx->num_inputs; i++) {
 		wally_err = wally_psbt_add_tx_input_at(psbt, i, 0, &wtx->inputs[i]);
@@ -785,9 +785,11 @@ void psbt_txid(const tal_t *ctx,
 	       struct wally_tx **wtx)
 {
 	assert(psbt->version == 2);
+	tal_wally_start();
 	if (wally_psbt_get_id(psbt, 0 /* flags */, txid->shad.sha.u.u8, sizeof(txid->shad.sha.u.u8)) != WALLY_OK) {
 		abort();
 	}
+	tal_wally_end(ctx);
 }
 
 struct amount_sat psbt_compute_fee(const struct wally_psbt *psbt)

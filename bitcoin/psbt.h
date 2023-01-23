@@ -228,6 +228,7 @@ struct amount_sat psbt_compute_fee(const struct wally_psbt *psbt);
 bool psbt_has_input(const struct wally_psbt *psbt,
 		    const struct bitcoin_outpoint *outpoint);
 
+/* FIXME oops just use this wally_psbt_get_locktime */
 /* psbt_get_tx_locktime - Get effective locktime for a psbt
  * See: https://github.com/bitcoin/bips/blob/master/bip-0370.mediawiki#determining-lock-time
  *

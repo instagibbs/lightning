@@ -185,10 +185,10 @@ void bitcoin_tx_set_locktime(struct bitcoin_tx *tx, u32 locktime)
 }
 
 /* FIXME Stolen from psbt_append_input; export? */
-static void wally_tx_input_from_outpoint_sequence(struct wally_tx_input *tx_in,
-			const struct bitcoin_outpoint *outpoint,
+static struct wally_tx_input *wally_tx_input_from_outpoint_sequence(const struct bitcoin_outpoint *outpoint,
 			u32 sequence)
 {
+	struct wally_tx_input *tx_in;
     if (chainparams->is_elements) {
         if (wally_tx_elements_input_init_alloc(outpoint->txid.shad.sha.u.u8,
                                sizeof(outpoint->txid.shad.sha.u.u8),
@@ -209,6 +209,7 @@ static void wally_tx_input_from_outpoint_sequence(struct wally_tx_input *tx_in,
                           &tx_in) != WALLY_OK)
             abort();
     }
+	return tx_in;
 }
 
 int bitcoin_tx_add_input(struct bitcoin_tx *tx,
@@ -219,9 +220,7 @@ int bitcoin_tx_add_input(struct bitcoin_tx *tx,
 {
 	int wally_err;
 	int input_num = tx->wtx->num_inputs;
-	struct wally_tx_input tx_input;
-
-	wally_tx_input_from_outpoint_sequence(&tx_input, outpoint, sequence);
+	struct wally_tx_input *tx_input;
 
 	psbt_append_input(tx->psbt, outpoint,
 			  sequence, scriptSig,
@@ -236,9 +235,11 @@ int bitcoin_tx_add_input(struct bitcoin_tx *tx,
 				scriptPubkey, amount);
 
 	tal_wally_start();
+	tx_input = wally_tx_input_from_outpoint_sequence(outpoint, sequence);
 	wally_err = wally_tx_add_input(tx->wtx,
-				       &tx_input);
+			       tx_input);
 	assert(wally_err == WALLY_OK);
+	wally_tx_input_free(tx_input);
 
 	/* scriptsig isn't actually stored in psbt input, so add that now */
 	wally_tx_set_input_script(tx->wtx, input_num,
