@@ -58,16 +58,10 @@ static int compare_outputs_at(const struct output_set *a,
 }
 
 static const u8 *linearize_input(const tal_t *ctx,
-				 const struct wally_psbt_input *in,
-				 const struct wally_tx_input *tx_in)
+				 const struct wally_psbt_input *in)
 {
 	struct wally_psbt *psbt = create_psbt(NULL, 1, 0, 0);
 	size_t byte_len;
-
-	tal_wally_start();
-	if (wally_tx_add_input(psbt->tx, tx_in) != WALLY_OK)
-		abort();
-	tal_wally_end(psbt->tx);
 
 	psbt->inputs[0] = *in;
 	psbt->num_inputs++;
@@ -93,8 +87,7 @@ static const u8 *linearize_input(const tal_t *ctx,
 }
 
 static const u8 *linearize_output(const tal_t *ctx,
-				  const struct wally_psbt_output *out,
-				  const struct wally_tx_output *tx_out)
+				  const struct wally_psbt_output *out)
 {
 	struct wally_psbt *psbt = create_psbt(NULL, 1, 1, 0);
 	size_t byte_len;
@@ -103,11 +96,6 @@ static const u8 *linearize_output(const tal_t *ctx,
 	/* Add a 'fake' input so this will linearize the tx */
 	memset(&outpoint, 0, sizeof(outpoint));
 	psbt_append_input(psbt, &outpoint, 0, NULL, NULL, NULL);
-
-	tal_wally_start();
-	if (wally_tx_add_output(psbt->tx, tx_out) != WALLY_OK)
-		abort();
-	tal_wally_end(psbt->tx);
 
 	psbt->outputs[0] = *out;
 	psbt->num_outputs++;
@@ -119,6 +107,11 @@ static const u8 *linearize_output(const tal_t *ctx,
 	/* And you can add scripts, no problem */
 	wally_psbt_output_set_witness_script(&psbt->outputs[0], NULL, 0);
 	wally_psbt_output_set_redeem_script(&psbt->outputs[0], NULL, 0);
+
+	/* libwally doesn't want to see empty txhash;
+	 * thinks it's the caller's mistake
+	 */
+	psbt->inputs[0].txhash[0] = 1;
 
 	const u8 *bytes = psbt_get_bytes(ctx, psbt, &byte_len);
 
@@ -134,11 +127,9 @@ static bool input_identical(const struct wally_psbt *a,
 			    size_t b_index)
 {
 	const u8 *a_in = linearize_input(tmpctx,
-					 &a->inputs[a_index],
-					 &a->tx->inputs[a_index]);
+					 &a->inputs[a_index]);
 	const u8 *b_in = linearize_input(tmpctx,
-					 &b->inputs[b_index],
-					 &b->tx->inputs[b_index]);
+					 &b->inputs[b_index]);
 
 	return memeq(a_in, tal_bytelen(a_in),
 		     b_in, tal_bytelen(b_in));
@@ -150,11 +141,9 @@ static bool output_identical(const struct wally_psbt *a,
 			     size_t b_index)
 {
 	const u8 *a_out = linearize_output(tmpctx,
-					   &a->outputs[a_index],
-					   &a->tx->outputs[a_index]);
+					   &a->outputs[a_index]);
 	const u8 *b_out = linearize_output(tmpctx,
-					   &b->outputs[b_index],
-					   &b->tx->outputs[b_index]);
+					   &b->outputs[b_index]);
 	return memeq(a_out, tal_bytelen(a_out),
 		     b_out, tal_bytelen(b_out));
 }

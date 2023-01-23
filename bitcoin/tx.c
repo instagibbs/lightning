@@ -576,8 +576,9 @@ struct bitcoin_tx *bitcoin_tx_with_psbt(const tal_t *ctx, struct wally_psbt *psb
 	tx->wtx = psbt_final_tx(tx, psbt);
 	if (!tx->wtx) {
 		tal_wally_start();
-		if (wally_tx_clone_alloc(psbt->tx, 0, &tx->wtx) != WALLY_OK)
+		if (wally_psbt_extract(psbt, WALLY_PSBT_EXTRACT_NON_FINAL, &tx->wtx) != WALLY_OK) {
 			tx->wtx = NULL;
+		}
 		tal_wally_end_onto(tx, tx->wtx, struct wally_tx);
 		if (!tx->wtx)
 			return tal_free(tx);
