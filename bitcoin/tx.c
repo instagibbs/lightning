@@ -180,7 +180,35 @@ static int elements_tx_add_fee_output(struct bitcoin_tx *tx)
 void bitcoin_tx_set_locktime(struct bitcoin_tx *tx, u32 locktime)
 {
 	tx->wtx->locktime = locktime;
-	tx->psbt->tx->locktime = locktime;
+	tx->psbt->fallback_locktime = locktime;
+	tx->psbt->has_fallback_locktime = true;
+}
+
+/* FIXME Stolen from psbt_append_input; export? */
+static void wally_tx_input_from_outpoint_sequence(struct wally_tx_input *tx_in,
+			const struct bitcoin_outpoint *outpoint,
+			u32 sequence)
+{
+    if (chainparams->is_elements) {
+        if (wally_tx_elements_input_init_alloc(outpoint->txid.shad.sha.u.u8,
+                               sizeof(outpoint->txid.shad.sha.u.u8),
+                               outpoint->n,
+                               sequence, NULL, 0,
+                               NULL,
+                               NULL, 0,
+                               NULL, 0, NULL, 0,
+                               NULL, 0, NULL, 0,
+                               NULL, 0, NULL,
+                               &tx_in) != WALLY_OK)
+            abort();
+    } else {
+        if (wally_tx_input_init_alloc(outpoint->txid.shad.sha.u.u8,
+                          sizeof(outpoint->txid.shad.sha.u.u8),
+                          outpoint->n,
+                          sequence, NULL, 0, NULL,
+                          &tx_in) != WALLY_OK)
+            abort();
+    }
 }
 
 int bitcoin_tx_add_input(struct bitcoin_tx *tx,
@@ -191,6 +219,9 @@ int bitcoin_tx_add_input(struct bitcoin_tx *tx,
 {
 	int wally_err;
 	int input_num = tx->wtx->num_inputs;
+	struct wally_tx_input tx_input;
+
+	wally_tx_input_from_outpoint_sequence(&tx_input, outpoint, sequence);
 
 	psbt_append_input(tx->psbt, outpoint,
 			  sequence, scriptSig,
@@ -206,7 +237,7 @@ int bitcoin_tx_add_input(struct bitcoin_tx *tx,
 
 	tal_wally_start();
 	wally_err = wally_tx_add_input(tx->wtx,
-				       &tx->psbt->tx->inputs[input_num]);
+				       &tx_input);
 	assert(wally_err == WALLY_OK);
 
 	/* scriptsig isn't actually stored in psbt input, so add that now */
@@ -257,10 +288,6 @@ void bitcoin_tx_output_set_amount(struct bitcoin_tx *tx, int outnum,
 		    satoshis, output->value, output->value_len);
 		assert(ret == WALLY_OK);
 	} else {
-		output->satoshi = satoshis;
-
-		/* update the global tx for the psbt also */
-		output = &tx->psbt->tx->outputs[outnum];
 		output->satoshi = satoshis;
 	}
 }
@@ -539,9 +566,9 @@ void bitcoin_tx_finalize(struct bitcoin_tx *tx)
 struct bitcoin_tx *bitcoin_tx_with_psbt(const tal_t *ctx, struct wally_psbt *psbt STEALS)
 {
 	struct bitcoin_tx *tx = bitcoin_tx(ctx, chainparams,
-					   psbt->tx->num_inputs,
-					   psbt->tx->num_outputs,
-					   psbt->tx->locktime);
+					   psbt->num_inputs,
+					   psbt->num_outputs,
+					   psbt_get_tx_locktime(psbt));
 	wally_tx_free(tx->wtx);
 
 	psbt_finalize(psbt);

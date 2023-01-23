@@ -91,6 +91,9 @@ struct wally_tx *psbt_final_tx(const tal_t *ctx UNNEEDED, const struct wally_psb
 /* Generated stub for psbt_finalize */
 bool psbt_finalize(struct wally_psbt *psbt UNNEEDED)
 { fprintf(stderr, "psbt_finalize called!\n"); abort(); }
+/* Generated stub for psbt_get_tx_locktime */
+u32 psbt_get_tx_locktime(const struct wally_psbt *psbt UNNEEDED)
+{ fprintf(stderr, "psbt_get_tx_locktime called!\n"); abort(); }
 /* Generated stub for psbt_input_get_amount */
 struct amount_sat psbt_input_get_amount(const struct wally_psbt *psbt UNNEEDED,
 					size_t in UNNEEDED)
