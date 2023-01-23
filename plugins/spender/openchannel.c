@@ -112,9 +112,19 @@ static bool update_parent_psbt(const tal_t *ctx,
 		if (s_idx != -1)
 			goto fail;
 
-		psbt_add_input(clone,
-			       &changes->added_ins[i].tx_input,
-			       idx);
+		const struct wally_psbt_input *input = &changes->added_ins[i].input;
+		struct bitcoin_outpoint outpoint;
+		wally_psbt_input_get_outpoint(input, &outpoint);
+		psbt_append_input(clone,
+					&outpoint,
+                    input->sequence,
+                    NULL /* scriptSig */,
+                    NULL /* input_wscript */,
+                    NULL /* redeemscript */);
+					
+//		psbt_add_input(clone,
+//			       &changes->added_ins[i].tx_input,
+//			       idx);
 		/* Move the input over */
 		clone->inputs[idx] = *in;
 
@@ -172,9 +182,9 @@ static bool update_parent_psbt(const tal_t *ctx,
 		if (s_idx != -1)
 			goto fail;
 
-		psbt_add_output(clone,
-				&changes->added_outs[i].tx_output,
-				idx);
+		const struct wally_psbt_output *output = &changes->added_outs[i].output;
+		psbt_append_output(clone, output->script, amount_sat(output->amount));
+
 		/* Move output over */
 		clone->outputs[idx] = *out;
 

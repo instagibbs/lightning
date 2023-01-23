@@ -117,7 +117,7 @@ start_nodes() {
         #echo "$LIGHTNINGD" "--lightning-dir=/tmp/l$i-$network"
         #sleep 100
 		test -f "/tmp/l$i-$network/lightningd-$network.pid" || \
-		    "$LIGHTNINGD" "--lightning-dir=/tmp/l$i-$network" &
+		    "$LIGHTNINGD" "--lightning-dir=/tmp/l$i-$network" "--dev-debugger=dualopend" &
 		# shellcheck disable=SC2139 disable=SC2086
 		alias l$i-cli="$LCLI --lightning-dir=/tmp/l$i-$network"
 		# shellcheck disable=SC2139 disable=SC2086
@@ -147,7 +147,9 @@ start_ln() {
 		# Modern bitcoind needs createwallet
 		echo "Making \"default\" bitcoind wallet."
 		bitcoin-cli -regtest createwallet default >/dev/null 2>&1
-		bitcoin-cli -regtest generatetoaddress 1 "$(bitcoin-cli -regtest getnewaddress)" > /dev/null
+        # But it might already exist, load it
+    	bitcoin-cli -regtest loadwallet default
+   		bitcoin-cli -regtest generatetoaddress 1 "$(bitcoin-cli -regtest getnewaddress)" > /dev/null
 	else
 		bitcoin-cli -regtest loadwallet default
 	fi

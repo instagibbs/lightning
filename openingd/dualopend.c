@@ -248,8 +248,8 @@ static u8 *psbt_changeset_get_next(const tal_t *ctx,
 			script = NULL;
 
 		msg = towire_tx_add_input(ctx, cid, serial_id,
-					  prevtx, in->tx_input.index,
-					  in->tx_input.sequence,
+					  prevtx, in->input.index,
+					  in->input.sequence,
 					  script);
 
 		tal_arr_remove(&set->added_ins, 0);
@@ -273,10 +273,10 @@ static u8 *psbt_changeset_get_next(const tal_t *ctx,
 		if (!psbt_get_serial_id(&out->output.unknowns, &serial_id))
 			abort();
 
-		asset_amt = wally_tx_output_get_amount(&out->tx_output);
+		asset_amt = wally_psbt_output_get_amount(&out->output);
 		sats = amount_asset_to_sat(&asset_amt);
-		const u8 *script = wally_tx_output_get_script(ctx,
-							      &out->tx_output);
+		const u8 *script = wally_psbt_output_get_script(ctx,
+							      &out->output);
 
 		msg = towire_tx_add_output(ctx, cid, serial_id,
 					   sats.satoshis, /* Raw: wire interface */

@@ -212,7 +212,6 @@ void psbt_sort_by_serial_id(struct wally_psbt *psbt)
 	do {							\
 		struct type##_set a;				\
 		a.type = from->type##s[index];			\
-		a.tx_##type = from->tx->type##s[index]; 	\
 		a.idx = index;					\
 		tal_arr_expand(&add_to, a);			\
 	} while (0)
