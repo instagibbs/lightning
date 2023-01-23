@@ -252,6 +252,9 @@ const u8 *wally_psbt_output_get_script(const tal_t *ctx,
 void wally_psbt_input_get_txid(const struct wally_psbt_input *in,
                  struct bitcoin_txid *txid);
 
+struct amount_asset
+wally_psbt_output_get_amount(const struct wally_psbt_output *output);
+
 struct wally_psbt *psbt_from_b64(const tal_t *ctx,
 				 const char *b64,
 				 size_t b64len);

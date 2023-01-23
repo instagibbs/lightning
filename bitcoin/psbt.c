@@ -364,13 +364,14 @@ void psbt_elements_input_set_asset(struct wally_psbt *psbt, size_t in,
 /* FIXME migrate PSET to v2 */
 void psbt_elements_normalize_fees(struct wally_psbt *psbt)
 {
-	abort();
 	struct amount_asset asset;
 	size_t fee_output_idx = psbt->num_outputs;
 
 	if (!is_elements(chainparams))
 		return;
 
+	// FIXME We don't actually handle this yet
+	abort();
 	/* Elements requires that every input value is accounted for,
 	 * including the fees */
 	struct amount_sat total_in = AMOUNT_SAT(0), val;
@@ -779,47 +780,16 @@ struct wally_psbt *fromwire_wally_psbt(const tal_t *ctx,
 	return psbt;
 }
 
-/* This only works on a non-final psbt because we're ALL SEGWIT! */
 void psbt_txid(const tal_t *ctx,
 	       const struct wally_psbt *psbt, struct bitcoin_txid *txid,
 	       struct wally_tx **wtx)
 {
-	struct wally_tx *tx;
-
-	/* You can *almost* take txid of global tx.  But @niftynei thought
-	 * about this far more than me and pointed out that P2SH
-	 * inputs would not be represented, so here we go. */
-	tal_wally_start();
-	wally_tx_clone_alloc(psbt->tx, 0, &tx);
-
-	for (size_t i = 0; i < tx->num_inputs; i++) {
-		const struct wally_map_item *final_scriptsig = wally_map_get_integer(&psbt->inputs[i].psbt_fields, /* PSBT_IN_FINAL_SCRIPTSIG */ 0x07);
-		const struct wally_map_item *redeem_script = wally_map_get_integer(&psbt->inputs[i].psbt_fields, /* PSBT_IN_REDEEM_SCRIPT */ 0x04);
-		if (final_scriptsig) {
-			wally_tx_set_input_script(tx, i,
-						  final_scriptsig->value,
-						  final_scriptsig->value_len);
-		} else if (redeem_script) {
-			u8 *script;
-
-			/* P2SH requires push of the redeemscript, from libwally src */
-			script = tal_arr(tmpctx, u8, 0);
-			script_push_bytes(&script,
-					  redeem_script->value,
-					  redeem_script->value_len);
-			wally_tx_set_input_script(tx, i, script, tal_bytelen(script));
-		}
+	assert(psbt->version == 2);
+	if (wally_psbt_get_id(psbt, 0 /* flags */, txid->shad.sha.u.u8, sizeof(txid->shad.sha.u.u8)) != WALLY_OK) {
+		abort();
 	}
-	tal_wally_end_onto(ctx, tx, struct wally_tx);
-
-	wally_txid(tx, txid);
-	if (wtx)
-		*wtx = tx;
-	else
-		wally_tx_free(tx);
 }
 
-/* FIXME PSETv2 */
 struct amount_sat psbt_compute_fee(const struct wally_psbt *psbt)
 {
 	struct amount_sat fee, input_amt;
@@ -906,3 +876,32 @@ const u8 *wally_psbt_output_get_script(const tal_t *ctx,
     return tal_dup_arr(ctx, u8, output->script, output->script_len, 0);
 }
 
+/* FIXME(cdecker) Make the caller pass in a reference to amount_asset, and
+ * return false if unintelligible/encrypted. (WARN UNUSED). */
+struct amount_asset
+wally_psbt_output_get_amount(const struct wally_psbt_output *output)
+{
+    struct amount_asset amount;
+    //be64 raw;
+
+    if (chainparams->is_elements) {
+		abort(); // FIXME pset_fields required
+        //assert(output->asset_len == sizeof(amount.asset));
+        //memcpy(&amount.asset, output->asset, sizeof(amount.asset));
+        /* We currently only support explicit value
+         * asset tags, others are confidential, so
+         * don't even try to assign a value to it. */
+        //if (output->asset[0] == 0x01) {
+        //    memcpy(&raw, output->value + 1, sizeof(raw));
+        //    amount.value = be64_to_cpu(raw);
+        //} else {
+        //    amount.value = 0;
+        //}
+    } else {
+        /* Do not assign amount.asset, we should never touch it in
+         * non-elements scenarios. */
+        amount.value = output->amount;
+    }
+
+    return amount;
+}
