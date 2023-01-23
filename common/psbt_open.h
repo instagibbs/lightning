@@ -15,6 +15,7 @@ struct wally_psbt_output;
 struct wally_map;
 
 struct input_set {
+    /* FIXME is this required anymore? */
 	struct wally_tx_input tx_input;
 	struct wally_psbt_input input;
 	/* index on PSBT of this input */
@@ -22,6 +23,7 @@ struct input_set {
 };
 
 struct output_set {
+    /* FIXME is this required anymore? */
 	struct wally_tx_output tx_output;
 	struct wally_psbt_output output;
 	/* index on PSBT of this output */

@@ -97,11 +97,11 @@ static struct command_result *json_reserveinputs(struct command *cmd,
 		return command_param_failed();
 
 	current_height = get_block_height(cmd->ld->topology);
-	for (size_t i = 0; i < psbt->tx->num_inputs; i++) {
+	for (size_t i = 0; i < psbt->num_inputs; i++) {
 		struct bitcoin_outpoint outpoint;
 		struct utxo *utxo;
 
-		wally_tx_input_get_outpoint(&psbt->tx->inputs[i], &outpoint);
+		wally_psbt_input_get_outpoint(&psbt->inputs[i], &outpoint);
 		utxo = wallet_utxo_get(cmd, cmd->ld->wallet, &outpoint);
 		if (!utxo)
 			continue;
@@ -158,7 +158,7 @@ static struct command_result *json_unreserveinputs(struct command *cmd,
 		struct bitcoin_tx *utxo_tx;
 		struct bitcoin_txid txid;
 
-		wally_tx_input_get_txid(&psbt->tx->inputs[i], &txid);
+		wally_psbt_input_get_txid(&psbt->inputs[i], &txid);
 		utxo_tx = wallet_transaction_get(psbt, cmd->ld->wallet,
 						 &txid);
 		if (utxo_tx) {
@@ -175,13 +175,13 @@ static struct command_result *json_unreserveinputs(struct command *cmd,
 
 	response = json_stream_success(cmd);
 	json_array_start(response, "reservations");
-	for (size_t i = 0; i < psbt->tx->num_inputs; i++) {
+	for (size_t i = 0; i < psbt->num_inputs; i++) {
 		struct bitcoin_outpoint outpoint;
 		struct utxo *utxo;
 		enum output_status oldstatus;
 		u32 old_res;
 
-		wally_tx_input_get_outpoint(&psbt->tx->inputs[i], &outpoint);
+		wally_psbt_input_get_outpoint(&psbt->inputs[i], &outpoint);
 		utxo = wallet_utxo_get(cmd, cmd->ld->wallet, &outpoint);
 		if (!utxo || utxo->status != OUTPUT_STATE_RESERVED)
 			continue;

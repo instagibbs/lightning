@@ -638,8 +638,8 @@ funding_transaction_established(struct multifundchannel_command *mfc)
 		for (size_t j = 0; j < mfc->psbt->num_outputs; j++) {
 			if (memeq(dest->funding_script,
 				  tal_bytelen(dest->funding_script),
-				  mfc->psbt->tx->outputs[j].script,
-				  mfc->psbt->tx->outputs[j].script_len))
+				  mfc->psbt->outputs[j].script,
+				  mfc->psbt->outputs[j].script_len))
 				dest->outnum = j;
 		}
 		if (dest->outnum == mfc->psbt->num_outputs)

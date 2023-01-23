@@ -561,15 +561,15 @@ static size_t psbt_input_weight(struct wally_psbt *psbt,
 static size_t psbt_output_weight(struct wally_psbt *psbt,
 				 size_t outnum)
 {
-	return (8 + psbt->tx->outputs[outnum].script_len +
-		varint_size(psbt->tx->outputs[outnum].script_len)) * 4;
+	return (8 + psbt->outputs[outnum].script_len +
+		varint_size(psbt->outputs[outnum].script_len)) * 4;
 }
 
 static bool find_txout(struct wally_psbt *psbt, const u8 *wscript, u32 *funding_txout)
 {
 	for (size_t i = 0; i < psbt->num_outputs; i++) {
-		if (memeq(wscript, tal_bytelen(wscript), psbt->tx->outputs[i].script,
-			  psbt->tx->outputs[i].script_len)) {
+		if (memeq(wscript, tal_bytelen(wscript), psbt->outputs[i].script,
+			  psbt->outputs[i].script_len)) {
 			*funding_txout = i;
 			return true;
 		}
@@ -2175,7 +2175,7 @@ static void accepter_start(struct state *state, const u8 *oc2_msg)
 					     tx_state->tx_locktime);
 	else
 		/* Locktimes must match! */
-		tx_state->psbt->tx->locktime = tx_state->tx_locktime;
+		tx_state->psbt->fallback_locktime = tx_state->tx_locktime;
 
 	/* BOLT- #2:
 	 *
@@ -2694,7 +2694,7 @@ static void opener_start(struct state *state, u8 *msg)
 		master_badmsg(WIRE_DUALOPEND_OPENER_INIT, msg);
 
 	state->our_role = TX_INITIATOR;
-	tx_state->tx_locktime = tx_state->psbt->tx->locktime;
+	tx_state->tx_locktime = psbt_get_tx_locktime(tx_state->psbt);
 	open_tlv = tlv_opening_tlvs_new(tmpctx);
 
 	if (requested_lease)
@@ -3164,7 +3164,7 @@ static void rbf_local_start(struct state *state, u8 *msg)
 		goto free_rbf_ctx;
 	}
 
-	tx_state->tx_locktime = tx_state->psbt->tx->locktime;
+	tx_state->tx_locktime = psbt_get_tx_locktime(tx_state->psbt);
 	msg = towire_init_rbf(tmpctx, &state->channel_id,
 			      tx_state->opener_funding,
 			      tx_state->tx_locktime,

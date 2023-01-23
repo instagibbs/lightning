@@ -167,7 +167,6 @@ static void sort_inputs(struct wally_psbt *psbt)
 					psbt->num_inputs);
 
 	for (size_t i = 0; i < tal_count(set); i++) {
-		set[i].tx_input = psbt->tx->inputs[i];
 		set[i].input = psbt->inputs[i];
 	}
 
@@ -177,7 +176,6 @@ static void sort_inputs(struct wally_psbt *psbt)
 	/* Put PSBT parts into place */
 	for (size_t i = 0; i < tal_count(set); i++) {
 		psbt->inputs[i] = set[i].input;
-		psbt->tx->inputs[i] = set[i].tx_input;
 	}
 
 	tal_free(set);
@@ -190,7 +188,6 @@ static void sort_outputs(struct wally_psbt *psbt)
 					 struct output_set,
 					 psbt->num_outputs);
 	for (size_t i = 0; i < tal_count(set); i++) {
-		set[i].tx_output = psbt->tx->outputs[i];
 		set[i].output = psbt->outputs[i];
 	}
 
@@ -200,7 +197,6 @@ static void sort_outputs(struct wally_psbt *psbt)
 	/* Put PSBT parts into place */
 	for (size_t i = 0; i < tal_count(set); i++) {
 		psbt->outputs[i] = set[i].output;
-		psbt->tx->outputs[i] = set[i].tx_output;
 	}
 
 	tal_free(set);
@@ -407,10 +403,10 @@ bool psbt_has_required_fields(struct wally_psbt *psbt)
 			return false;
 
 		/* If is P2SH, redeemscript must be present */
-		assert(psbt->tx->inputs[i].index < input->utxo->num_outputs);
+		assert(psbt->inputs[i].index < input->utxo->num_outputs);
 		const u8 *outscript =
 			wally_tx_output_get_script(tmpctx,
-				&input->utxo->outputs[psbt->tx->inputs[i].index]);
+				&input->utxo->outputs[psbt->inputs[i].index]);
 		if (is_p2sh(outscript, NULL) && wally_map_get_integer(&psbt->inputs[i].psbt_fields, /* PSBT_IN_REDEEM_SCRIPT */ 0x04)->value_len == 0)
 			return false;
 

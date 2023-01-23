@@ -414,7 +414,7 @@ void psbt_elements_normalize_fees(struct wally_psbt *psbt)
 	}
 }
 
-static void wally_psbt_input_get_txid(const struct wally_psbt_input *in,
+void wally_psbt_input_get_txid(const struct wally_psbt_input *in,
                  struct bitcoin_txid *txid)
 {
     BUILD_ASSERT(sizeof(struct bitcoin_txid) == sizeof(in->txhash));
@@ -873,3 +873,36 @@ u32 psbt_get_tx_locktime(const struct wally_psbt *psbt)
 		return 0;
 	}
 }
+
+bool wally_psbt_input_spends(const struct wally_psbt_input *input,
+               const struct bitcoin_outpoint *outpoint)
+{
+    /* Useful, as tx_part can have some NULL inputs */
+    if (!input)
+        return false;
+    BUILD_ASSERT(sizeof(outpoint->txid) == sizeof(input->txhash));
+    if (memcmp(&outpoint->txid, input->txhash, sizeof(outpoint->txid)) != 0)
+        return false;
+    return input->index == outpoint->n;
+}
+
+void wally_psbt_input_get_outpoint(const struct wally_psbt_input *in,
+                 struct bitcoin_outpoint *outpoint)
+{
+    BUILD_ASSERT(sizeof(struct bitcoin_txid) == sizeof(in->txhash));
+    memcpy(&outpoint->txid, in->txhash, sizeof(struct bitcoin_txid));
+    outpoint->n = in->index;
+}
+
+const u8 *wally_psbt_output_get_script(const tal_t *ctx,
+                     const struct wally_psbt_output *output)
+{
+    if (output->script == NULL) {
+        /* This can happen for coinbase transactions and pegin
+         * transactions */
+        return NULL;
+    }
+
+    return tal_dup_arr(ctx, u8, output->script, output->script_len, 0);
+}
+

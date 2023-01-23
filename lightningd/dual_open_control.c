@@ -2156,11 +2156,11 @@ static void handle_validate_rbf(struct subd *dualopend,
 	list_for_each(&channel->inflights, inflight, list) {
 		/* Remove every non-matching input from set */
 		for (size_t i = 0; i < candidate_psbt->num_inputs; i++) {
-			struct wally_tx_input *input =
-				&candidate_psbt->tx->inputs[i];
+			struct wally_psbt_input *input =
+				&candidate_psbt->inputs[i];
 			struct bitcoin_outpoint outpoint;
 
-			wally_tx_input_get_outpoint(input, &outpoint);
+			wally_psbt_input_get_outpoint(input, &outpoint);
 
 			if (!psbt_has_input(inflight->funding_psbt,
 					    &outpoint))

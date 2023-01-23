@@ -629,14 +629,14 @@ static struct command_result *match_psbt_inputs_to_utxos(struct command *cmd,
 							 struct utxo ***utxos)
 {
 	*utxos = tal_arr(cmd, struct utxo *, 0);
-	for (size_t i = 0; i < psbt->tx->num_inputs; i++) {
+	for (size_t i = 0; i < psbt->num_inputs; i++) {
 		struct utxo *utxo;
 		struct bitcoin_outpoint outpoint;
 
 		if (only_inputs && !in_only_inputs(only_inputs, i))
 			continue;
 
-		wally_tx_input_get_outpoint(&psbt->tx->inputs[i], &outpoint);
+		wally_psbt_input_get_outpoint(&psbt->inputs[i], &outpoint);
 		utxo = wallet_utxo_get(*utxos, cmd->ld->wallet, &outpoint);
 		if (!utxo) {
 			if (only_inputs)
@@ -689,7 +689,6 @@ static struct command_result *match_psbt_inputs_to_utxos(struct command *cmd,
 static void match_psbt_outputs_to_wallet(struct wally_psbt *psbt,
 				  struct wallet *w)
 {
-	assert(psbt->tx->num_outputs == psbt->num_outputs);
 	tal_wally_start();
 	for (size_t outndx = 0; outndx < psbt->num_outputs; ++outndx) {
 		u32 index;
@@ -697,8 +696,8 @@ static void match_psbt_outputs_to_wallet(struct wally_psbt *psbt,
 		const u8 *script;
 		struct ext_key ext;
 
-		script = wally_tx_output_get_script(tmpctx,
-						    &psbt->tx->outputs[outndx]);
+		script = wally_psbt_output_get_script(tmpctx,
+						    &psbt->outputs[outndx]);
 		if (!script)
 			continue;
 
@@ -840,8 +839,8 @@ static void maybe_notify_new_external_send(struct lightningd *ld,
 		return;
 
 	/* If it's going to our wallet, ignore */
-	script = wally_tx_output_get_script(tmpctx,
-					    &psbt->tx->outputs[outnum]);
+	script = wally_psbt_output_get_script(tmpctx,
+					    &psbt->outputs[outnum]);
 	if (wallet_can_spend(ld->wallet, script, &index, &is_p2sh))
 		return;
 

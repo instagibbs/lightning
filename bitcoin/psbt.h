@@ -235,6 +235,23 @@ bool psbt_has_input(const struct wally_psbt *psbt,
  */
 u32 psbt_get_tx_locktime(const struct wally_psbt *psbt);
 
+/* wally_psbt_input_spends - Returns true if PSBT input spends given outpoint
+ *
+ * @input - psbt input
+ * @outpoint - outpoint
+ */
+bool wally_psbt_input_spends(const struct wally_psbt_input *input,
+               const struct bitcoin_outpoint *outpoint);
+
+void wally_psbt_input_get_outpoint(const struct wally_psbt_input *in,
+                 struct bitcoin_outpoint *outpoint);
+
+const u8 *wally_psbt_output_get_script(const tal_t *ctx,
+                     const struct wally_psbt_output *output);
+
+void wally_psbt_input_get_txid(const struct wally_psbt_input *in,
+                 struct bitcoin_txid *txid);
+
 struct wally_psbt *psbt_from_b64(const tal_t *ctx,
 				 const char *b64,
 				 size_t b64len);
