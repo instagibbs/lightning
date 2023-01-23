@@ -4781,7 +4781,8 @@ def test_fetchinvoice(node_factory, bitcoind):
 @pytest.mark.developer("Needs dev-allow-localhost for autoconnect, dev-force-features to avoid routing onionmsgs")
 def test_fetchinvoice_autoconnect(node_factory, bitcoind):
     """We should autoconnect if we need to, to route."""
-
+    from pdb import set_trace
+    set_trace()
     if EXPERIMENTAL_FEATURES:
         # We have to force option_onion_messages off!
         opts1 = {'dev-force-features': '-39'}

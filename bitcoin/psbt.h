@@ -29,7 +29,7 @@ struct wally_psbt *create_psbt(const tal_t *ctx, size_t num_inputs, size_t num_o
 
 /*
  * new_psbt - Create a PSBT, using the passed in tx
- * 	      as the global_tx
+ * 	      as the locktime/inputs/output psbt fields
  *
  * @ctx - allocation context
  * @wtx - global_tx starter kit

@@ -24,9 +24,9 @@ static struct wally_psbt *init_psbt(const tal_t *ctx, size_t num_inputs, size_t 
 
 	tal_wally_start();
 	if (is_elements(chainparams))
-		wally_err = wally_psbt_init_alloc(0, num_inputs, num_outputs, 0, WALLY_PSBT_INIT_PSET, &psbt);
+		wally_err = wally_psbt_init_alloc(2, num_inputs, num_outputs, 0, WALLY_PSBT_INIT_PSET, &psbt);
 	else
-		wally_err = wally_psbt_init_alloc(0, num_inputs, num_outputs, 0, 0, &psbt);
+		wally_err = wally_psbt_init_alloc(2, num_inputs, num_outputs, 0, 0, &psbt);
 	assert(wally_err == WALLY_OK);
 	tal_add_destructor(psbt, psbt_destroy);
 	tal_wally_end_onto(ctx, psbt, struct wally_psbt);
@@ -34,26 +34,16 @@ static struct wally_psbt *init_psbt(const tal_t *ctx, size_t num_inputs, size_t 
 	return psbt;
 }
 
+/* FIXME extremely thin wrapper; remove? */
 struct wally_psbt *create_psbt(const tal_t *ctx, size_t num_inputs, size_t num_outputs, u32 locktime)
 {
-	int wally_err;
-	struct wally_tx *wtx;
 	struct wally_psbt *psbt;
-
-	tal_wally_start();
-	if (wally_tx_init_alloc(WALLY_TX_VERSION_2, locktime, num_inputs, num_outputs, &wtx) != WALLY_OK)
-		abort();
-	/* wtx is freed below */
-	tal_wally_end(NULL);
 
 	psbt = init_psbt(ctx, num_inputs, num_outputs);
 
-	tal_wally_start();
-	wally_err = wally_psbt_set_global_tx(psbt, wtx);
-	assert(wally_err == WALLY_OK);
-	tal_wally_end(psbt);
+	psbt->fallback_locktime = locktime;
+	psbt->has_fallback_locktime = true;
 
-	wally_tx_free(wtx);
 	return psbt;
 }
 
@@ -72,18 +62,13 @@ struct wally_psbt *new_psbt(const tal_t *ctx, const struct wally_tx *wtx)
 	struct wally_psbt *psbt;
 	int wally_err;
 
-	//psbt = init_psbt(ctx, wtx->num_inputs, wtx->num_outputs);
 	psbt = create_psbt(ctx, wtx->num_inputs, wtx->num_outputs, wtx->locktime);
 
 	tal_wally_start();
 
-	/* Set directly: avoids psbt checks for non-NULL scripts/witnesses */
-	/* FIXME Doesnt init maps.... */
-	//wally_err = wally_tx_clone_alloc(wtx, 0, &psbt->tx);
-	//assert(wally_err == WALLY_OK);
-	/* Inputs/outs are pre-allocated above, 'add' them as empty dummies */
-	//psbt->num_inputs = wtx->num_inputs;
-	//psbt->num_outputs = wtx->num_outputs;
+	/* locktime set in create_psbt for now */
+	psbt->tx_version = wtx->version;
+	psbt->tx_modifiable_flags = 1;
 
 	for (size_t i = 0; i < wtx->num_inputs; i++) {
 		wally_err = wally_psbt_add_tx_input_at(psbt, i, 0, &wtx->inputs[i]);
@@ -96,21 +81,12 @@ struct wally_psbt *new_psbt(const tal_t *ctx, const struct wally_tx *wtx)
 								     wtx->inputs[i].script,
 								     wtx->inputs[i].script_len);
 			assert(wally_err == WALLY_OK);
-
-			/* Clear out script sig data */
-			psbt->tx->inputs[i].script_len = 0;
-			tal_free(psbt->tx->inputs[i].script);
-			psbt->tx->inputs[i].script = NULL;
 		}
 		if (wtx->inputs[i].witness) {
 			wally_err =
 				wally_psbt_input_set_final_witness(&psbt->inputs[i],
 								   wtx->inputs[i].witness);
 			assert(wally_err == WALLY_OK);
-
-			/* Delete the witness data */
-			wally_tx_witness_stack_free(psbt->tx->inputs[i].witness);
-			psbt->tx->inputs[i].witness = NULL;
 		}
 	}
 
@@ -227,7 +203,7 @@ struct wally_psbt_output *psbt_append_output(struct wally_psbt *psbt,
 	struct wally_psbt_output *out;
 	struct wally_tx_output *tx_out = wally_tx_output(NULL, script, amount);
 
-	out = psbt_add_output(psbt, tx_out, psbt->tx->num_outputs);
+	out = psbt_add_output(psbt, tx_out, psbt->num_outputs);
 	wally_tx_output_free(tx_out);
 	return out;
 }
@@ -385,8 +361,10 @@ void psbt_elements_input_set_asset(struct wally_psbt *psbt, size_t in,
 	tal_wally_end(psbt);
 }
 
+/* FIXME migrate PSET to v2 */
 void psbt_elements_normalize_fees(struct wally_psbt *psbt)
 {
+	abort();
 	struct amount_asset asset;
 	size_t fee_output_idx = psbt->num_outputs;
 
@@ -402,7 +380,7 @@ void psbt_elements_normalize_fees(struct wally_psbt *psbt)
 			return;
 	}
 	for (size_t i = 0; i < psbt->num_outputs; i++) {
-		asset = wally_tx_output_get_amount(&psbt->tx->outputs[i]);
+		asset = wally_tx_output_get_amount(&psbt->tx->outputs[i]); // FIXME
 		if (elements_wtx_output_is_fee(psbt->tx, i)) {
 			if (fee_output_idx == psbt->num_outputs) {
 				fee_output_idx = i;
@@ -429,24 +407,31 @@ void psbt_elements_normalize_fees(struct wally_psbt *psbt)
 		psbt_append_output(psbt, NULL, total_in);
 	} else {
 		u64 sats = total_in.satoshis; /* Raw: wally API */
-		struct wally_tx_output *out = &psbt->tx->outputs[fee_output_idx];
+		struct wally_tx_output *out = &psbt->tx->outputs[fee_output_idx]; // FIXME
 		if (wally_tx_confidential_value_from_satoshi(
 			sats, out->value, out->value_len) != WALLY_OK)
 			return;
 	}
 }
 
+static void wally_psbt_input_get_txid(const struct wally_psbt_input *in,
+                 struct bitcoin_txid *txid)
+{
+    BUILD_ASSERT(sizeof(struct bitcoin_txid) == sizeof(in->txhash));
+    memcpy(txid, in->txhash, sizeof(struct bitcoin_txid));
+}  
+
 bool psbt_has_input(const struct wally_psbt *psbt,
 		    const struct bitcoin_outpoint *outpoint)
 {
 	for (size_t i = 0; i < psbt->num_inputs; i++) {
 		struct bitcoin_txid in_txid;
-		struct wally_tx_input *in = &psbt->tx->inputs[i];
+		struct wally_psbt_input *in = &psbt->inputs[i];
 
 		if (outpoint->n != in->index)
 			continue;
 
-		wally_tx_input_get_txid(in, &in_txid);
+		wally_psbt_input_get_txid(in, &in_txid);
 		if (bitcoin_txid_eq(&outpoint->txid, &in_txid))
 			return true;
 	}
@@ -464,7 +449,7 @@ struct amount_sat psbt_input_get_amount(const struct wally_psbt *psbt,
 		assert(amount_asset_is_main(&amt_asset));
 		val = amount_asset_to_sat(&amt_asset);
 	} else if (psbt->inputs[in].utxo) {
-		int idx = psbt->tx->inputs[in].index;
+		int idx = psbt->inputs[in].index;
 		struct wally_tx *prev_tx = psbt->inputs[in].utxo;
 		val = amount_sat(prev_tx->outputs[idx].satoshi);
 	} else
@@ -473,12 +458,14 @@ struct amount_sat psbt_input_get_amount(const struct wally_psbt *psbt,
 	return val;
 }
 
+/* FIXME PSETv2 */
 struct amount_sat psbt_output_get_amount(const struct wally_psbt *psbt,
 					 size_t out)
 {
 	struct amount_asset asset;
 	assert(out < psbt->num_outputs);
-	asset = wally_tx_output_get_amount(&psbt->tx->outputs[out]);
+	asset.value = psbt->outputs[out].amount;
+	// asset = wally_tx_output_get_amount(&psbt->outputs[out]);
 	assert(amount_asset_is_main(&asset));
 	return amount_asset_to_sat(&asset);
 }
@@ -832,6 +819,7 @@ void psbt_txid(const tal_t *ctx,
 		wally_tx_free(tx);
 }
 
+/* FIXME PSETv2 */
 struct amount_sat psbt_compute_fee(const struct wally_psbt *psbt)
 {
 	struct amount_sat fee, input_amt;
@@ -846,7 +834,7 @@ struct amount_sat psbt_compute_fee(const struct wally_psbt *psbt)
 	}
 
 	for (size_t i = 0; i < psbt->num_outputs; i++) {
-		asset = wally_tx_output_get_amount(&psbt->tx->outputs[i]);
+		asset = wally_tx_output_get_amount(&psbt->tx->outputs[i]); /* FIXME */
 		if (!amount_asset_is_main(&asset)
 		    || elements_wtx_output_is_fee(psbt->tx, i))
 			continue;

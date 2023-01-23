@@ -113,8 +113,11 @@ start_nodes() {
 
 
 		# Start the lightning nodes
-		test -f "/tmp/l$i-$network/lightningd-$network.pid" || \
-			$EATMYDATA "$LIGHTNINGD" "--lightning-dir=/tmp/l$i-$network" &
+        #test -f "/tmp/l$i-$network/lightningd-$network.pid"
+        #echo "$LIGHTNINGD" "--lightning-dir=/tmp/l$i-$network"
+        #sleep 100
+		#test -f "/tmp/l$i-$network/lightningd-$network.pid" || \
+		gdb --args "$LIGHTNINGD" "--lightning-dir=/tmp/l$i-$network"
 		# shellcheck disable=SC2139 disable=SC2086
 		alias l$i-cli="$LCLI --lightning-dir=/tmp/l$i-$network"
 		# shellcheck disable=SC2139 disable=SC2086
