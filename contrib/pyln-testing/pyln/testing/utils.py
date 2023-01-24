@@ -84,6 +84,7 @@ TIMEOUT = int(env("TIMEOUT", 180 if SLOW_MACHINE else 60))
 EXPERIMENTAL_DUAL_FUND = env("EXPERIMENTAL_DUAL_FUND", "0") == "1"
 GDB = env("GDBLIGHTD", "0") == "1"
 
+
 def wait_for(success, timeout=TIMEOUT):
     start_time = time.time()
     interval = 0.25
