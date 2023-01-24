@@ -420,7 +420,7 @@ void wally_psbt_input_get_txid(const struct wally_psbt_input *in,
 {
     BUILD_ASSERT(sizeof(struct bitcoin_txid) == sizeof(in->txhash));
     memcpy(txid, in->txhash, sizeof(struct bitcoin_txid));
-}  
+}
 
 bool psbt_has_input(const struct wally_psbt *psbt,
 		    const struct bitcoin_outpoint *outpoint)
@@ -921,7 +921,7 @@ wally_psbt_output_get_amount(const struct wally_psbt_output *output)
 }
 
 bool elements_psbt_output_is_fee(const struct wally_psbt *psbt, int outnum)
-{       
+{
     assert(outnum < psbt->num_outputs);
     return chainparams->is_elements &&
         psbt->outputs[outnum].script_len == 0;
