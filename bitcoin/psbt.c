@@ -781,15 +781,27 @@ struct wally_psbt *fromwire_wally_psbt(const tal_t *ctx,
 }
 
 void psbt_txid(const tal_t *ctx,
-	       const struct wally_psbt *psbt, struct bitcoin_txid *txid,
+	       const struct wally_psbt *psbt,
+		   struct bitcoin_txid *txid,
 	       struct wally_tx **wtx)
 {
+	struct wally_tx *tx;
+
 	assert(psbt->version == 2);
+	/* We rely on wally extractor to fill out all txid-related fields including scriptSigs */
 	tal_wally_start();
-	if (wally_psbt_get_id(psbt, 0 /* flags */, txid->shad.sha.u.u8, sizeof(txid->shad.sha.u.u8)) != WALLY_OK) {
+	if (wally_psbt_extract(psbt, WALLY_PSBT_EXTRACT_NON_FINAL, &tx) != WALLY_OK) {
+		abort();
+	}
+	if (wally_tx_get_txid(tx, txid->shad.sha.u.u8, sizeof(txid->shad.sha.u.u8))) {
 		abort();
 	}
 	tal_wally_end(ctx);
+
+	if (wtx)
+		*wtx = tx;
+	else
+		wally_tx_free(tx);
 }
 
 struct amount_sat psbt_compute_fee(const struct wally_psbt *psbt)
