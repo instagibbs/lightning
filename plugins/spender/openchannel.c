@@ -121,10 +121,7 @@ static bool update_parent_psbt(const tal_t *ctx,
                     NULL /* scriptSig */,
                     NULL /* input_wscript */,
                     NULL /* redeemscript */);
-					
-//		psbt_add_input(clone,
-//			       &changes->added_ins[i].tx_input,
-//			       idx);
+
 		/* Move the input over */
 		clone->inputs[idx] = *in;
 
