@@ -136,8 +136,8 @@ static void check_psbt_comparison(void)
 	/* Different errors for both 4 lines */
 	wally_psbt_set_version(oldpsbt, 0 /* flags */, 2);
 	wally_psbt_set_version(newpsbt, 0 /* flags */, 2);
-	wally_psbt_set_version(oldpsbt, 0 /* flags */, 0);
-	wally_psbt_set_version(newpsbt, 0 /* flags */, 0);
+	//wally_psbt_set_version(oldpsbt, 0 /* flags */, 0);
+	//wally_psbt_set_version(newpsbt, 0 /* flags */, 0);
 	//wally_psbt_set_version(oldpsbt, 0 /* flags */, 2);
 	//wally_psbt_set_version(newpsbt, 0 /* flags */, 2);
 	tal_wally_end(tmpctx);
