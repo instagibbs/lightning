@@ -806,9 +806,9 @@ struct amount_sat psbt_compute_fee(const struct wally_psbt *psbt)
 	}
 
 	for (size_t i = 0; i < psbt->num_outputs; i++) {
-		asset = wally_tx_output_get_amount(&psbt->tx->outputs[i]); /* FIXME */
+		asset = wally_psbt_output_get_amount(&psbt->outputs[i]);
 		if (!amount_asset_is_main(&asset)
-		    || elements_wtx_output_is_fee(psbt->tx, i))
+		    || elements_psbt_output_is_fee(psbt, i))
 			continue;
 
 		ok = amount_sat_sub(&fee, fee, amount_asset_to_sat(&asset));
@@ -907,3 +907,11 @@ wally_psbt_output_get_amount(const struct wally_psbt_output *output)
 
     return amount;
 }
+
+bool elements_psbt_output_is_fee(const struct wally_psbt *psbt, int outnum)
+{       
+    assert(outnum < psbt->num_outputs);
+    return chainparams->is_elements &&
+        psbt->outputs[outnum].script_len == 0;
+}
+
