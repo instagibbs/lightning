@@ -136,8 +136,13 @@ static void check_psbt_comparison(void)
 	tal_wally_start();
 	wally_psbt_set_version(oldpsbt, 0 /* flags */, 2);
 	wally_psbt_set_version(newpsbt, 0 /* flags */, 2);
+	//wally_psbt_set_version(oldpsbt, 0 /* flags */, 0);
+	//wally_psbt_set_version(newpsbt, 0 /* flags */, 0);
+	//wally_psbt_set_version(oldpsbt, 0 /* flags */, 2);
+	//wally_psbt_set_version(newpsbt, 0 /* flags */, 2);
 	tal_wally_end(tmpctx);
 	assert(!psbt_contribs_changed(oldpsbt, newpsbt));
+	//psbt_destroy, psbt_output_free is called with false for free parent via wally_psbt_free
 }
 
 int main(int argc, const char *argv[])
