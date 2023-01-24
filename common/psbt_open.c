@@ -93,8 +93,8 @@ static const u8 *linearize_output(const tal_t *ctx,
 	size_t byte_len;
 	struct bitcoin_outpoint outpoint;
 
-	/* Add a 'fake' input so this will linearize the tx */
-	memset(&outpoint, 0, sizeof(outpoint));
+	/* Add a 'fake' non-zero input so libwally will agree to linearize the tx */
+	memset(&outpoint, 1, sizeof(outpoint));
 	psbt_append_input(psbt, &outpoint, 0, NULL, NULL, NULL);
 
 	psbt->outputs[0] = *out;
@@ -107,11 +107,6 @@ static const u8 *linearize_output(const tal_t *ctx,
 	/* And you can add scripts, no problem */
 	wally_psbt_output_set_witness_script(&psbt->outputs[0], NULL, 0);
 	wally_psbt_output_set_redeem_script(&psbt->outputs[0], NULL, 0);
-
-	/* libwally doesn't want to see empty txhash;
-	 * thinks it's the caller's mistake
-	 */
-	psbt->inputs[0].txhash[0] = 1;
 
 	const u8 *bytes = psbt_get_bytes(ctx, psbt, &byte_len);
 
@@ -231,7 +226,6 @@ struct psbt_changeset *psbt_get_changeset(const tal_t *ctx,
 	psbt_sort_by_serial_id(new);
 
 	set = new_changeset(ctx);
-
 	/* Find the input diff */
 	while (i < orig->num_inputs || j < new->num_inputs) {
 		if (i >= orig->num_inputs) {
@@ -494,6 +488,9 @@ bool psbt_output_to_external(const struct wally_psbt_output *output)
 bool psbt_contribs_changed(struct wally_psbt *orig,
 			   struct wally_psbt *new)
 {
+	if (orig->version != 2 || new->version != 2) {
+		return 0;
+	}
 	struct psbt_changeset *cs;
 	bool ok;
 	cs = psbt_get_changeset(NULL, orig, new);
