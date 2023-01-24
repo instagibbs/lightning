@@ -489,7 +489,7 @@ bool psbt_contribs_changed(struct wally_psbt *orig,
 			   struct wally_psbt *new)
 {
 	if (orig->version != 2 || new->version != 2) {
-		return 0;
+		abort();
 	}
 	struct psbt_changeset *cs;
 	bool ok;
