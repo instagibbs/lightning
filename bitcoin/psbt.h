@@ -256,6 +256,8 @@ void wally_psbt_input_get_txid(const struct wally_psbt_input *in,
 struct amount_asset
 wally_psbt_output_get_amount(const struct wally_psbt_output *output);
 
+void psbt_set_version(struct wally_psbt *psbt, u32 version);
+
 bool elements_psbt_output_is_fee(const struct wally_psbt *psbt, int outnum);
 
 struct wally_psbt *psbt_from_b64(const tal_t *ctx,

@@ -1010,6 +1010,9 @@ static struct command_result *json_fundchannel_complete(struct command *cmd,
 
 	fc = peer->uncommitted_channel->fc;
 
+	/* We only deal with V2 internally */
+	psbt_set_version(funding_psbt, 2);
+
 	/* Figure out the correct output, and perform sanity checks. */
 	for (size_t i = 0; i < funding_psbt->num_outputs; i++) {
 		if (memeq(funding_psbt->outputs[i].script,

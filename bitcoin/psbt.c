@@ -927,3 +927,10 @@ bool elements_psbt_output_is_fee(const struct wally_psbt *psbt, int outnum)
         psbt->outputs[outnum].script_len == 0;
 }
 
+void psbt_set_version(struct wally_psbt *psbt, u32 version)
+{
+	tal_wally_start();
+	wally_psbt_set_version(psbt, 0, version);
+	tal_wally_end(psbt);
+}
+
