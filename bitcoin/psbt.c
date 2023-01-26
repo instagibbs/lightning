@@ -189,6 +189,8 @@ struct wally_psbt_output *psbt_add_output(struct wally_psbt *psbt,
 {
 	int wally_err;
 
+	/* HACK FIXME remove when default is properly set */
+	psbt->tx_modifiable_flags = 3;
 	tal_wally_start();
 	wally_err = wally_psbt_add_tx_output_at(psbt, insert_at, 0, output);
 	assert(wally_err == WALLY_OK);
