@@ -279,7 +279,6 @@ static u8 *psbt_changeset_get_next(const tal_t *ctx,
 							      &out->output);
 
 
-		status_debug("Sending towire_tx_add_output with script: %s, value: %lu", tal_hex(NULL, script), sats.satoshis);
 		msg = towire_tx_add_output(ctx, cid, serial_id,
 					   sats.satoshis, /* Raw: wire interface */
 					   script);
