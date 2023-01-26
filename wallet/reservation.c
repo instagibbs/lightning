@@ -96,6 +96,9 @@ static struct command_result *json_reserveinputs(struct command *cmd,
 		   NULL))
 		return command_param_failed();
 
+	/* We only deal with V2 internally */
+	psbt_set_version(psbt, 2);
+
 	current_height = get_block_height(cmd->ld->topology);
 	for (size_t i = 0; i < psbt->num_inputs; i++) {
 		struct bitcoin_outpoint outpoint;
@@ -150,6 +153,9 @@ static struct command_result *json_unreserveinputs(struct command *cmd,
 			     RESERVATION_DEFAULT),
 		   NULL))
 		return command_param_failed();
+
+	/* We only deal with V2 internally */
+	psbt_set_version(psbt, 2);
 
 	/* We should also add the utxo info for these inputs!
 	 * (absolutely required for using this psbt in a dual-funded
