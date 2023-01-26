@@ -172,21 +172,16 @@ def test_last_tx_inflight_psbt_upgrade(node_factory, bitcoind):
     bitcoind.generate_block(12)
 
     prior_txs = ['02000000019CCCA2E59D863B00B5BD835BF7BA93CC257932D2C7CDBE51EFE2EE4A9D29DFCB01000000009DB0E280024A01000000000000220020BE7935A77CA9AB70A4B8B1906825637767FED3C00824AA90C988983587D68488F0820100000000002200209F4684DDB28ACDC73959BC194D1A25DF906F61ED030F52D163E6F1E247D32CBB9A3ED620', '020000000122F9EBE38F54208545B681AD7F73A7AE3504A09C8201F502673D34E28424687C01000000009DB0E280024A01000000000000220020BE7935A77CA9AB70A4B8B1906825637767FED3C00824AA90C988983587D68488F0820100000000002200209F4684DDB28ACDC73959BC194D1A25DF906F61ED030F52D163E6F1E247D32CBB9A3ED620']
+    # FIXME: Re-add dynamic checks once PSBTv2 support is in both Core/Elements, or get python support
+    # These PSBTs were manually checked for 0.001 BTC multisig witness utxos in a single input
+    upgraded_psbts = ['cHNidP8BAgQCAAAAAQMEmj7WIAEEAQEBBQECAQYBAwH7BAIAAAAAAQEroIYBAAAAAAAiACBbjNO5FM9nzdj6YnPJMDU902R2c0+9liECwt9TuQiAzSICAuO9OACYZsnajsSqmcxOqcbA3UbfFcYe8M4fJxKRcU5XRjBDAiBgFZ+8xOkvxfBoC9QdAhBuX6zhpvKsqWw8QeN2gK1b4wIfQdSIq+vNMfnFZqLyv3Un4s7i2MzHUiTs2morB/t/SwEBAwQBAAAAAQVHUiECMkJm3oQDs6sVegnx94TVh69hgxyZjBUbzCG7dMKyMUshAuO9OACYZsnajsSqmcxOqcbA3UbfFcYe8M4fJxKRcU5XUq4iBgIyQmbehAOzqxV6CfH3hNWHr2GDHJmMFRvMIbt0wrIxSwhK0xNpAAAAACIGAuO9OACYZsnajsSqmcxOqcbA3UbfFcYe8M4fJxKRcU5XCBq8wdAAAAAAAQ4gnMyi5Z2GOwC1vYNb97qTzCV5MtLHzb5R7+LuSp0p38sBDwQBAAAAARAEnbDigAABAwhKAQAAAAAAAAEEIgAgvnk1p3ypq3CkuLGQaCVjd2f+08AIJKqQyYiYNYfWhIgAAQMI8IIBAAAAAAABBCIAIJ9GhN2yis3HOVm8GU0aJd+Qb2HtAw9S0WPm8eJH0yy7AA==', 'cHNidP8BAgQCAAAAAQMEmj7WIAEEAQEBBQECAQYBAwH7BAIAAAAAAQEroIYBAAAAAAAiACBbjNO5FM9nzdj6YnPJMDU902R2c0+9liECwt9TuQiAzSICAuO9OACYZsnajsSqmcxOqcbA3UbfFcYe8M4fJxKRcU5XRzBEAiBWXvsSYMpD69abqr7X9XurE6B6GkhyI5JeGuKYByBukAIgUmk9q/g3PIS9HjTVJ4OmRoSZAMKLFdsowq15Sl9OAD8BAQMEAQAAAAEFR1IhAjJCZt6EA7OrFXoJ8feE1YevYYMcmYwVG8whu3TCsjFLIQLjvTgAmGbJ2o7EqpnMTqnGwN1G3xXGHvDOHycSkXFOV1KuIgYCMkJm3oQDs6sVegnx94TVh69hgxyZjBUbzCG7dMKyMUsIStMTaQAAAAAiBgLjvTgAmGbJ2o7EqpnMTqnGwN1G3xXGHvDOHycSkXFOVwgavMHQAAAAAAEOICL56+OPVCCFRbaBrX9zp641BKCcggH1Amc9NOKEJGh8AQ8EAQAAAAEQBJ2w4oAAAQMISgEAAAAAAAABBCIAIL55Nad8qatwpLixkGglY3dn/tPACCSqkMmImDWH1oSIAAEDCPCCAQAAAAAAAQQiACCfRoTdsorNxzlZvBlNGiXfkG9h7QMPUtFj5vHiR9MsuwA=']
 
     l1 = node_factory.get_node(dbfile='upgrade_inflight.sqlite3.xz',
                                options={'database-upgrade': True})
 
     b64_last_txs = [base64.b64encode(x['last_tx']).decode('utf-8') for x in l1.db_query('SELECT last_tx FROM channel_funding_inflights ORDER BY channel_id, funding_feerate;')]
     for i in range(len(b64_last_txs)):
-        bpsbt = b64_last_txs[i]
-        psbt = bitcoind.rpc.decodepsbt(bpsbt)
-        tx = prior_txs[i]
-        assert psbt['tx']['txid'] == bitcoind.rpc.decoderawtransaction(tx)['txid']
-        funding_input = only_one(psbt['inputs'])
-        assert funding_input['witness_utxo']['amount'] == Decimal('0.001')
-        assert funding_input['witness_utxo']['scriptPubKey']['type'] == 'witness_v0_scripthash'
-        assert funding_input['witness_script']['type'] == 'multisig'
-
+        assert b64_last_txs[i] == upgraded_psbts[i]
 
 @unittest.skipIf(not COMPAT, "needs COMPAT to convert obsolete db")
 @unittest.skipIf(os.getenv('TEST_DB_PROVIDER', 'sqlite3') != 'sqlite3', "This test is based on a sqlite3 snapshot")
