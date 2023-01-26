@@ -412,6 +412,12 @@ fee_calc:
 		/* Add additional weight of fee output */
 		weight += bitcoin_tx_output_weight(0);
 	}
+
+	/* We convert PSBTv2 to v0, but *not* PSETv2, since PSETv0 isn't supported */
+	if (!is_elements(chainparams)) {
+		psbt_set_version(psbt, 0);
+	}
+
 	response = json_stream_success(cmd);
 	json_add_psbt(response, "psbt", psbt);
 	json_add_num(response, "feerate_per_kw", feerate_per_kw);

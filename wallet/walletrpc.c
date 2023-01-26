@@ -750,12 +750,17 @@ static struct command_result *json_signpsbt(struct command *cmd,
 	struct wally_psbt *psbt, *signed_psbt;
 	struct utxo **utxos;
 	u32 *input_nums;
+	u32 psbt_version;
 
 	if (!param(cmd, buffer, params,
 		   p_req("psbt", param_psbt, &psbt),
 		   p_opt("signonly", param_input_numbers, &input_nums),
 		   NULL))
 		return command_param_failed();
+
+	/* We internally deal with v2 only but we want to return V2 if given */
+	psbt_version = psbt->version;
+	psbt_set_version(psbt, 2);
 
 	/* Sanity check! */
 	for (size_t i = 0; i < tal_count(input_nums); i++) {
@@ -796,6 +801,8 @@ static struct command_result *json_signpsbt(struct command *cmd,
 		return command_fail(cmd, JSONRPC2_INVALID_PARAMS,
 				    "HSM gave bad sign_withdrawal_reply %s",
 				    tal_hex(tmpctx, msg));
+
+	psbt_set_version(signed_psbt, psbt_version);
 
 	response = json_stream_success(cmd);
 	json_add_psbt(response, "signed_psbt", signed_psbt);
