@@ -78,6 +78,7 @@ static bool update_parent_psbt(const tal_t *ctx,
 		abort();
 	tal_wally_end_onto(ctx, clone, struct wally_psbt);
 
+	clone->tx_modifiable_flags = WALLY_PSBT_TXMOD_INPUTS | WALLY_PSBT_TXMOD_OUTPUTS;
 	/* This makes it such that we can reparent/steal added
 	 * inputs/outputs without impacting the 'original'. We
 	 * could avoid this if there was a 'wally_psbt_input_clone_into'
@@ -141,7 +142,7 @@ static bool update_parent_psbt(const tal_t *ctx,
 			goto fail;
 
 		/* If it's ours, that's a whoops */
-		if (serial % 2 == TX_INITIATOR)
+		if (serial % 2 == TX_INITIATOR) // FIXE FIXME <--- looks like the bad input is tripping this
 			goto fail;
 
 		/* Check that serial exists on parent already */
@@ -900,6 +901,7 @@ openchannel_init_done(struct multifundchannel_destination *dest)
 		return command_still_pending(mfc->cmd);
 }
 
+/* FIXME FIXME dest->mfc has bad input */
 static struct command_result *
 openchannel_init_ok(struct command *cmd,
 		    const char *buf,
@@ -954,6 +956,9 @@ openchannel_init_ok(struct command *cmd,
 	dest->state = MULTIFUNDCHANNEL_STARTED;
 
 	/* Port any updates onto 'parent' PSBT */
+	dest->psbt->tx_modifiable_flags = 3; // FIXME this should be default....
+	mfc->psbt->tx_modifiable_flags = 3; // fixme this should be default....
+	dest->updated_psbt->tx_modifiable_flags = 3; // fixme this should be default....
 	if (!update_parent_psbt(dest->mfc, dest, dest->psbt,
 				dest->updated_psbt, &mfc->psbt)) {
 		fail_destination_msg(dest, FUNDING_PSBT_INVALID,

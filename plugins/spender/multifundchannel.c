@@ -566,6 +566,7 @@ after_signpsbt(struct command *cmd,
 	psbt = psbt_from_b64(mfc,
 			     buf + field->start,
 			     field->end - field->start);
+	psbt_set_version(psbt, 2);
 	if (!psbt)
 		plugin_err(mfc->cmd->plugin,
 			   "signpsbt gave unparseable 'signed_psbt'? %.*s",
@@ -831,10 +832,14 @@ perform_funding_tx_finalize(struct multifundchannel_command *mfc)
 	size_t v1_dest_count = dest_count(mfc, FUND_CHANNEL);
 	size_t v2_dest_count = dest_count(mfc, OPEN_CHANNEL);
 	size_t i, deck_i;
+	u32 psbt_version = mfc->psbt->version;
 
 	plugin_log(mfc->cmd->plugin, LOG_DBG,
 		   "mfc %"PRIu64": Creating funding tx.",
 		   mfc->id);
+
+	/* We operate over PSBTv2 only */
+	psbt_set_version(mfc->psbt, 2);
 
 	/* Construct a deck of destinations.  */
 	deck = tal_arr(tmpctx, struct multifundchannel_destination *,
@@ -928,6 +933,10 @@ perform_funding_tx_finalize(struct multifundchannel_command *mfc)
 		   type_to_string(tmpctx, struct bitcoin_txid,
 				  mfc->txid),
 		   content);
+
+	if (!is_elements(chainparams)) {
+		psbt_set_version(mfc->psbt, psbt_version);
+	}
 
 	/* Now we can feed the TXID and outnums to the peer.  */
 	return perform_fundchannel_complete(mfc);
@@ -1317,6 +1326,7 @@ compute_mfc_all(struct multifundchannel_command *mfc)
 	all_dest->all = false;
 
 	/* Continue.  */
+	/* FIXME FIXME keep working backwards */
 	return handle_mfc_change(mfc);
 }
 
@@ -1337,9 +1347,15 @@ after_fundpsbt(struct command *cmd,
 	if (!field)
 		goto fail;
 
+	/* FIXME FIXME bad input here... fundpsbt doing wrong thing? */
 	mfc->psbt = psbt_from_b64(mfc,
 				  buf + field->start,
 				  field->end - field->start);
+	psbt_set_version(mfc->psbt, 2);
+
+	plugin_log(mfc->cmd->plugin, LOG_DBG,
+			"mfc after_fundpsbt psbt response: %s",
+			psbt_to_b64(NULL, mfc->psbt));
 	if (!mfc->psbt)
 		goto fail;
 

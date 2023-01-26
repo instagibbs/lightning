@@ -2643,6 +2643,10 @@ static struct command_result *json_openchannel_init(struct command *cmd,
 		   NULL))
 		return command_param_failed();
 
+	/* We only deal in v2 */
+	psbt_set_version(psbt, 2);
+	psbt->tx_modifiable_flags = WALLY_PSBT_TXMOD_INPUTS | WALLY_PSBT_TXMOD_OUTPUTS;
+
 	/* Gotta expect some rates ! */
 	if (!amount_sat_zero(*request_amt) && !rates)
 		return command_fail(cmd, JSONRPC2_INVALID_PARAMS,

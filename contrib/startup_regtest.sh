@@ -117,7 +117,7 @@ start_nodes() {
         #echo "$LIGHTNINGD" "--lightning-dir=/tmp/l$i-$network"
         #sleep 100
 		test -f "/tmp/l$i-$network/lightningd-$network.pid" || \
-		    "$LIGHTNINGD" "--lightning-dir=/tmp/l$i-$network" "--dev-debugger=dualopend" &
+		    "$LIGHTNINGD" "--lightning-dir=/tmp/l$i-$network"  "--dev-debugger=spenderp" &
 		# shellcheck disable=SC2139 disable=SC2086
 		alias l$i-cli="$LCLI --lightning-dir=/tmp/l$i-$network"
 		# shellcheck disable=SC2139 disable=SC2086

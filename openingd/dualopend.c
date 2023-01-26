@@ -278,6 +278,8 @@ static u8 *psbt_changeset_get_next(const tal_t *ctx,
 		const u8 *script = wally_psbt_output_get_script(ctx,
 							      &out->output);
 
+
+		status_debug("Sending towire_tx_add_output with script: %s, value: %lu", tal_hex(NULL, script), sats.satoshis);
 		msg = towire_tx_add_output(ctx, cid, serial_id,
 					   sats.satoshis, /* Raw: wire interface */
 					   script);
@@ -1563,7 +1565,7 @@ static bool run_tx_interactive(struct state *state,
 			 * - MAY fail the negotiation if `script`
 			 *   is non-standard */
 			if (!is_known_scripttype(scriptpubkey))
-				open_err_warn(state, "Script is not standard");
+				open_err_warn(state, "Script is not standard: %s", tal_hex(NULL, scriptpubkey));
 
 			out = psbt_append_output(psbt, scriptpubkey, amt);
 			psbt_output_set_serial_id(psbt, out, serial_id);

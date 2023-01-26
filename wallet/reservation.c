@@ -362,6 +362,7 @@ static struct command_result *finish_psbt(struct command *cmd,
 			*locktime -= pseudorand(100);
 	}
 
+	/* FIXME FIXME this is what's making bogus input prob NOPE? */
 	psbt = psbt_using_utxos(cmd, cmd->ld->wallet, utxos,
 				cmd->ld->wallet->bip32_base,
 				*locktime, BITCOIN_TX_RBF_SEQUENCE);
