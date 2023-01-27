@@ -366,7 +366,7 @@ static struct command_result *finish_psbt(struct command *cmd,
 	psbt = psbt_using_utxos(cmd, cmd->ld->wallet, utxos,
 				cmd->ld->wallet->bip32_base,
 				*locktime, BITCOIN_TX_RBF_SEQUENCE);
-
+	assert(psbt->version == 2);
 	/* Should we add a change output for the excess? */
 	if (excess_as_change) {
 		struct amount_sat change;

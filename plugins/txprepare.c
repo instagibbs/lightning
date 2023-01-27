@@ -209,7 +209,7 @@ static struct command_result *finish_txprepare(struct command *cmd,
 
 	utx = tal(NULL, struct unreleased_tx);
 	utx->psbt = tal_steal(utx, txp->psbt);
-	psbt_txid(utx, txp->psbt, &utx->txid, &utx->tx);
+	psbt_txid(utx, utx->psbt, &utx->txid, &utx->tx);
 
 	/* If this is a withdraw, we sign and send immediately. */
 	if (txp->is_withdraw) {
@@ -288,6 +288,11 @@ static struct command_result *psbt_created(struct command *cmd,
 
 	psbttok = json_get_member(buf, result, "psbt");
 	txp->psbt = json_tok_psbt(txp, buf, psbttok);
+	/* FIXME test_funding_cancel_race somehow is hitting this where it's v0
+	 * how?
+	 */
+	psbt_set_version(txp->psbt, 2);
+	assert(txp->psbt->version == 2);
 	if (!txp->psbt)
 		return command_fail(cmd, LIGHTNINGD,
 				    "Unparsable psbt: '%.*s'",

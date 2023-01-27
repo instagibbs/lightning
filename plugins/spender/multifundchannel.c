@@ -1353,9 +1353,6 @@ after_fundpsbt(struct command *cmd,
 				  field->end - field->start);
 	psbt_set_version(mfc->psbt, 2);
 
-	plugin_log(mfc->cmd->plugin, LOG_DBG,
-			"mfc after_fundpsbt psbt response: %s",
-			psbt_to_b64(NULL, mfc->psbt));
 	if (!mfc->psbt)
 		goto fail;
 
