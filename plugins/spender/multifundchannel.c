@@ -1325,8 +1325,6 @@ compute_mfc_all(struct multifundchannel_command *mfc)
 	/* Remove the 'all' flag.  */
 	all_dest->all = false;
 
-	/* Continue.  */
-	/* FIXME FIXME keep working backwards */
 	return handle_mfc_change(mfc);
 }
 
@@ -1347,7 +1345,6 @@ after_fundpsbt(struct command *cmd,
 	if (!field)
 		goto fail;
 
-	/* FIXME FIXME bad input here... fundpsbt doing wrong thing? */
 	mfc->psbt = psbt_from_b64(mfc,
 				  buf + field->start,
 				  field->end - field->start);
