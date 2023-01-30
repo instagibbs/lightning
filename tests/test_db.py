@@ -1,4 +1,3 @@
-from bitcoin.rpc import JSONRPCError
 from fixtures import *  # noqa: F401,F403
 from fixtures import TEST_NETWORK
 from pyln.client import RpcError
