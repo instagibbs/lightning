@@ -2174,9 +2174,11 @@ static void accepter_start(struct state *state, const u8 *oc2_msg)
 	if (!tx_state->psbt)
 		tx_state->psbt = create_psbt(tx_state, 0, 0,
 					     tx_state->tx_locktime);
-	else
+	else {
 		/* Locktimes must match! */
 		tx_state->psbt->fallback_locktime = tx_state->tx_locktime;
+		psbt_set_version(tx_state->psbt, 2);
+	}
 
 	/* BOLT- #2:
 	 *

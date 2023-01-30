@@ -211,8 +211,9 @@ def test_last_tx_psbt_upgrade(node_factory, bitcoind):
                                options={'database-upgrade': True})
     last_txs = [x['last_tx'] for x in l2.db_query('SELECT last_tx FROM channels ORDER BY id;')]
 
-    # The first tx should be psbt, the second should still be hex
-    with pytest.raises(JSONRPCError, match=r'TX decode failed Unsupported version number: iostream error'):
+    # The first tx should be psbt, the second should still be hex (Newer Core version required for better error message)
+    # Hex tx would have given: "TX decode failed invalid base64"
+    with pytest.raises(JSONRPCError, match=r'TX decode failed'):
         bitcoind.rpc.decodepsbt(base64.b64encode(last_txs[0]).decode('utf-8'))
 
     bitcoind.rpc.decoderawtransaction(last_txs[1].hex())
