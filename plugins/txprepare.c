@@ -222,6 +222,7 @@ static struct command_result *finish_txprepare(struct command *cmd,
 	if (txp->is_withdraw) {
 		struct out_req *req;
 
+		/* FIXME support taproot spending from here */
 		/* Won't live beyond this cmd. */
 		tal_steal(cmd, utx);
 		req = jsonrpc_request_start(cmd->plugin, cmd, "signpsbt",

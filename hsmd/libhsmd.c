@@ -455,6 +455,7 @@ static void hsm_key_for_utxo(struct privkey *privkey, struct pubkey *pubkey,
 
 /* Find our inputs by the pubkey associated with the inputs, and
  * add a partial sig for each */
+/* FIXME need to sign using bip340 et al, and inject partial sigs into PSBT */
 static void sign_our_inputs(struct utxo **utxos, struct wally_psbt *psbt)
 {
 	for (size_t i = 0; i < tal_count(utxos); i++) {
