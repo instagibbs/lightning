@@ -470,6 +470,7 @@ struct channel *new_channel(struct peer *peer, u64 dbid,
 	channel->shutdown_wrong_funding
 		= tal_steal(channel, shutdown_wrong_funding);
 	channel->closing_feerate_range = NULL;
+	/* FIXME we should be doing taproot automatically if not given */
 	if (local_shutdown_scriptpubkey)
 		channel->shutdown_scriptpubkey[LOCAL]
 			= tal_steal(channel, local_shutdown_scriptpubkey);
