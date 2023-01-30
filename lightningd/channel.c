@@ -525,6 +525,7 @@ struct channel *new_channel(struct peer *peer, u64 dbid,
 	channel->closer = closer;
 	channel->state_change_cause = reason;
 
+	/* FIXME update address type here and above (this should be synced/identical to what we told peer */
 	/* Make sure we see any spends using this key */
 	txfilter_add_scriptpubkey(peer->ld->owned_txfilter,
 				  take(p2wpkh_for_keyidx(NULL, peer->ld,

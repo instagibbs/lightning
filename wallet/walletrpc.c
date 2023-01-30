@@ -81,10 +81,12 @@ enum addrtype {
 	/* Deprecated! */
 	ADDR_P2SH_SEGWIT = 1,
 	ADDR_BECH32 = 2,
+	/* FIXME needs ADDR_P2TR */
 	ADDR_ALL = (ADDR_P2SH_SEGWIT + ADDR_BECH32)
 };
 
 /* Extract bool indicating "bech32" */
+/* FIXME add p2tr*/
 static struct command_result *param_newaddr(struct command *cmd,
 					    const char *name,
 					    const char *buffer,
@@ -105,6 +107,7 @@ static struct command_result *param_newaddr(struct command *cmd,
 	return NULL;
 }
 
+/* FIXME straight forward derivation changes here */
 static struct command_result *json_newaddr(struct command *cmd,
 					   const char *buffer,
 					   const jsmntok_t *obj UNNEEDED,

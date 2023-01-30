@@ -66,6 +66,7 @@ void txfilter_add_scriptpubkey(struct txfilter *filter, const u8 *script TAKES)
 	    notleak(tal_dup_talarr(filter, u8, script)));
 }
 
+/* FIXME add taproot derivation for filter */
 void txfilter_add_derkey(struct txfilter *filter,
 			 const u8 derkey[PUBKEY_CMPR_LEN])
 {
