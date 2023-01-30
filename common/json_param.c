@@ -779,6 +779,8 @@ json_to_address_scriptpubkey(const tal_t *ctx,
 		return ADDRESS_PARSE_SUCCESS;
 	}
 
+	/* FIXME BIP350 parsing support */
+
 	/* Insert other parsers that accept null-terminated string here. */
 	return ADDRESS_PARSE_UNRECOGNIZED;
 }

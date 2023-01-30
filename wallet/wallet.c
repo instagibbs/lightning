@@ -648,6 +648,7 @@ bool wallet_add_onchaind_utxo(struct wallet *w,
 	return true;
 }
 
+/* FIXME needs taproot support */
 bool wallet_can_spend(struct wallet *w, const u8 *script,
 		      u32 *index, bool *output_is_p2sh)
 {
