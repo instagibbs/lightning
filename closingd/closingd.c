@@ -619,6 +619,8 @@ static void calc_fee_bounds(size_t expected_weight,
 	 */
 	if (opener == REMOTE) {
 		*maxfee = funding;
+		status_debug("Setting max fee as non-opener to funding size of channel %s",
+			     type_to_string(tmpctx, struct amount_sat, maxfee));
 
 	/* This used to appear in BOLT #2: we still set it for non-anchor
 	 * peers who may still enforce it:
@@ -648,8 +650,11 @@ static void calc_fee_bounds(size_t expected_weight,
 						      &commitment_fee));
 			*maxfee = commitment_fee;
 		}
-	} else
+	} else {
 		*maxfee = commitment_fee;
+		status_debug("Setting max fee as opener to commitment fee %s",
+			     type_to_string(tmpctx, struct amount_sat, maxfee));
+	}
 
 	/* Can't exceed maxfee. */
 	if (amount_sat_greater(*minfee, *maxfee))
