@@ -86,7 +86,6 @@ enum addrtype {
 };
 
 /* Extract bool indicating "bech32" */
-/* FIXME add p2tr*/
 static struct command_result *param_newaddr(struct command *cmd,
 					    const char *name,
 					    const char *buffer,
@@ -98,6 +97,8 @@ static struct command_result *param_newaddr(struct command *cmd,
 		**addrtype = ADDR_P2SH_SEGWIT;
 	else if (json_tok_streq(buffer, tok, "bech32"))
 		**addrtype = ADDR_BECH32;
+	else if (json_tok_streq(buffer, tok, "p2tr"))
+		**addrtype = ADDR_P2TR;
 	else if (json_tok_streq(buffer, tok, "all"))
 		**addrtype = ADDR_ALL;
 	else
@@ -107,7 +108,6 @@ static struct command_result *param_newaddr(struct command *cmd,
 	return NULL;
 }
 
-/* FIXME straight forward derivation changes here */
 static struct command_result *json_newaddr(struct command *cmd,
 					   const char *buffer,
 					   const jsmntok_t *obj UNNEEDED,
@@ -119,6 +119,7 @@ static struct command_result *json_newaddr(struct command *cmd,
 	s64 keyidx;
 	char *p2sh, *bech32;
 	u8 *b32script;
+	u8 *p2tr_script;
 
 	if (!param(cmd, buffer, params,
 		   p_opt_def("addresstype", param_newaddr, &addrtype, ADDR_BECH32),
@@ -134,8 +135,11 @@ static struct command_result *json_newaddr(struct command *cmd,
 		return command_fail(cmd, LIGHTNINGD, "Keys generation failure");
 
 	b32script = scriptpubkey_p2wpkh(tmpctx, &pubkey);
+	p2tr_script = scriptpubkey_p2tr(tmpctx, &pubkey);
 	if (*addrtype & ADDR_BECH32)
 		txfilter_add_scriptpubkey(cmd->ld->owned_txfilter, b32script);
+	if (*addrtype & ADDR_P2TR)
+		txfilter_add_scriptpubkey(cmd->ld->owned_txfilter, p2tr_script);
 	if (deprecated_apis && (*addrtype & ADDR_P2SH_SEGWIT))
 		txfilter_add_scriptpubkey(cmd->ld->owned_txfilter,
 					  scriptpubkey_p2sh(tmpctx, b32script));
