@@ -313,28 +313,28 @@ u8 *scriptpubkey_witness_raw(const tal_t *ctx, u8 version,
 /* Create an output script for a taproot output */
 u8 *scriptpubkey_p2tr(const tal_t *ctx, const struct pubkey *pubkey)
 {
-    int ok;
-    secp256k1_xonly_pubkey x_key;
-    unsigned char x_key_bytes[32];
-    //struct sha256 h;
-    u8 *script = tal_arr(ctx, u8, 0);
+	int ok;
+	secp256k1_xonly_pubkey x_key;
+	unsigned char x_key_bytes[32];
+	//struct sha256 h;
+	u8 *script = tal_arr(ctx, u8, 0);
 
-    add_op(&script, OP_1);
+	add_op(&script, OP_1);
 
-    ok = secp256k1_xonly_pubkey_from_pubkey(secp256k1_ctx,
-        &x_key,
-        /* pk_parity */ NULL,
-        &(pubkey->pubkey));
-    assert(ok);
+	ok = secp256k1_xonly_pubkey_from_pubkey(secp256k1_ctx,
+		&x_key,
+		/* pk_parity */ NULL,
+		&(pubkey->pubkey));
+	assert(ok);
 
-    ok = secp256k1_xonly_pubkey_serialize(secp256k1_ctx,
-        x_key_bytes,
-        &x_key);
-    assert(ok);
+	ok = secp256k1_xonly_pubkey_serialize(secp256k1_ctx,
+		x_key_bytes,
+		&x_key);
+	assert(ok);
 
-    script_push_bytes(&script, x_key_bytes, sizeof(x_key_bytes));
-    assert(tal_count(script) == BITCOIN_SCRIPTPUBKEY_P2TR_LEN);
-    return script;
+	script_push_bytes(&script, x_key_bytes, sizeof(x_key_bytes));
+	assert(tal_count(script) == BITCOIN_SCRIPTPUBKEY_P2TR_LEN);
+	return script;
 }
 
 
