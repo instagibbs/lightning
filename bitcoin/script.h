@@ -63,6 +63,9 @@ u8 *scriptpubkey_p2wpkh_derkey(const tal_t *ctx, const u8 der[33]);
 u8 *scriptpubkey_witness_raw(const tal_t *ctx, u8 version,
 			     const u8 *wprog, size_t wprog_size);
 
+/* Create an output script for a taproot output */
+u8 *scriptpubkey_p2tr(const tal_t *ctx, const struct pubkey *pubkey);
+
 /* To-remotekey with csv max(lease_expiry - blockheight, 1) delay. */
 u8 *anchor_to_remote_redeem(const tal_t *ctx,
 			    const struct pubkey *remote_key,
