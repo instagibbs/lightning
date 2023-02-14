@@ -316,7 +316,6 @@ u8 *scriptpubkey_p2tr(const tal_t *ctx, const struct pubkey *pubkey)
 	int ok;
 	secp256k1_xonly_pubkey x_key;
 	unsigned char x_key_bytes[32];
-	//struct sha256 h;
 	u8 *script = tal_arr(ctx, u8, 0);
 
 	add_op(&script, OP_1);
