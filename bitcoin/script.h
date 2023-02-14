@@ -177,4 +177,7 @@ void script_push_bytes(u8 **scriptp, const void *mem, size_t len);
 /* OP_0 + PUSH(32-byte-hash) */
 #define BITCOIN_SCRIPTPUBKEY_P2WSH_LEN (1 + 1 + 32)
 
+/* OP_1 + PUSH(32-byte-key) */
+#define BITCOIN_SCRIPTPUBKEY_P2TR_LEN (1 + 1 + 32)
+
 #endif /* LIGHTNING_BITCOIN_SCRIPT_H */
