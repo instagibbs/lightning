@@ -156,6 +156,9 @@ bool is_p2wsh(const u8 *script, struct sha256 *addr);
 /* Is this (version 0) pay to witness pubkey hash? (extract addr if not NULL) */
 bool is_p2wpkh(const u8 *script, struct bitcoin_address *addr);
 
+/* Is this a taproot output? (extract xonly_pubkey bytes if not NULL) */
+bool is_p2tr(const u8 *script, u8 *xonly_pubkey);
+
 /* Is this one of the four above script types? */
 bool is_known_scripttype(const u8 *script);
 

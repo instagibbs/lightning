@@ -508,6 +508,22 @@ bool is_p2wpkh(const u8 *script, struct bitcoin_address *addr)
 	return true;
 }
 
+bool is_p2tr(const u8 *script, u8 *xonly_pubkey)
+{
+	size_t script_len = tal_count(script);
+
+	if (script_len != BITCOIN_SCRIPTPUBKEY_P2TR_LEN)
+		return false;
+	if (script[0] != OP_1)
+		return false;
+	/* x-only pubkey */
+	if (script[1] != OP_PUSHBYTES(32))
+		return false;
+	if (xonly_pubkey)
+		memcpy(xonly_pubkey, script+2, 32);
+	return true;
+}
+
 bool is_known_scripttype(const u8 *script)
 {
 	return is_p2wpkh(script, NULL) || is_p2wsh(script, NULL)
