@@ -385,8 +385,7 @@ static struct command_result *finish_psbt(struct command *cmd,
 			return command_fail(cmd, LIGHTNINGD,
 					    "Failed to generate change address."
 					    " Keys generation failure");
-		/* FIXME update change to P2TR */
-		b32script = scriptpubkey_p2wpkh(tmpctx, &pubkey);
+		b32script = scriptpubkey_p2tr(tmpctx, &pubkey);
 		txfilter_add_scriptpubkey(cmd->ld->owned_txfilter, b32script);
 
 		change_outnum = psbt->num_outputs;
