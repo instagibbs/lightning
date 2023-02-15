@@ -690,11 +690,7 @@ bool wallet_can_spend(struct wallet *w, const u8 *script,
 		}
 		tal_free(s);
 		/* Try taproot output now */
-		struct pubkey tr_key;
-		if (!pubkey_from_der(ext.pub_key, sizeof(ext.pub_key), &tr_key)) {
-			return false;
-		}
-		s = scriptpubkey_p2tr(w, &tr_key);
+		s = scriptpubkey_p2tr_derkey(w, ext.pub_key);
 		if (scripteq(s, script)) {
 			/* If we found a used key in the keyscan_gap we should
 			 * remember that. */
