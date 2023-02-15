@@ -1508,8 +1508,6 @@ def test_p2tr_deposit(node_factory, bitcoind):
 
     # Add some funds to withdraw
     l1.bitcoin.rpc.sendtoaddress(addrs['p2tr'], 1)
-    from pdb import set_trace
-    set_trace()
 
     bitcoind.generate_block(1)
 
