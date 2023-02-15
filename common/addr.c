@@ -25,7 +25,7 @@ char *encode_scriptpubkey_to_addr(const tal_t *ctx,
 	if (is_p2tr(scriptPubkey, NULL))
 		witver = 1;
 	else if (is_p2wpkh(scriptPubkey, NULL))
-		witnver = 0;
+		witver = 0;
 	else {
 		return tal_free(out);	
 	}
