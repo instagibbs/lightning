@@ -310,7 +310,6 @@ u8 *scriptpubkey_witness_raw(const tal_t *ctx, u8 version,
 	return script;
 }
 
-/* Create an output script for a taproot output */
 u8 *scriptpubkey_p2tr(const tal_t *ctx, const struct pubkey *pubkey)
 {
 	int ok;
@@ -336,6 +335,14 @@ u8 *scriptpubkey_p2tr(const tal_t *ctx, const struct pubkey *pubkey)
 	return script;
 }
 
+u8 *scriptpubkey_p2tr_derkey(const tal_t *ctx, const u8 der[33])
+{
+	struct pubkey tr_key;
+	if (!pubkey_from_der(der, 3, &tr_key)) {
+		abort();
+	}
+	return scriptpubkey_p2tr(ctx, &tr_key);
+}
 
 /* BOLT #3:
  *
