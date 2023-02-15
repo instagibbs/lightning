@@ -868,7 +868,9 @@
         },
         "NewaddrResponse": {
             "NewAddr.bech32": 1,
-            "NewAddr.p2sh-segwit": 2
+            "NewAddr.p2sh-segwit": 2,
+            "NewAddr.p2tr": 3,
+            "NewAddr.script": 4
         },
         "PayRequest": {
             "Pay.amount_msat": 13,

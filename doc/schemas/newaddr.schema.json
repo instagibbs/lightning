@@ -4,6 +4,10 @@
   "additionalProperties": false,
   "required": [],
   "properties": {
+    "p2tr": {
+      "type": "string",
+      "description": "The taproot address"
+    },
     "bech32": {
       "type": "string",
       "description": "The bech32 (native segwit) address"

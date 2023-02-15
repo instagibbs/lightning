@@ -648,7 +648,6 @@ bool wallet_add_onchaind_utxo(struct wallet *w,
 	return true;
 }
 
-/* FIXME needs taproot support */
 bool wallet_can_spend(struct wallet *w, const u8 *script,
 		      u32 *index, bool *output_is_p2sh)
 {
@@ -660,6 +659,8 @@ bool wallet_can_spend(struct wallet *w, const u8 *script,
 	if (is_p2sh(script, NULL))
 		*output_is_p2sh = true;
 	else if (is_p2wpkh(script, NULL))
+		*output_is_p2sh = false;
+	else if (is_p2tr(script, NULL))
 		*output_is_p2sh = false;
 	else
 		return false;
@@ -678,6 +679,22 @@ bool wallet_can_spend(struct wallet *w, const u8 *script,
 			tal_free(s);
 			s = p2sh;
 		}
+		if (scripteq(s, script)) {
+			/* If we found a used key in the keyscan_gap we should
+			 * remember that. */
+			if (i > bip32_max_index)
+				db_set_intvar(w->db, "bip32_max_index", i);
+			tal_free(s);
+			*index = i;
+			return true;
+		}
+		tal_free(s);
+		/* Try taproot output now */
+		struct pubkey tr_key;
+		if (!pubkey_from_der(ext.pub_key, sizeof(ext.pub_key), &tr_key)) {
+			return false;
+		}
+		s = scriptpubkey_p2tr(w, &tr_key);
 		if (scripteq(s, script)) {
 			/* If we found a used key in the keyscan_gap we should
 			 * remember that. */

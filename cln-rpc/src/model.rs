@@ -2979,6 +2979,8 @@ pub mod responses {
 	#[derive(Clone, Debug, Deserialize, Serialize)]
 	pub struct NewaddrResponse {
 	    #[serde(skip_serializing_if = "Option::is_none")]
+	    pub p2tr: Option<String>,
+	    #[serde(skip_serializing_if = "Option::is_none")]
 	    pub bech32: Option<String>,
 	    #[deprecated]
 	    #[serde(rename = "p2sh-segwit")]

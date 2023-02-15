@@ -1499,6 +1499,24 @@ def test_withdraw_bech32m(node_factory, bitcoind):
     l1.rpc.multiwithdraw(args)["txid"]
 
 
+def test_p2tr_deposit(node_factory, bitcoind):
+    """No support for spending; just depositing for now
+    """
+    # Don't get any funds from previous runs.
+    l1 = node_factory.get_node(random_hsm=True)
+    addrs = l1.rpc.newaddr('all')
+
+    # Add some funds to withdraw
+    l1.bitcoin.rpc.sendtoaddress(addrs['p2tr'], 1)
+    from pdb import set_trace
+    set_trace()
+
+    bitcoind.generate_block(1)
+
+    wait_for(lambda: len(l1.rpc.listfunds()['outputs']) == 1)
+    assert l1.rpc.listfunds()['outputs'][0]['address'] == addrs['p2tr']
+
+
 @unittest.skipIf(TEST_NETWORK != 'regtest', "Address is network specific")
 def test_upgradewallet(node_factory, bitcoind):
     # Make sure bitcoind doesn't think it's going backwards

@@ -126,7 +126,7 @@ static struct command_result *param_newaddr(struct command *cmd,
 		**addrtype = ADDR_ALL;
 	else
 		return command_fail(cmd, JSONRPC2_INVALID_PARAMS,
-				    "'%s' should be 'bech32', or 'all', not '%.*s'",
+				    "'%s' should be 'p2tr', 'bech32', or 'all', not '%.*s'",
 				    name, tok->end - tok->start, buffer + tok->start);
 	return NULL;
 }
@@ -171,7 +171,7 @@ static struct command_result *json_newaddr(struct command *cmd,
 	bech32 = encode_pubkey_to_addr(cmd, &pubkey, ADDR_BECH32, NULL);
 	p2tr = encode_pubkey_to_addr(cmd, &pubkey, ADDR_P2TR, NULL);
 
-	if (!p2sh || !bech32) {
+	if (!p2sh || !bech32 || !p2tr) {
 		return command_fail(cmd, LIGHTNINGD,
 				    "p2wpkh address encoding failure.");
 	}
