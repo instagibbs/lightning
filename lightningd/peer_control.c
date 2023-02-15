@@ -220,6 +220,16 @@ u8 *p2wpkh_for_keyidx(const tal_t *ctx, struct lightningd *ld, u64 keyidx)
 	return scriptpubkey_p2wpkh(ctx, &shutdownkey);
 }
 
+u8 *p2tr_for_keyidx(const tal_t *ctx, struct lightningd *ld, u64 keyidx)
+{
+	struct pubkey shutdownkey;
+
+	if (!bip32_pubkey(ld->wallet->bip32_base, &shutdownkey, keyidx))
+		return NULL;
+
+	return scriptpubkey_p2tr(ctx, &shutdownkey);
+}
+
 static void sign_last_tx(struct channel *channel,
 			 struct bitcoin_tx *last_tx,
 			 struct bitcoin_signature *last_sig)

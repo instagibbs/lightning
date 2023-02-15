@@ -470,13 +470,12 @@ struct channel *new_channel(struct peer *peer, u64 dbid,
 	channel->shutdown_wrong_funding
 		= tal_steal(channel, shutdown_wrong_funding);
 	channel->closing_feerate_range = NULL;
-	/* FIXME we should be doing taproot automatically if not given */
 	if (local_shutdown_scriptpubkey)
 		channel->shutdown_scriptpubkey[LOCAL]
 			= tal_steal(channel, local_shutdown_scriptpubkey);
 	else
 		channel->shutdown_scriptpubkey[LOCAL]
-			= p2wpkh_for_keyidx(channel, channel->peer->ld,
+			= p2tr_for_keyidx(channel, channel->peer->ld,
 					    channel->final_key_idx);
 	channel->last_was_revoke = last_was_revoke;
 	channel->last_sent_commit = tal_steal(channel, last_sent_commit);
@@ -526,11 +525,12 @@ struct channel *new_channel(struct peer *peer, u64 dbid,
 	channel->closer = closer;
 	channel->state_change_cause = reason;
 
-	/* FIXME update address type here and above (this should be synced/identical to what we told peer */
 	/* Make sure we see any spends using this key */
-	txfilter_add_scriptpubkey(peer->ld->owned_txfilter,
-				  take(p2wpkh_for_keyidx(NULL, peer->ld,
-							 channel->final_key_idx)));
+	if (!local_shutdown_scriptpubkey) {
+		txfilter_add_scriptpubkey(peer->ld->owned_txfilter,
+					  take(p2tr_for_keyidx(NULL, peer->ld,
+								 channel->final_key_idx)));
+	}
 	/* scid is NULL when opening a new channel so we don't
 	 * need to set error in that case as well */
 	if (is_stub_scid(scid))
