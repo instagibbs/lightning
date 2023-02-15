@@ -699,7 +699,6 @@ static struct command_result *match_psbt_inputs_to_utxos(struct command *cmd,
 			} else
 				scriptPubKey = utxo->scriptPubkey;
 
-			/* FIXME fill out information for taproot outputs if it's taproot */
 			psbt_input_set_wit_utxo(psbt, i, scriptPubKey, utxo->amount);
 		}
 		tal_arr_expand(utxos, utxo);
