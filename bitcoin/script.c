@@ -338,7 +338,7 @@ u8 *scriptpubkey_p2tr(const tal_t *ctx, const struct pubkey *pubkey)
 u8 *scriptpubkey_p2tr_derkey(const tal_t *ctx, const u8 der[33])
 {
 	struct pubkey tr_key;
-	if (!pubkey_from_der(der, 3, &tr_key)) {
+	if (!pubkey_from_der(der, 33, &tr_key)) {
 		abort();
 	}
 	return scriptpubkey_p2tr(ctx, &tr_key);
