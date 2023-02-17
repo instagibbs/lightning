@@ -1502,8 +1502,6 @@ def test_withdraw_bech32m(node_factory, bitcoind):
 def test_p2tr_deposit(node_factory, bitcoind):
     """No support for spending; just depositing for now
     """
-    from pdb import set_trace
-    set_trace()
 
     # Don't get any funds from previous runs.
     l1 = node_factory.get_node(random_hsm=True)
@@ -1514,8 +1512,11 @@ def test_p2tr_deposit(node_factory, bitcoind):
 
     bitcoind.generate_block(1)
 
+    from pdb import set_trace
+    set_trace()
     wait_for(lambda: len(l1.rpc.listfunds()['outputs']) == 1)
     assert l1.rpc.listfunds()['outputs'][0]['address'] == addrs['p2tr']
+    l1.rpc.withdraw(addrs['p2tr'], 100000)
 
 
 @unittest.skipIf(TEST_NETWORK != 'regtest', "Address is network specific")
