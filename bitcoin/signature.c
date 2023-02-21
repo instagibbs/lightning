@@ -209,8 +209,6 @@ void bipmusig_finalize_keys(struct pubkey *agg_pk,
     int i, ok;
     unsigned char taptweak_preimage[64];
     secp256k1_xonly_pubkey agg_x_key;
-	struct pubkey tmp_inner_pubkey;
-	size_t key_len = 33;
     assert(n_pubkeys <= 100);
 
     /* Sorting moves pubkeys themselves, we copy and discard after */
@@ -239,29 +237,26 @@ void bipmusig_finalize_keys(struct pubkey *agg_pk,
 
     assert(ok);
 
-	ok = secp256k1_musig_pubkey_get(secp256k1_ctx,
-		&tmp_inner_pubkey.pubkey,
-		keyagg_cache);
-
-	assert(ok);
-
 	if (inner_pubkey) {
-		*inner_pubkey = tmp_inner_pubkey;
+		ok = secp256k1_musig_pubkey_get(secp256k1_ctx,
+			&inner_pubkey->pubkey,
+			keyagg_cache);
+
+		assert(ok);
 	}
+
+    ok = secp256k1_xonly_pubkey_serialize(secp256k1_ctx, taptweak_preimage, &agg_x_key);
+
+    assert(ok);
 
     if (!tap_merkle_root) {
         /* No-tapscript recommended commitment: Q = P + int(hashTapTweak(bytes(P)))G */
-		ok = secp256k1_ec_pubkey_serialize(secp256k1_ctx, taptweak_preimage, &key_len, &tmp_inner_pubkey.pubkey, SECP256K1_EC_COMPRESSED);
-		assert(key_len == 33);
-        ok = wally_tagged_hash(taptweak_preimage, key_len, "TapTweak", tap_tweak_out);
+        ok = wally_tagged_hash(taptweak_preimage, 32, "TapTweak", tap_tweak_out);
         assert(ok == WALLY_OK);
         ok = secp256k1_musig_pubkey_xonly_tweak_add(secp256k1_ctx, &(agg_pk->pubkey), keyagg_cache, tap_tweak_out);
         assert(ok);
     } else {
-		ok = secp256k1_xonly_pubkey_serialize(secp256k1_ctx, taptweak_preimage, &agg_x_key);
-		assert(ok);
-
-        /* Otherwise: Q = P + int(hashTapTweak(p||tap_merkle_root))G */
+        /* Otherwise: Q = P + int(hashTapTweak(bytes(P)||tap_merkle_root))G */
         memcpy(taptweak_preimage + 32, tap_merkle_root->u.u8, sizeof(tap_merkle_root->u.u8));
         ok = wally_tagged_hash(taptweak_preimage, sizeof(taptweak_preimage), "TapTweak", tap_tweak_out);
         assert(ok == WALLY_OK);
