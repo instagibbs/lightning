@@ -113,6 +113,8 @@ def test_eltoo_base_reestablishment(node_factory, bitcoind):
     l1.daemon.wait_for_log('Reconnected, and reestablished')
     l2.daemon.wait_for_log('Reconnected, and reestablished')
 
+    from pdb import set_trace
+    set_trace()
     l1_update_tx = l1.rpc.listpeers(l2.info['id'])["peers"][0]["channels"][0]['last_update_tx']
     l1_settle_tx = l1.rpc.listpeers(l2.info['id'])["peers"][0]["channels"][0]['last_settle_tx']
 
