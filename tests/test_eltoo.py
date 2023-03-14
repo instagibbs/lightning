@@ -76,7 +76,6 @@ def test_eltoo_offerer_ack_reestablishment(node_factory, bitcoind):
 
     wait_for(lambda: l2.rpc.listpeers()['peers'][0]['channels'][0]['in_fulfilled_msat'] == Millisatoshi(100000000))
 
-# FIXME getting psig combiner error here on the pay command
 def test_eltoo_uneven_reestablishment(node_factory, bitcoind):
     """Test that channel reestablishment does the expected thing when 
        an update signed message was "sent" but not received by the recipient
@@ -157,7 +156,7 @@ def test_eltoo_unannounced_hop(node_factory, bitcoind):
     wait_for(lambda: l3.rpc.listpeers()['peers'][0]['channels'][0]['in_fulfilled_msat'] == Millisatoshi(200010000))
 
 # Example flags to run test
-# DEBUG_SUBD=eltoo_onchaind VALGRIND=0 BITCOIND_ELTOO_ARGS=1 BITCOIND_TEST_PATH=/home/greg/bitcoin-dev/bitcoin/src/bitcoind pytest -s tests/test_eltoo.py -k test_eltoo_htlc
+# DEBUG_SUBD=eltoo_onchaind VALGRIND=0 BITCOIND_TEST_PATH=/home/greg/bitcoin-dev/lightning/eltoo_bitcoind pytest -s tests/test_eltoo.py -k test_eltoo_htlc
 @pytest.mark.developer("needs dev-disable-commit-after")
 def test_eltoo_htlc(node_factory, bitcoind, executor, chainparams):
     """Test HTLC resolution via eltoo_onchaind after a single successful payment"""

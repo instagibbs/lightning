@@ -1099,8 +1099,7 @@ void compute_taptree_merkle_root(struct sha256 *hash_out, u8 **scripts, size_t n
     unsigned char tag_hash_buf[1000]; /* Needs to be large enough for HTLC scripts */
     unsigned char tap_hashes[64]; /* To store the leaves for comparison */
 
-    /* FIXME 2 scripts is broken somehow, use compute_taptree_merkle_root_with_hint instead
-     * Only what's required for eltoo et al for now, sue me */
+    /* Only what's required for eltoo et al for now, sue me */
     assert(num_scripts == 1 || num_scripts == 2);
     if (num_scripts == 1) {
         size_t script_len = tal_count(scripts[0]);
@@ -1163,7 +1162,7 @@ void compute_taptree_merkle_root_with_hint(struct sha256 *update_merkle_root, co
     size_t script_len = tal_count(update_tapscript);
     unsigned char *p = tag_hash_buf;
 
-    assert(tal_count(invalidated_annex_hint) == 33 && invalidated_annex_hint[0] == 0x50);
+    assert(tal_count(invalidated_annex_hint) == 34 && invalidated_annex_hint[0] == 0x50);
 
     /* Let k0 = hashTapLeaf(v || compact_size(size of s) || s); also call it the tapleaf hash. */
     p[0] = leaf_version;
@@ -1176,7 +1175,7 @@ void compute_taptree_merkle_root_with_hint(struct sha256 *update_merkle_root, co
     assert(ok == WALLY_OK);
 
     /* Put invalidated hint in place as a tapleaf hash directly */
-    memcpy(tap_hashes + 32, invalidated_annex_hint + 1, 32);
+    memcpy(tap_hashes + 32, invalidated_annex_hint + 2, 32);
 
     /* If kj ≥ ej: kj+1 = hashTapBranch(ej || kj), swap them*/
     if (memcmp(tap_hashes, tap_hashes + 32, 32) >= 0) {

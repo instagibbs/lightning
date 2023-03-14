@@ -819,7 +819,7 @@ static int test_htlc_output_creation(void)
 	/* Cross-check merkle root calculations between functions */
     compute_taptree_merkle_root(&tap_merkle_root, tapleaf_scripts, /* num_scripts */ 2);
 	success_annex = make_annex_from_script(tmpctx, htlc_success_script);
-	assert(tal_count(success_annex) == 33); /* TapLeaf hash + annex prefix */
+	assert(tal_count(success_annex) == 34); /* annex prefix plus hash length plus TapLeaf hash + */
 	assert(success_annex[0] == 0x50);
 	compute_taptree_merkle_root_with_hint(&tap_merkle_root_annex, htlc_timeout_script, success_annex);
 	assert(memcmp(tap_merkle_root.u.u8, tap_merkle_root_annex.u.u8, sizeof(tap_merkle_root.u.u8)) == 0);

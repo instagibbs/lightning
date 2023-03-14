@@ -31,8 +31,8 @@ u8 *make_annex_from_script(const tal_t *ctx, const u8 *script)
     u8 *preimage_cursor;
     u64 tapscript_len = tal_count(script);
     u8 *tapleaf_preimage = tal_arr(ctx, u8, 1 + varint_size(tapscript_len) + tapscript_len);
-    /* Enough space for annex flag plus the one hash we want published */
-    u8 *annex = tal_arr(ctx, u8, 1 + sizeof(result.u.u8));
+    /* Enough space for annex flag plus hash length and one hash we want published */
+    u8 *annex = tal_arr(ctx, u8, 1 + 1 + sizeof(result.u.u8));
 
     preimage_cursor = tapleaf_preimage;
     preimage_cursor[0] = 0xC0;
@@ -46,7 +46,8 @@ u8 *make_annex_from_script(const tal_t *ctx, const u8 *script)
     assert(ok == WALLY_OK);
 
     annex[0] = 0x50; /* annex flag */
-    memcpy(annex + 1, result.u.u8, sizeof(result));
+	annex[1] = 32; /* payload length */
+    memcpy(annex + 2, result.u.u8, sizeof(result));
     return annex;
 }
 
