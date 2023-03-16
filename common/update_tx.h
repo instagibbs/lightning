@@ -13,6 +13,8 @@ struct bitcoin_outpoint;
 /* Generates the "state" output for eltoo update transaction, based on the settlement tx */
 int tx_add_state_output(struct bitcoin_tx *update_tx, const struct bitcoin_tx *settle_tx);
 
+void tx_update_add_ephemeral_anchor(struct bitcoin_tx *tx);
+
 /* Generates TapLeaf hash of script, with annex byte prepended */
 u8 *make_annex_from_script(const tal_t *ctx, const u8 *script);
 

@@ -213,8 +213,8 @@ def test_eltoo_htlc(node_factory, bitcoind, executor, chainparams):
     # FIXME we need real anchor CPFP + package relay to pay fees
     l1_update_details = bitcoind.rpc.decoderawtransaction(l1_update_tx)
     l1_settle_details = bitcoind.rpc.decoderawtransaction(l1_settle_tx)
-    bitcoind.rpc.prioritisetransaction(l1_update_details["txid"], 0, 100000000)
-    bitcoind.rpc.prioritisetransaction(l1_settle_details["txid"], 0, 100000000)
+
+    # N.B. We rely on bitcoin-inquisition imputing 1 sat/vbyte on txs with EAs
     bitcoind.rpc.sendrawtransaction(l1_update_tx)
 
     # Mine and mature the update tx

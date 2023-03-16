@@ -16,6 +16,12 @@
 
 struct wally_psbt;
 
+void tx_update_add_ephemeral_anchor(struct bitcoin_tx *tx)
+{
+    u8 *spk = bitcoin_spk_ephemeral_anchor(tmpctx);
+    bitcoin_tx_add_output(tx, spk, /* wscript */ NULL, AMOUNT_SAT(0));
+}
+
 int tx_add_state_output(struct bitcoin_tx *update_tx, const struct bitcoin_tx *settle_tx)
 {
     struct amount_sat amount;
@@ -386,11 +392,14 @@ struct bitcoin_tx *unbound_update_tx(const tal_t *ctx,
     int pos;
 
     /* 1 input 1 output tx */
-    update_tx = bitcoin_tx(ctx, chainparams, 1, 1, 0);
+    update_tx = bitcoin_tx(ctx, chainparams, 1, 2, 0);
 
     /* Add output */
     pos = tx_add_state_output(update_tx, settle_tx);
     assert(pos == 0);
+
+	/* Add ephemeral anchor */
+	tx_update_add_ephemeral_anchor(update_tx);
 
     /* Add unsigned, un-bound funding input */
     tx_add_unbound_input(update_tx, funding_sats, inner_pubkey);

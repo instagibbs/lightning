@@ -1530,9 +1530,9 @@ static u8 *handle_psign_update_tx(struct hsmd_client *c, const u8 *msg_in)
 		return hsmd_status_bad_request(c, msg_in,
 					       "update tx must have 1 input");
 
-	if (update_tx->wtx->num_outputs != 1)
+	if (update_tx->wtx->num_outputs != 2)
 		return hsmd_status_bad_request_fmt(c, msg_in,
-						   "update tx must have 1 output");
+						   "update tx must have 2 outputs");
 
 	get_channel_seed(&c->id, c->dbid, &channel_seed);
 	derive_basepoints(&channel_seed,
