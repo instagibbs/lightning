@@ -1238,9 +1238,10 @@ u8 *compute_control_block(const tal_t *ctx, const u8 *other_script, const u8 *an
         assert(ok == WALLY_OK);
         control_block_cursor += 32;
     } else if (annex_hint) {
-        assert(tal_count(annex_hint) == 33);
+        assert(tal_count(annex_hint) == 34);
         assert(annex_hint[0] == 0x50);
-        memcpy(control_block_cursor, annex_hint + 1, 32);
+        assert(annex_hint[1] == 32);
+        memcpy(control_block_cursor, annex_hint + 2, 32);
         control_block_cursor += 32;
     }
     return control_block;
