@@ -258,14 +258,14 @@ void bipmusig_finalize_keys(struct pubkey *agg_pk,
 
     if (!tap_merkle_root) {
         /* No-tapscript recommended commitment: Q = P + int(hashTapTweak(bytes(P)))G */
-        ok = wally_tagged_hash(taptweak_preimage, 32, "TapTweak", tap_tweak_out);
+        ok = wally_tagged_hash(taptweak_preimage, 32, is_elements(chainparams) ? "TapTweak/elements" : "TapTweak", tap_tweak_out);
         assert(ok == WALLY_OK);
         ok = secp256k1_musig_pubkey_xonly_tweak_add(secp256k1_ctx, &(agg_pk->pubkey), keyagg_cache, tap_tweak_out);
         assert(ok);
     } else {
         /* Otherwise: Q = P + int(hashTapTweak(bytes(P)||tap_merkle_root))G */
         memcpy(taptweak_preimage + 32, tap_merkle_root->u.u8, sizeof(tap_merkle_root->u.u8));
-        ok = wally_tagged_hash(taptweak_preimage, sizeof(taptweak_preimage), "TapTweak", tap_tweak_out);
+        ok = wally_tagged_hash(taptweak_preimage, sizeof(taptweak_preimage), is_elements(chainparams) ? "TapTweak/elements" : "TapTweak", tap_tweak_out);
         assert(ok == WALLY_OK);
         ok = secp256k1_musig_pubkey_xonly_tweak_add(secp256k1_ctx, &(agg_pk->pubkey), keyagg_cache, tap_tweak_out);
         assert(ok);
