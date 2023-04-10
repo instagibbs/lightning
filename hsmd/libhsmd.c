@@ -1467,6 +1467,11 @@ static u8 *handle_combine_psig(struct hsmd_client *c, const u8 *msg_in)
     p_sig_ptrs[1] = &p_sig_2.p_sig;
 
     annex = make_eltoo_annex(tmpctx, settle_tx);
+
+	/* HACK: Just return fake signature for elements */
+	if (is_elements(chainparams))
+		return towire_hsmd_combine_psig_reply(NULL, &sig);
+
     bitcoin_tx_taproot_hash_for_sig(update_tx, /* input_index */ 0, SIGHASH_ANYPREVOUTANYSCRIPT|SIGHASH_SINGLE, /* non-NULL script signals bip342... */ annex, annex, &hash_out);
     printf("validate taproot Sighash: ");
     for (i = 0; i < 32; i++)
@@ -1530,7 +1535,8 @@ static u8 *handle_psign_update_tx(struct hsmd_client *c, const u8 *msg_in)
 		return hsmd_status_bad_request(c, msg_in,
 					       "update tx must have 1 input");
 
-	if (update_tx->wtx->num_outputs != 2)
+	/* 1 is for elements since we can't do EA */
+	if (update_tx->wtx->num_outputs != 2 && update_tx->wtx->num_outputs != 1)
 		return hsmd_status_bad_request_fmt(c, msg_in,
 						   "update tx must have 2 outputs");
 

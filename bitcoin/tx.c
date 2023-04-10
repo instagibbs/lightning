@@ -163,6 +163,10 @@ static int elements_tx_add_fee_output(struct bitcoin_tx *tx)
 	if (!chainparams->is_elements)
 		return -1;
 
+	/* No fee output is possible at 0 fee */
+	if (fee.satoshis == 0)
+		return -1;
+
 	/* Try to find any existing fee output */
 	for (pos = 0; pos < tx->wtx->num_outputs; pos++) {
 		if (elements_tx_output_is_fee(tx, pos))

@@ -425,6 +425,10 @@ void bitcoin_tx_taproot_hash_for_sig(const struct bitcoin_tx *tx,
                  u8 *annex,
 			     struct sha256_double *dest)
 {
+	/* HACK: don't actually compute sighashes for elements but let it through */
+	if (is_elements(chainparams))
+		return;
+
 	int ret, i;
 
     /* Preparing args for taproot*/

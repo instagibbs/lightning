@@ -205,14 +205,21 @@ def test_eltoo_htlc(node_factory, bitcoind, executor, chainparams):
     l2_update_tx = l2.rpc.listpeers(l1.info['id'])["peers"][0]["channels"][0]['last_update_tx']
     l2_settle_tx = l2.rpc.listpeers(l1.info['id'])["peers"][0]["channels"][0]['last_settle_tx']
 
-    assert l1_update_tx == l2_update_tx
-    assert l1_settle_tx == l2_settle_tx
+    from pdb import set_trace
+    set_trace()
+    # Faking signatures for now
+    if not chainparams['elements']:
+        assert l1_update_tx == l2_update_tx
+        assert l1_settle_tx == l2_settle_tx
 
     # Now we really mess things up!
 
     # FIXME we need real anchor CPFP + package relay to pay fees
     l1_update_details = bitcoind.rpc.decoderawtransaction(l1_update_tx)
     l1_settle_details = bitcoind.rpc.decoderawtransaction(l1_settle_tx)
+
+    if chainparams['elements']:
+        bitcoind.rpc.prioritisetransaction(l1_update_details["txid"], 0, 100000000)
 
     # N.B. We rely on bitcoin-inquisition imputing 1 sat/vbyte on txs with EAs
     bitcoind.rpc.sendrawtransaction(l1_update_tx)

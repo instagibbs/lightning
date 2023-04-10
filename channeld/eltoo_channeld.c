@@ -1238,14 +1238,17 @@ static void handle_peer_update_sig(struct eltoo_peer *peer, const u8 *msg)
                   tal_hex(tmpctx, msg));
 	}
 
-	/* Keyagg cache/session etc lets us verify partial sig; do that for blame purposes */
-	if (!bipmusig_partial_sig_verify(&peer->channel->eltoo_keyset.last_committed_state.other_psig,
-			&peer->channel->eltoo_keyset.other_next_nonce,
-			&peer->channel->eltoo_keyset.other_funding_key,
-			&cache,
-			&peer->channel->eltoo_keyset.last_committed_state.session)) {
-		peer_failed_warn(peer->pps, &peer->channel_id,
-				 "Bad update_signed; invalid partial signature %s", tal_hex(msg, msg));
+	/* HACK: let fake signatures through since Elements doesn't have APO */
+	if (!is_elements(chainparams)) {
+		/* Keyagg cache/session etc lets us verify partial sig; do that for blame purposes */
+		if (!bipmusig_partial_sig_verify(&peer->channel->eltoo_keyset.last_committed_state.other_psig,
+				&peer->channel->eltoo_keyset.other_next_nonce,
+				&peer->channel->eltoo_keyset.other_funding_key,
+				&cache,
+				&peer->channel->eltoo_keyset.last_committed_state.session)) {
+			peer_failed_warn(peer->pps, &peer->channel_id,
+					 "Bad update_signed; invalid partial signature %s", tal_hex(msg, msg));
+		}
 	}
 
     /* Slide their newest nonce into place after checking psig above */

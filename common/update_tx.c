@@ -1,4 +1,5 @@
 #include "config.h"
+#include <bitcoin/psbt.h>
 #include <bitcoin/script.h>
 #include <bitcoin/tx.h>
 #include <ccan/array_size/array_size.h>
@@ -24,8 +25,8 @@ void tx_update_add_ephemeral_anchor(struct bitcoin_tx *tx)
 
 int tx_add_state_output(struct bitcoin_tx *update_tx, const struct bitcoin_tx *settle_tx)
 {
-    struct amount_sat amount;
-    amount.satoshis = settle_tx->psbt->inputs[0].witness_utxo->satoshi;
+    struct amount_sat amount = psbt_input_get_amount(settle_tx->psbt, 0);
+    //amount.satoshis = settle_tx->psbt->inputs[0].witness_utxo->satoshi;
     return bitcoin_tx_add_output( 
         update_tx, settle_tx->psbt->inputs[0].witness_utxo->script, /* wscript */ NULL, amount /* FIXME pass in psbt fields for tap outputs */);
 }
@@ -41,14 +42,14 @@ u8 *make_annex_from_script(const tal_t *ctx, const u8 *script)
     u8 *annex = tal_arr(ctx, u8, 1 + 1 + sizeof(result.u.u8));
 
     preimage_cursor = tapleaf_preimage;
-    preimage_cursor[0] = 0xC0;
+    preimage_cursor[0] = is_elements(chainparams) ? 0xc4 : 0xc0;
     preimage_cursor++;
     preimage_cursor += varint_put(preimage_cursor, tapscript_len);
     memcpy(preimage_cursor, script, tapscript_len);
     preimage_cursor += tapscript_len;
 
     assert(tal_count(tapleaf_preimage) == preimage_cursor - tapleaf_preimage);
-    ok = wally_tagged_hash(tapleaf_preimage, tal_count(tapleaf_preimage), "TapLeaf", result.u.u8);
+    ok = wally_tagged_hash(tapleaf_preimage, tal_count(tapleaf_preimage), is_elements(chainparams) ? "TapLeaf/elements" : "TapLeaf", result.u.u8);
     assert(ok == WALLY_OK);
 
     annex[0] = 0x50; /* annex flag */
@@ -399,7 +400,8 @@ struct bitcoin_tx *unbound_update_tx(const tal_t *ctx,
     assert(pos == 0);
 
 	/* Add ephemeral anchor */
-	tx_update_add_ephemeral_anchor(update_tx);
+	if (!is_elements(chainparams))
+		tx_update_add_ephemeral_anchor(update_tx);
 
     /* Add unsigned, un-bound funding input */
     tx_add_unbound_input(update_tx, funding_sats, inner_pubkey);
