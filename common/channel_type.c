@@ -66,6 +66,17 @@ struct channel_type *channel_type_anchors_zero_fee_htlc(const tal_t *ctx)
 	return type;
 }
 
+struct channel_type *channel_type_commit_zero_fees(const tal_t *ctx)
+{
+	struct channel_type *type = channel_type_none(ctx);
+
+	set_feature_bit(&type->features,
+			COMPULSORY_FEATURE(OPT_COMMIT_ZERO_FEES));
+	set_feature_bit(&type->features,
+			COMPULSORY_FEATURE(OPT_STATIC_REMOTEKEY));
+	return type;
+}
+
 struct channel_type *default_channel_type(const tal_t *ctx,
 					  const struct feature_set *our_features,
 					  const u8 *their_features)
@@ -81,6 +92,9 @@ struct channel_type *default_channel_type(const tal_t *ctx,
 	 *     - the `channel_type` is `option_anchor_outputs` and
 	 *       `option_static_remotekey` (bits 20 and 12)
 	 */
+	if (feature_negotiated(our_features, their_features,
+			       OPT_COMMIT_ZERO_FEES))
+		return channel_type_commit_zero_fees(ctx);
 	if (feature_negotiated(our_features, their_features,
 			       OPT_ANCHORS_ZERO_FEE_HTLC_TX))
 		return channel_type_anchors_zero_fee_htlc(ctx);
@@ -114,7 +128,13 @@ bool channel_type_has(const struct channel_type *type, int feature)
 bool channel_type_has_anchors(const struct channel_type *type)
 {
 	return feature_offered(type->features, OPT_ANCHOR_OUTPUTS)
-		|| feature_offered(type->features, OPT_ANCHORS_ZERO_FEE_HTLC_TX);
+		|| feature_offered(type->features, OPT_ANCHORS_ZERO_FEE_HTLC_TX)
+		|| feature_offered(type->features, OPT_COMMIT_ZERO_FEES);
+}
+
+bool channel_type_has_ephemeral_anchors(const struct channel_type *type)
+{
+	return feature_offered(type->features, OPT_COMMIT_ZERO_FEES);
 }
 
 bool channel_type_eq(const struct channel_type *a,

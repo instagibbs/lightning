@@ -544,7 +544,7 @@ static void bitcoin_tx_destroy(struct bitcoin_tx *tx)
 struct bitcoin_tx *bitcoin_tx(const tal_t *ctx,
 			      const struct chainparams *chainparams,
 			      varint_t input_count, varint_t output_count,
-			      u32 nlocktime)
+			      u32 nlocktime, int version)
 {
 	struct bitcoin_tx *tx = tal(ctx, struct bitcoin_tx);
 	assert(chainparams);
@@ -556,7 +556,7 @@ struct bitcoin_tx *bitcoin_tx(const tal_t *ctx,
 		output_count += 1;
 
 	tal_wally_start();
-	wally_tx_init_alloc(WALLY_TX_VERSION_2, nlocktime, input_count, output_count,
+	wally_tx_init_alloc(version, nlocktime, input_count, output_count,
 			    &tx->wtx);
 	tal_add_destructor(tx, bitcoin_tx_destroy);
 	tal_wally_end_onto(tx, tx->wtx, struct wally_tx);
@@ -580,7 +580,7 @@ struct bitcoin_tx *bitcoin_tx_with_psbt(const tal_t *ctx, struct wally_psbt *psb
 	struct bitcoin_tx *tx = bitcoin_tx(ctx, chainparams,
 					   psbt->num_inputs,
 					   psbt->num_outputs,
-					   locktime);
+					   locktime, 2);
 	wally_tx_free(tx->wtx);
 
 	psbt_finalize(psbt);

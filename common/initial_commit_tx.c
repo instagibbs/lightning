@@ -71,6 +71,14 @@ void tx_add_anchor_output(struct bitcoin_tx *tx,
 	bitcoin_tx_add_output(tx, p2wsh, wscript, AMOUNT_SAT(330));
 }
 
+void tx_add_ephemeral_anchor_output(struct bitcoin_tx *tx,
+              struct amount_sat to_anchor)
+{
+	u8 *script = bitcoin_ephemeral_anchor(tmpctx);
+
+	bitcoin_tx_add_output(tx, script, /*wscript=*/NULL, to_anchor);
+}
+
 struct bitcoin_tx *initial_commit_tx(const tal_t *ctx,
 				     const struct bitcoin_outpoint *funding,
 				     struct amount_sat funding_sats,
@@ -89,9 +97,11 @@ struct bitcoin_tx *initial_commit_tx(const tal_t *ctx,
 				     u32 csv_lock,
 				     bool option_anchor_outputs,
 				     bool option_anchors_zero_fee_htlc_tx,
+				     bool option_commit_zero_fees,
 				     char** err_reason)
 {
 	struct amount_sat base_fee;
+	struct amount_msat trimmed_value;
 	struct bitcoin_tx *tx;
 	size_t n, untrimmed;
 	bool to_local, to_remote;
@@ -105,6 +115,8 @@ struct bitcoin_tx *initial_commit_tx(const tal_t *ctx,
 	const u8 *funding_wscript = bitcoin_redeem_2of2(tmpctx,
 							&funding_key[LOCAL],
 							&funding_key[REMOTE]);
+
+	trimmed_value.millisatoshis = 0;
 
 	if (!amount_msat_add(&total_pay, self_pay, other_pay))
 		abort();
@@ -124,7 +136,8 @@ struct bitcoin_tx *initial_commit_tx(const tal_t *ctx,
 	 */
 	base_fee = commit_tx_base_fee(feerate_per_kw, untrimmed,
 				      option_anchor_outputs,
-				      option_anchors_zero_fee_htlc_tx);
+				      option_anchors_zero_fee_htlc_tx,
+                      option_commit_zero_fees);
 
 	/* BOLT #3:
 	 * If `option_anchors` applies to the commitment
@@ -187,7 +200,10 @@ struct bitcoin_tx *initial_commit_tx(const tal_t *ctx,
 
 
 	/* Worst-case sizing: both to-local and to-remote outputs + anchors. */
-	tx = bitcoin_tx(ctx, chainparams, 1, untrimmed + 4, 0);
+	tx = bitcoin_tx(ctx, chainparams, 1, untrimmed + 4, 0, option_commit_zero_fees ? 3 : 2);
+
+//	if (option_commit_zero_fees)
+//		tx->wtx->version = 3;
 
 	/* This could be done in a single loop, but we follow the BOLT
 	 * literally to make comments in test vectors clearer. */
@@ -223,9 +239,10 @@ struct bitcoin_tx *initial_commit_tx(const tal_t *ctx,
 		output_order[n] = dummy_local;
 		n++;
 		to_local = true;
-	} else
+	} else {
+		if (!amount_msat_add(&trimmed_value, trimmed_value, self_pay)) return false;
 		to_local = false;
-
+	}
 	/* BOLT #3:
 	 *
 	 * 7. If the `to_remote` amount is greater or equal to
@@ -263,9 +280,10 @@ struct bitcoin_tx *initial_commit_tx(const tal_t *ctx,
 		output_order[n] = dummy_remote;
 		n++;
 		to_remote = true;
-	} else
+	} else {
+		if (!amount_msat_add(&trimmed_value, trimmed_value, other_pay)) return false;
 		to_remote = false;
-
+	}
 	/* BOLT #3:
 	 * 8. If `option_anchors` applies to the commitment transaction:
 	 *    * if `to_local` exists or there are untrimmed HTLCs, add a
@@ -285,6 +303,9 @@ struct bitcoin_tx *initial_commit_tx(const tal_t *ctx,
 			output_order[n] = NULL;
 			n++;
 		}
+	} else if (option_commit_zero_fees) {
+        // FIXME dunno about rounding
+		tx_add_ephemeral_anchor_output(tx, amount_msat_to_sat_round_down(trimmed_value));
 	}
 
 	assert(n <= tx->wtx->num_outputs);
@@ -303,7 +324,7 @@ struct bitcoin_tx *initial_commit_tx(const tal_t *ctx,
 	 *
 	 * * version: 2
 	 */
-	assert(tx->wtx->version == 2);
+	assert((!option_commit_zero_fees && tx->wtx->version == 2) || (option_commit_zero_fees && tx->wtx->version == 3));
 
 	/* BOLT #3:
 	 *

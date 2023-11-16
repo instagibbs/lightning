@@ -765,10 +765,10 @@ static struct command_result *json_feerates(struct command *cmd,
 
 		json_add_u64(response, "htlc_timeout_satoshis",
 			     htlc_timeout_fee(htlc_resolution_feerate(cmd->ld->topology),
-					      false, false).satoshis /* Raw: estimate */);
+					      false, false, false).satoshis /* Raw: estimate */);
 		json_add_u64(response, "htlc_success_satoshis",
 			     htlc_success_fee(htlc_resolution_feerate(cmd->ld->topology),
-					      false, false).satoshis /* Raw: estimate */);
+					      false, false, false).satoshis /* Raw: estimate */);
 		json_object_end(response);
 	}
 

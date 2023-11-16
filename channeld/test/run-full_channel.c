@@ -536,7 +536,7 @@ int main(int argc, const char *argv[])
 			   to_local,
 			   to_remote,
 			   NULL, &htlc_map, NULL, 0x2bb038521914 ^ 42,
-			   option_anchor_outputs, option_anchors_zero_fee_htlc_tx,
+			   option_anchor_outputs, option_anchors_zero_fee_htlc_tx, /*option_commit_zero_fees=*/false,
 			   LOCAL, &local_anchor);
 
 	txs = channel_txs(tmpctx, &funding, funding_amount,
@@ -675,7 +675,7 @@ int main(int argc, const char *argv[])
 		    &keyset, feerate_per_kw[LOCAL], local_config->dust_limit,
 		    to_local, to_remote, htlcs, &htlc_map, NULL,
 		    0x2bb038521914 ^ 42,
-		    option_anchor_outputs, option_anchors_zero_fee_htlc_tx,
+		    option_anchor_outputs, option_anchors_zero_fee_htlc_tx, /*option_commit_zero_fees=*/false,
 		    LOCAL, &local_anchor);
 
 		txs = channel_txs(tmpctx, &funding, funding_amount,

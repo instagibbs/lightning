@@ -1436,7 +1436,7 @@ static bool want_fee_update(const struct peer *peer, u32 *target)
 {
 	u32 current, val;
 
-	if (peer->channel->opener != LOCAL)
+	if (peer->channel->opener != LOCAL || channel_type_has(peer->channel->type, OPT_COMMIT_ZERO_FEES))
 		return false;
 
 	/* No fee update while quiescing! */

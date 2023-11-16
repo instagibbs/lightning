@@ -121,7 +121,8 @@ struct bitcoin_tx *htlc_success_tx(const tal_t *ctx UNNEEDED,
 				   u32 feerate_per_kw UNNEEDED,
 				   const struct keyset *keyset UNNEEDED,
 				   bool option_anchor_outputs UNNEEDED,
-				   bool option_anchors_zero_fee_htlc_tx UNNEEDED)
+				   bool option_anchors_zero_fee_htlc_tx UNNEEDED,
+				   bool option_commit_zero_fees UNNEEDED)
 { fprintf(stderr, "htlc_success_tx called!\n"); abort(); }
 /* Generated stub for htlc_timeout_tx */
 struct bitcoin_tx *htlc_timeout_tx(const tal_t *ctx UNNEEDED,
@@ -134,7 +135,8 @@ struct bitcoin_tx *htlc_timeout_tx(const tal_t *ctx UNNEEDED,
 				   u32 feerate_per_kw UNNEEDED,
 				   const struct keyset *keyset UNNEEDED,
 				   bool option_anchor_outputs UNNEEDED,
-				   bool option_anchors_zero_fee_htlc_tx UNNEEDED)
+				   bool option_anchors_zero_fee_htlc_tx UNNEEDED,
+				   bool option_commit_zero_fees UNNEEDED)
 { fprintf(stderr, "htlc_timeout_tx called!\n"); abort(); }
 /* Generated stub for master_badmsg */
 void master_badmsg(u32 type_expected UNNEEDED, const u8 *msg)

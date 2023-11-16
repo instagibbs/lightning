@@ -103,6 +103,7 @@ start_nodes() {
 			experimental-dual-fund
 			experimental-splicing
 			experimental-offers
+			experimental-zero-fees
 			funder-policy=match
 			funder-policy-mod=100
 			funder-min-their-funding=10000
@@ -117,7 +118,7 @@ start_nodes() {
 
 		# Start the lightning nodes
 		test -f "/tmp/l$i-$network/lightningd-$network.pid" || \
-			$EATMYDATA "$LIGHTNINGD" "--network=$network" "--lightning-dir=/tmp/l$i-$network" "--bitcoin-datadir=$PATH_TO_BITCOIN" "--database-upgrade=true" &
+			$EATMYDATA "$LIGHTNINGD" "--network=$network" "--lightning-dir=/tmp/l$i-$network" "--bitcoin-datadir=$PATH_TO_BITCOIN" "--database-upgrade=true" "--dev-debugger=$DEBUG_SUBD"  &
 		# shellcheck disable=SC2139 disable=SC2086
 		alias l$i-cli="$LCLI --lightning-dir=/tmp/l$i-$network"
 		# shellcheck disable=SC2139 disable=SC2086

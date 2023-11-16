@@ -41,7 +41,7 @@ static struct bitcoin_tx *tx_spending_utxo(const tal_t *ctx,
 					   u32 nsequence)
 {
 	struct bitcoin_tx *tx = bitcoin_tx(ctx, chainparams, 1, num_output,
-					   nlocktime);
+					   nlocktime, 2);
 
 	assert(!utxo->is_p2sh);
 	bitcoin_tx_add_input(tx, &utxo->outpoint,

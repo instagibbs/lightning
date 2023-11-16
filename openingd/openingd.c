@@ -334,6 +334,8 @@ static u8 *funder_channel_start(struct state *state, u8 channel_flags,
 						   state->our_features,
 						   state->their_features);
 
+    // FIXME OPT_COMMIT_ZERO_FEES
+
 	/* Spec says we should use the option_scid_alias variation if we
 	 * want them to *only* use the scid_alias (which we do for unannounced
 	 * channels!).
@@ -547,6 +549,9 @@ static u8 *funder_channel_start(struct state *state, u8 channel_flags,
 				 feature_negotiated(state->our_features,
 						    state->their_features,
 						    OPT_ANCHORS_ZERO_FEE_HTLC_TX),
+				 feature_negotiated(state->our_features,
+						    state->their_features,
+						    OPT_COMMIT_ZERO_FEES),
 				 &err_reason)) {
 		negotiation_failed(state, "%s", err_reason);
 		return NULL;
@@ -1066,6 +1071,9 @@ static u8 *fundee_channel(struct state *state, const u8 *open_channel_msg)
 				 feature_negotiated(state->our_features,
 						    state->their_features,
 						    OPT_ANCHORS_ZERO_FEE_HTLC_TX),
+				 feature_negotiated(state->our_features,
+						    state->their_features,
+						    OPT_COMMIT_ZERO_FEES),
 				 &err_reason)) {
 		negotiation_failed(state, "%s", err_reason);
 		return NULL;

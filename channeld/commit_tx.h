@@ -15,6 +15,7 @@ struct keyset;
  * @side: from which side's point of view
  * @option_anchor_outputs: does option_anchor_outputs apply to this channel?
  * @option_anchors_zero_fee_htlc_tx: does option_anchors_zero_fee_htlc_tx apply to this channel?
+ * @option_commit_zero_fees,: does option_commit_zero_fee apply to this channel?
  *
  * We need @side because HTLC fees are different for offered and
  * received HTLCs.
@@ -22,8 +23,9 @@ struct keyset;
 size_t commit_tx_num_untrimmed(const struct htlc **htlcs,
 			       u32 feerate_per_kw,
 			       struct amount_sat dust_limit,
-			       bool option_anchors_zero_fee_htlc_tx,
 			       bool option_anchor_outputs,
+			       bool option_anchors_zero_fee_htlc_tx,
+			       bool option_commit_zero_fees,
 			       enum side side);
 
 /**
@@ -32,6 +34,7 @@ size_t commit_tx_num_untrimmed(const struct htlc **htlcs,
  * @feerate_per_kw: feerate to use
  * @dust_limit: dust limit below which to trim outputs.
  * @option_anchor_outputs: does option_anchor_outputs apply to this channel?
+ * @option_anchors_zero_fee_htlc_tx: does option_anchors_zero_fee_htlc_tx apply to this channel?
  * @side: from which side's point of view
  * @amt: returned, total value trimmed from this commitment
  *
@@ -45,6 +48,7 @@ bool commit_tx_amount_trimmed(const struct htlc **htlcs,
 			      struct amount_sat dust_limit,
 			      bool option_anchor_outputs,
 			      bool option_anchors_zero_fee_htlc_tx,
+			      bool option_commit_zero_fees,
 			      enum side side,
 			      struct amount_msat *amt);
 /**
@@ -64,6 +68,7 @@ bool commit_tx_amount_trimmed(const struct htlc **htlcs,
  * @direct_outputs: If non-NULL, fill with pointers to the direct (non-HTLC) outputs (or NULL if none).
  * @option_anchor_outputs: does option_anchor_outputs apply to this channel?
  * @option_anchors_zero_fee_htlc_tx: does option_anchors_zero_fee_htlc_tx apply to this channel?
+ * @option_commit_zero_fees: does option_commit_zero_fees apply to this channel?
  * @side: side to generate commitment transaction for.
  * @anchor_outnum: set to index of local anchor, or -1 if none.
  *
@@ -91,6 +96,7 @@ struct bitcoin_tx *commit_tx(const tal_t *ctx,
 			     u64 obscured_commitment_number,
 			     bool option_anchor_outputs,
 			     bool option_anchors_zero_fee_htlc_tx,
+			     bool option_commit_zero_fees,
 			     enum side side,
 			     int *anchor_outnum);
 

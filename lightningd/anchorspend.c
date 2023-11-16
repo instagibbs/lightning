@@ -46,6 +46,9 @@ struct anchor_details {
 
 	/* A callback for each of these */
 	struct one_anchor *anchors;
+
+	bool is_ephemeral;
+    struct amount_sat ephemeral_sats;
 };
 
 struct deadline_value {
@@ -63,15 +66,24 @@ static int cmp_deadline_value(const struct deadline_value *a,
 static bool find_anchor_output(struct channel *channel,
 			       const struct bitcoin_tx *tx,
 			       const u8 *anchor_wscript,
-			       struct bitcoin_outpoint *out)
+			       struct bitcoin_outpoint *out,
+			       struct amount_sat *anchor_sats)
 {
 	const u8 *scriptpubkey = scriptpubkey_p2wsh(tmpctx, anchor_wscript);
+	const u8 *ephemeralscript = bitcoin_ephemeral_anchor(tmpctx);
 
 	for (out->n = 0; out->n < tx->wtx->num_outputs; out->n++) {
 		if (memeq(scriptpubkey, tal_bytelen(scriptpubkey),
 			  tx->wtx->outputs[out->n].script,
 			  tx->wtx->outputs[out->n].script_len)) {
 			bitcoin_txid(tx, &out->txid);
+			anchor_sats->satoshis = tx->psbt->outputs[out->n].amount;
+			return true;
+		} else if (memeq(ephemeralscript, tal_bytelen(ephemeralscript),
+			  tx->wtx->outputs[out->n].script,
+			  tx->wtx->outputs[out->n].script_len)) {
+			bitcoin_txid(tx, &out->txid);
+			anchor_sats->satoshis = tx->psbt->outputs[out->n].amount;
 			return true;
 		}
 	}
@@ -139,6 +151,9 @@ struct anchor_details *create_anchor_details(const tal_t *ctx,
 		return tal_free(adet);
 	}
 
+	adet->is_ephemeral = channel_type_has_ephemeral_anchors(channel->type);
+
+    // FIXME don't thread wscript through
 	adet->anchor_wscript
 		= bitcoin_wscript_anchor(adet, &channel->local_funding_pubkey);
 	adet->anchors = tal_arr(adet, struct one_anchor, 0);
@@ -152,7 +167,7 @@ struct anchor_details *create_anchor_details(const tal_t *ctx,
 
 	/* Now append our own, if we have one. */
 	if (find_anchor_output(channel, tx, adet->anchor_wscript,
-			       &local_anchor.anchor_point)) {
+			       &local_anchor.anchor_point, &adet->ephemeral_sats)) {
 		local_anchor.commitment_weight = bitcoin_tx_weight(tx);
 		local_anchor.commitment_fee = bitcoin_tx_compute_fee(tx);
 		add_one_anchor(adet, &local_anchor, LOCAL);
@@ -198,9 +213,18 @@ struct anchor_details *create_anchor_details(const tal_t *ctx,
 		tal_arr_expand(&adet->vals, v);
 	}
 
+    // FIXME We should still eventually close this channel out to mature the output
+    // For now just hack it to bump for tests
+    if (tal_count(adet->vals) == 0) {
+        struct deadline_value v;
+        v.msat.millisatoshis = 100000000000;
+        v.block = 1;
+        tal_arr_expand(&adet->vals, v);
+    }
+
 	/* No htlcs in flight?  No reason to boost. */
-	if (tal_count(adet->vals) == 0)
-		return tal_free(adet);
+//  if (tal_count(adet->vals) == 0)
+//		return tal_free(adet);
 
 	if (!merge_deadlines(channel, adet))
 		return tal_free(adet);
@@ -228,18 +252,28 @@ static struct wally_psbt *anchor_psbt(const tal_t *ctx,
 				default_locktime(ld->topology),
 				BITCOIN_TX_RBF_SEQUENCE, NULL);
 
-	/* BOLT #3:
-	 * #### `to_local_anchor` and `to_remote_anchor` Output (option_anchors)
-	 *...
-	 * The amount of the output is fixed at 330 sats, the default
-	 * dust limit for P2WSH.
-	 */
-	psbt_append_input(psbt, &anch->info.anchor_point, BITCOIN_TX_RBF_SEQUENCE,
-			  NULL, anch->adet->anchor_wscript, NULL);
-	psbt_input_set_wit_utxo(psbt, psbt->num_inputs - 1,
-				scriptpubkey_p2wsh(tmpctx, anch->adet->anchor_wscript),
-				AMOUNT_SAT(330));
-	psbt_input_add_pubkey(psbt, psbt->num_inputs - 1, &channel->local_funding_pubkey, false);
+	if (anch->adet->is_ephemeral) {
+	    /* Ephemeral anchor transactions must be v3 and doesn't have wscript */
+		psbt->tx_version = 3;
+        psbt_append_input(psbt, &anch->info.anchor_point, BITCOIN_TX_RBF_SEQUENCE,
+                  NULL, NULL, NULL);
+        psbt_input_set_wit_utxo(psbt, psbt->num_inputs - 1,
+                    bitcoin_ephemeral_anchor(tmpctx),
+                    anch->adet->ephemeral_sats);
+    } else {
+        /* BOLT #3:
+         * #### `to_local_anchor` and `to_remote_anchor` Output (option_anchors)
+         *...
+         * The amount of the output is fixed at 330 sats, the default
+         * dust limit for P2WSH.
+         */
+        psbt_append_input(psbt, &anch->info.anchor_point, BITCOIN_TX_RBF_SEQUENCE,
+                  NULL, anch->adet->anchor_wscript, NULL);
+        psbt_input_set_wit_utxo(psbt, psbt->num_inputs - 1,
+                    scriptpubkey_p2wsh(tmpctx, anch->adet->anchor_wscript),
+                    AMOUNT_SAT(330));
+        psbt_input_add_pubkey(psbt, psbt->num_inputs - 1, &channel->local_funding_pubkey, false);
+    }
 
 	/* A zero-output tx is invalid: we must have change, even if not really economic */
 	change = psbt_compute_fee(psbt);
@@ -264,18 +298,21 @@ static struct bitcoin_tx *spend_anchor(const tal_t *ctx,
 {
 	struct lightningd *ld = channel->peer->ld;
 	struct utxo **utxos COMPILER_WANTS_INIT("gcc -O3 CI");
-	size_t base_weight, weight;
+	size_t anchor_input_weight, base_weight, weight;
 	struct amount_sat fee, diff;
 	struct bitcoin_tx *tx;
 	struct wally_psbt *psbt;
 	struct amount_msat total_value;
 	const u8 *msg;
 
+    anchor_input_weight = anch->adet->is_ephemeral ? bitcoin_tx_input_weight(false, 0) :
+		bitcoin_tx_input_weight(false,
+					  bitcoin_tx_input_sig_weight()
+					  + 1 + tal_bytelen(anch->adet->anchor_wscript));
+
 	/* Estimate weight of spend tx plus commitment_tx (not including any UTXO we add) */
 	base_weight = bitcoin_tx_core_weight(2, 1)
-		+ bitcoin_tx_input_weight(false,
-					  bitcoin_tx_input_sig_weight()
-					  + 1 + tal_bytelen(anch->adet->anchor_wscript))
+		+ anchor_input_weight
 		+ bitcoin_tx_output_weight(BITCOIN_SCRIPTPUBKEY_P2WPKH_LEN)
 		+ anch->info.commitment_weight;
 
@@ -447,6 +484,7 @@ static void create_and_broadcast_anchor(struct channel *channel,
 		 fmt_amount_sat(tmpctx, anch->anchor_spend_fee));
 
 	/* Send it! */
+    /* FIXME send both commit tx and anchor spend */
 	broadcast_tx(anch->adet, ld->topology, channel, take(newtx), NULL, true, 0, NULL,
 		     refresh_anchor_spend, anch);
 }
@@ -462,7 +500,7 @@ void commit_tx_boost(struct channel *channel,
 
 	/* If it's in our mempool, we should consider boosting it.
 	 * Otherwise, try boosting peers' commitment txs. */
-	if (success)
+	if (success || true) // FIXME we should do this logic post-submitpackage instead
 		side = LOCAL;
 	else
 		side = REMOTE;

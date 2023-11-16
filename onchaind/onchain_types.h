@@ -77,6 +77,9 @@ enum output_type {
 	/* Anchor outputs for option_anchor_outputs */
 	ANCHOR_TO_US,
 	ANCHOR_TO_THEM,
+
+	/* Anchor output for option_commit_zero_fee */
+	EPHEMERAL_ANCHOR,
 };
 
 

@@ -1984,6 +1984,9 @@ def test_scid_alias_private(node_factory, bitcoind):
     l2.fundwallet(5000000)
     l2.rpc.fundchannel(l3.info['id'], 'all', announce=False)
 
+    from pdb import set_trace
+    set_trace()
+
     bitcoind.generate_block(1, wait_for_mempool=1)
     wait_for(lambda: only_one(l2.rpc.listpeerchannels(l3.info['id'])['channels'])['state'] == 'CHANNELD_NORMAL')
 

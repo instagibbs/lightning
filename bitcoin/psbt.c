@@ -657,6 +657,14 @@ bool psbt_finalize(struct wally_psbt *psbt)
 		struct wally_tx_witness_stack *stack;
 		const struct wally_map_item *iws;
 
+        // FIXME hack to finalize ephemeral anchors
+        if (input->witness_utxo && input->witness_utxo->script_len == 4) {
+            wally_tx_witness_stack_init_alloc(0, &stack);
+            wally_psbt_input_set_final_witness(input, stack);
+            wally_tx_witness_stack_free(stack);
+            continue;
+        }
+
 		iws = wally_map_get_integer(&input->psbt_fields, /* PSBT_IN_WITNESS_SCRIPT */ 0x05);
 		if (!iws)
 			continue;

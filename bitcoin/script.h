@@ -81,6 +81,9 @@ u8 *bitcoin_wscript_to_remote_anchored(const tal_t *ctx,
 				       const struct pubkey *remote_key,
 				       u32 csv_lock);
 
+/* Ephemeral anchor script of `OP_1 <0x4e73>` */
+u8 *bitcoin_ephemeral_anchor(const tal_t *ctx);
+
 /* Create a witness which spends the 2of2. */
 u8 **bitcoin_witness_2of2(const tal_t *ctx,
 			  const struct bitcoin_signature *sig1,

@@ -67,7 +67,7 @@ size_t wally_tx_weight(const struct wally_tx *wtx);
 struct bitcoin_tx *bitcoin_tx(const tal_t *ctx,
 			      const struct chainparams *chainparams,
 			      varint_t input_count, varint_t output_count,
-			      u32 nlocktime);
+			      u32 nlocktime, int version);
 
 /* Make a (deep) copy */
 struct bitcoin_tx *clone_bitcoin_tx(const tal_t *ctx,

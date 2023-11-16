@@ -15,12 +15,14 @@ static bool trim(const struct htlc *htlc,
 		 struct amount_sat dust_limit,
 		 bool option_anchor_outputs,
 		 bool option_anchors_zero_fee_htlc_tx,
+		 bool option_commit_zero_fees,
 		 enum side side)
 {
 	return htlc_is_trimmed(htlc_owner(htlc), htlc->amount,
 			       feerate_per_kw, dust_limit, side,
 			       option_anchor_outputs,
-			       option_anchors_zero_fee_htlc_tx);
+			       option_anchors_zero_fee_htlc_tx,
+			       option_commit_zero_fees);
 }
 
 size_t commit_tx_num_untrimmed(const struct htlc **htlcs,
@@ -28,6 +30,7 @@ size_t commit_tx_num_untrimmed(const struct htlc **htlcs,
 			       struct amount_sat dust_limit,
 			       bool option_anchor_outputs,
 			       bool option_anchors_zero_fee_htlc_tx,
+			       bool option_commit_zero_fees,
 			       enum side side)
 {
 	size_t i, n;
@@ -36,6 +39,7 @@ size_t commit_tx_num_untrimmed(const struct htlc **htlcs,
 		n += !trim(htlcs[i], feerate_per_kw, dust_limit,
 			   option_anchor_outputs,
 			   option_anchors_zero_fee_htlc_tx,
+			   option_commit_zero_fees,
 			   side);
 
 	return n;
@@ -46,12 +50,13 @@ bool commit_tx_amount_trimmed(const struct htlc **htlcs,
 			      struct amount_sat dust_limit,
 			      bool option_anchor_outputs,
 			      bool option_anchors_zero_fee_htlc_tx,
+			      bool option_commit_zero_fees,
 			      enum side side,
 			      struct amount_msat *amt)
 {
 	for (size_t i = 0; i < tal_count(htlcs); i++) {
 		if (trim(htlcs[i], feerate_per_kw, dust_limit,
-			 option_anchor_outputs, option_anchors_zero_fee_htlc_tx,
+			 option_anchor_outputs, option_anchors_zero_fee_htlc_tx, option_commit_zero_fees,
 			 side)) {
 			if (!amount_msat_add(amt, *amt, htlcs[i]->amount))
 				return false;
@@ -64,7 +69,8 @@ static void add_offered_htlc_out(struct bitcoin_tx *tx, size_t n,
 				 const struct htlc *htlc,
 				 const struct keyset *keyset,
 				 bool option_anchor_outputs,
-				 bool option_anchors_zero_fee_htlc_tx)
+				 bool option_anchors_zero_fee_htlc_tx,
+				 bool option_commit_zero_fees)
 {
 	struct ripemd160 ripemd;
 	u8 *wscript, *p2wsh;
@@ -128,11 +134,13 @@ struct bitcoin_tx *commit_tx(const tal_t *ctx,
 			     u64 obscured_commitment_number,
 			     bool option_anchor_outputs,
 			     bool option_anchors_zero_fee_htlc_tx,
+			     bool option_commit_zero_fees,
 			     enum side side,
 			     int *anchor_outnum)
 {
 	struct amount_sat base_fee;
 	struct amount_msat total_pay;
+    struct amount_msat trimmed_value;
 	struct bitcoin_tx *tx;
 	size_t n, untrimmed;
 	/* Is this the lessor ? */
@@ -148,6 +156,8 @@ struct bitcoin_tx *commit_tx(const tal_t *ctx,
 	u32 csv_lock = lease_expiry > blockheight ?
 		lease_expiry - blockheight : 1;
 
+	trimmed_value.millisatoshis = 0;
+
 	if (!amount_msat_add(&total_pay, self_pay, other_pay))
 		abort();
 	assert(!amount_msat_greater_sat(total_pay, funding_sats));
@@ -162,6 +172,7 @@ struct bitcoin_tx *commit_tx(const tal_t *ctx,
 					    dust_limit,
 					    option_anchor_outputs,
 					    option_anchors_zero_fee_htlc_tx,
+					    option_commit_zero_fees,
 					    side);
 
 	/* BOLT #3:
@@ -171,7 +182,8 @@ struct bitcoin_tx *commit_tx(const tal_t *ctx,
 	 */
 	base_fee = commit_tx_base_fee(feerate_per_kw, untrimmed,
 				      option_anchor_outputs,
-				      option_anchors_zero_fee_htlc_tx);
+				      option_anchors_zero_fee_htlc_tx,
+				      option_commit_zero_fees);
 
 	SUPERVERBOSE("# base commitment transaction fee = %"PRIu64" for %zu untrimmed\n",
 		     base_fee.satoshis /* Raw: spec uses raw numbers */, untrimmed);
@@ -195,13 +207,14 @@ struct bitcoin_tx *commit_tx(const tal_t *ctx,
 	try_subtract_fee(opener, side, base_fee, &self_pay, &other_pay);
 
 #ifdef PRINT_ACTUAL_FEE
-	{
+	if (!option_commit_zero_fees) { // Not useful for zero fees
 		struct amount_sat out = AMOUNT_SAT(0);
 		bool ok = true;
 		for (size_t i = 0; i < tal_count(htlcs); i++) {
 			if (!trim(htlcs[i], feerate_per_kw, dust_limit,
 				  option_anchor_outputs,
 				  option_anchors_zero_fee_htlc_tx,
+				  option_commit_zero_fees,
 				  side))
 				ok &= amount_sat_add(&out, out, amount_msat_to_sat_round_down(htlcs[i]->amount));
 		}
@@ -216,7 +229,7 @@ struct bitcoin_tx *commit_tx(const tal_t *ctx,
 #endif
 
 	/* Worst-case sizing: both to-local and to-remote outputs, and anchors. */
-	tx = bitcoin_tx(ctx, chainparams, 1, untrimmed + 2 + 2, 0);
+	tx = bitcoin_tx(ctx, chainparams, 1, untrimmed + 2 + 2, 0, option_commit_zero_fees ? 3 : 2);
 
 	/* We keep track of which outputs have which HTLCs */
 	*htlcmap = tal_arr(tx, const struct htlc *, tx->wtx->outputs_allocation_len);
@@ -238,12 +251,13 @@ struct bitcoin_tx *commit_tx(const tal_t *ctx,
 		if (htlc_owner(htlcs[i]) != side)
 			continue;
 		if (trim(htlcs[i], feerate_per_kw, dust_limit,
-			 option_anchor_outputs, option_anchors_zero_fee_htlc_tx,
+			 option_anchor_outputs, option_anchors_zero_fee_htlc_tx, option_commit_zero_fees,
 			 side))
 			continue;
 		add_offered_htlc_out(tx, n, htlcs[i], keyset,
 				     option_anchor_outputs,
-				     option_anchors_zero_fee_htlc_tx);
+				     option_anchors_zero_fee_htlc_tx,
+				     option_commit_zero_fees);
 		(*htlcmap)[n] = htlcs[i];
 		cltvs[n] = abs_locktime_to_blocks(&htlcs[i]->expiry);
 		n++;
@@ -258,9 +272,11 @@ struct bitcoin_tx *commit_tx(const tal_t *ctx,
 		if (htlc_owner(htlcs[i]) == side)
 			continue;
 		if (trim(htlcs[i], feerate_per_kw, dust_limit,
-			 option_anchor_outputs, option_anchors_zero_fee_htlc_tx,
-			 side))
-			continue;
+			 option_anchor_outputs, option_anchors_zero_fee_htlc_tx, option_commit_zero_fees,
+			 side)) {
+                if (!amount_msat_add(&trimmed_value, trimmed_value, htlcs[i]->amount)) return false;
+                continue;
+        }
 		add_received_htlc_out(tx, n, htlcs[i], keyset,
 				      option_anchor_outputs,
 				      option_anchors_zero_fee_htlc_tx);
@@ -299,8 +315,10 @@ struct bitcoin_tx *commit_tx(const tal_t *ctx,
 			     tal_hex(tmpctx, wscript));
 		n++;
 		to_local = true;
-	} else
+	} else {
+        if (!amount_msat_add(&trimmed_value, trimmed_value, self_pay)) return false;
 		to_local = false;
+    }
 
 	/* BOLT #3:
 	 *
@@ -362,6 +380,7 @@ struct bitcoin_tx *commit_tx(const tal_t *ctx,
 
 		to_remote = true;
 	} else {
+        if (!amount_msat_add(&trimmed_value, trimmed_value, other_pay)) return false;
 		to_remote = false;
 		redeem = NULL;
 	}
@@ -388,7 +407,13 @@ struct bitcoin_tx *commit_tx(const tal_t *ctx,
 			(*htlcmap)[n] = dummy_other_anchor;
 			n++;
 		}
-	}
+	} else if (option_commit_zero_fees) {
+        // FIXME dunno rounding
+        tx_add_ephemeral_anchor_output(tx, amount_msat_to_sat_round_down(trimmed_value));
+        // We can find the ephemeral anchor trivially, no need to report
+		(*htlcmap)[n] = NULL;
+		n++;
+    }
 
 	/* BOLT #2:
 	 *
@@ -414,7 +439,10 @@ struct bitcoin_tx *commit_tx(const tal_t *ctx,
 	 *
 	 * * version: 2
 	 */
-	assert(tx->wtx->version == 2);
+	if (option_commit_zero_fees)
+		assert(tx->wtx->version == 3);
+	else
+		assert(tx->wtx->version == 2);
 
 	/* BOLT #3:
 	 *

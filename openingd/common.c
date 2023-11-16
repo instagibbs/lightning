@@ -22,6 +22,7 @@ bool check_config_bounds(const tal_t *ctx,
 			 const struct channel_config *localconf,
 			 bool option_anchor_outputs,
 			 bool option_anchors_zero_fee_htlc_tx,
+			 bool option_commit_zero_fees,
 			 char **err_reason)
 {
 	struct amount_sat capacity;
@@ -99,7 +100,8 @@ bool check_config_bounds(const tal_t *ctx,
 	 * we don't account for an HTLC output. */
 	fee = commit_tx_base_fee(feerate_per_kw, 0,
 				 option_anchor_outputs,
-				 option_anchors_zero_fee_htlc_tx);
+				 option_anchors_zero_fee_htlc_tx,
+				 option_commit_zero_fees);
 	if (!amount_sat_sub(&capacity, capacity, fee)) {
 		*err_reason = tal_fmt(ctx, "channel_reserve_satoshis %s"
 				      " and %s plus fee %s too large for "
@@ -222,7 +224,10 @@ bool anchors_negotiated(struct feature_set *our_features,
 				  OPT_ANCHOR_OUTPUTS)
 		|| feature_negotiated(our_features,
 				      their_features,
-				      OPT_ANCHORS_ZERO_FEE_HTLC_TX);
+				      OPT_ANCHORS_ZERO_FEE_HTLC_TX)
+		|| feature_negotiated(our_features,
+				      their_features,
+				      OPT_COMMIT_ZERO_FEES);
 }
 
 char *validate_remote_upfront_shutdown(const tal_t *ctx,

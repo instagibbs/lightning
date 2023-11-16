@@ -63,8 +63,12 @@ static inline size_t commit_tx_base_weight(size_t num_untrimmed_htlcs,
 static inline struct amount_sat commit_tx_base_fee(u32 feerate_per_kw,
 						   size_t num_untrimmed_htlcs,
 						   bool option_anchor_outputs,
-						   bool option_anchors_zero_fee_htlc_tx)
+						   bool option_anchors_zero_fee_htlc_tx,
+						   bool option_commit_zero_fees)
 {
+    struct amount_sat zero_fee;
+    if (option_commit_zero_fees) return zero_fee;
+
 	return amount_tx_fee(feerate_per_kw,
 			     commit_tx_base_weight(num_untrimmed_htlcs,
 						   option_anchor_outputs,
@@ -111,6 +115,7 @@ struct bitcoin_tx *initial_commit_tx(const tal_t *ctx,
 				     u32 csv_lock,
 				     bool option_anchor_outputs,
 				     bool option_anchors_zero_fee_htlc_tx,
+				     bool option_commit_zero_fees,
 				     char** err_reason);
 
 /* try_subtract_fee - take away this fee from the opener (and return true), or all if insufficient (and return false). */
@@ -131,5 +136,8 @@ u8 *to_self_wscript(const tal_t *ctx,
 /* If we determine we need one, append this anchor output */
 void tx_add_anchor_output(struct bitcoin_tx *tx,
 			  const struct pubkey *funding_key);
+
+void tx_add_ephemeral_anchor_output(struct bitcoin_tx *tx,
+			  struct amount_sat to_anchor);
 
 #endif /* LIGHTNING_COMMON_INITIAL_COMMIT_TX_H */

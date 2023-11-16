@@ -311,9 +311,14 @@ static struct bitcoin_tx *sign_and_send_last(const tal_t *ctx,
 
 	/* Remember anchor information for commit_tx_boost */
 	adet = create_anchor_details(NULL, channel, tx);
+	if (!adet)
+	    log_debug(channel->log, "We have no anchors to boost for %s", type_to_string(tmpctx, struct bitcoin_txid, &txid));
 
 	/* Keep broadcasting until we say stop (can fail due to dup,
 	 * if they beat us to the broadcast). */
+    // FIXME figure out if we can submitpackage here using adet
+    // do commit_tx_send_finished stuff first, then submit all at once
+    // or batch during the callback
 	broadcast_tx(channel, ld->topology, channel, tx, cmd_id, false, 0,
 		     commit_tx_send_finished, NULL, take(adet));
 
@@ -580,7 +585,8 @@ static void json_add_htlcs(struct lightningd *ld,
 		if (htlc_is_trimmed(REMOTE, hin->msat, local_feerate,
 				    channel->our_config.dust_limit, LOCAL,
 				    channel_has(channel, OPT_ANCHOR_OUTPUTS),
-				    channel_has(channel, OPT_ANCHORS_ZERO_FEE_HTLC_TX)))
+				    channel_has(channel, OPT_ANCHORS_ZERO_FEE_HTLC_TX),
+				    channel_has(channel, OPT_COMMIT_ZERO_FEES)))
 			json_add_bool(response, "local_trimmed", true);
 		if (hin->status != NULL)
 			json_add_string(response, "status", hin->status);
@@ -604,7 +610,8 @@ static void json_add_htlcs(struct lightningd *ld,
 		if (htlc_is_trimmed(LOCAL, hout->msat, local_feerate,
 				    channel->our_config.dust_limit, LOCAL,
 				    channel_has(channel, OPT_ANCHOR_OUTPUTS),
-				    channel_has(channel, OPT_ANCHORS_ZERO_FEE_HTLC_TX)))
+				    channel_has(channel, OPT_ANCHORS_ZERO_FEE_HTLC_TX),
+				    channel_has(channel, OPT_COMMIT_ZERO_FEES)))
 			json_add_bool(response, "local_trimmed", true);
 		json_object_end(response);
 	}
@@ -629,6 +636,11 @@ static struct amount_sat commit_txfee(const struct channel *channel,
 	struct amount_sat fee;
 	bool option_anchor_outputs = channel_has(channel, OPT_ANCHOR_OUTPUTS);
 	bool option_anchors_zero_fee_htlc_tx = channel_has(channel, OPT_ANCHORS_ZERO_FEE_HTLC_TX);
+	bool option_commit_zero_fees = channel_has(channel, OPT_COMMIT_ZERO_FEES);
+
+    // No fees required
+	if (option_commit_zero_fees)
+ 		return fee;
 
 	if (side == LOCAL)
 		dust_limit = channel->our_config.dust_limit;
@@ -637,7 +649,7 @@ static struct amount_sat commit_txfee(const struct channel *channel,
 
 	/* Assume we tried to add "amount" */
 	if (!htlc_is_trimmed(side, amount, feerate, dust_limit, side,
-			     option_anchor_outputs, option_anchors_zero_fee_htlc_tx))
+			     option_anchor_outputs, option_anchors_zero_fee_htlc_tx, option_commit_zero_fees))
 		num_untrimmed_htlcs++;
 
 	for (hin = htlc_in_map_first(ld->htlcs_in, &ini);
@@ -646,7 +658,7 @@ static struct amount_sat commit_txfee(const struct channel *channel,
 		if (hin->key.channel != channel)
 			continue;
 		if (!htlc_is_trimmed(!side, hin->msat, feerate, dust_limit,
-				     side, option_anchor_outputs, option_anchors_zero_fee_htlc_tx))
+				     side, option_anchor_outputs, option_anchors_zero_fee_htlc_tx, option_commit_zero_fees))
 			num_untrimmed_htlcs++;
 	}
 	for (hout = htlc_out_map_first(ld->htlcs_out, &outi);
@@ -655,7 +667,7 @@ static struct amount_sat commit_txfee(const struct channel *channel,
 		if (hout->key.channel != channel)
 			continue;
 		if (!htlc_is_trimmed(side, hout->msat, feerate, dust_limit,
-				     side, option_anchor_outputs, option_anchors_zero_fee_htlc_tx))
+				     side, option_anchor_outputs, option_anchors_zero_fee_htlc_tx, option_commit_zero_fees))
 			num_untrimmed_htlcs++;
 	}
 
@@ -672,7 +684,7 @@ static struct amount_sat commit_txfee(const struct channel *channel,
 	 *   predictability between implementations.
 	*/
 	fee = commit_tx_base_fee(2 * feerate, num_untrimmed_htlcs + 1,
-				 option_anchor_outputs, option_anchors_zero_fee_htlc_tx);
+				 option_anchor_outputs, option_anchors_zero_fee_htlc_tx, option_commit_zero_fees);
 
 	if (option_anchor_outputs || option_anchors_zero_fee_htlc_tx) {
 		/* BOLT #3:

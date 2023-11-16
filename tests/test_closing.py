@@ -904,7 +904,7 @@ def test_channel_lease_unilat_closes(node_factory, bitcoind):
     opts = {'funder-policy': 'match', 'funder-policy-mod': 100,
             'lease-fee-base-sat': '100sat', 'lease-fee-basis': 100,
             'funder-lease-requests-only': False,
-            'experimental-anchors': None}
+            'experimental-zero-fees': None}
 
     l1, l2, l3 = node_factory.get_nodes(3, opts=opts)
     # Allow l2 some warnings
@@ -922,7 +922,8 @@ def test_channel_lease_unilat_closes(node_factory, bitcoind):
     l1.rpc.fundchannel(l2.info['id'], amount, request_amt=amount,
                        feerate='{}perkw'.format(feerate),
                        compact_lease=rates['compact_lease'])
-
+    from pdb import set_trace
+    set_trace()
     # l2 leases a channel from l3
     l2.rpc.connect(l3.info['id'], 'localhost', l3.port)
     rates = l2.rpc.dev_queryrates(l3.info['id'], amount, amount)

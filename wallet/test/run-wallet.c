@@ -300,7 +300,8 @@ bool htlc_is_trimmed(enum side htlc_owner UNNEEDED,
 		     struct amount_sat dust_limit UNNEEDED,
 		     enum side side UNNEEDED,
 		     bool option_anchor_outputs UNNEEDED,
-		     bool option_anchors_zero_fee_htlc_tx UNNEEDED)
+		     bool option_anchors_zero_fee_htlc_tx UNNEEDED,
+		     bool option_commit_zero_fees UNNEEDED)
 { fprintf(stderr, "htlc_is_trimmed called!\n"); abort(); }
 /* Generated stub for htlc_set_add */
 void htlc_set_add(struct lightningd *ld UNNEEDED,

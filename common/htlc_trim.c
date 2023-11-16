@@ -9,7 +9,8 @@ bool htlc_is_trimmed(enum side htlc_owner,
 		     struct amount_sat dust_limit,
 		     enum side side,
 		     bool option_anchor_outputs,
-		     bool option_anchors_zero_fee_htlc_tx)
+		     bool option_anchors_zero_fee_htlc_tx,
+		     bool option_commit_zero_fees)
 {
 	struct amount_sat htlc_fee, htlc_min;
 
@@ -26,7 +27,8 @@ bool htlc_is_trimmed(enum side htlc_owner,
 	if (htlc_owner == side)
 		htlc_fee = htlc_timeout_fee(feerate_per_kw,
 					    option_anchor_outputs,
-					    option_anchors_zero_fee_htlc_tx);
+					    option_anchors_zero_fee_htlc_tx,
+					    option_commit_zero_fees);
 	/* BOLT #3:
 	 *
 	 *  - for every received HTLC:
@@ -39,7 +41,8 @@ bool htlc_is_trimmed(enum side htlc_owner,
 	else
 		htlc_fee = htlc_success_fee(feerate_per_kw,
 					    option_anchor_outputs,
-					    option_anchors_zero_fee_htlc_tx);
+					    option_anchors_zero_fee_htlc_tx,
+					    option_commit_zero_fees);
 
 	/* If these overflow, it implies htlc must be less. */
 	if (!amount_sat_add(&htlc_min, dust_limit, htlc_fee))

@@ -112,7 +112,7 @@ int main(int argc, char *argv[])
 
 	fee = commit_tx_base_fee(feerate_per_kw, 0,
 				 option_anchor_outputs,
-				 false);
+				 false, false);
 	/* BOLT #3:
 	 * If `option_anchors` applies to the commitment
 	 * transaction, also subtract two times the fixed anchor size
@@ -132,7 +132,7 @@ int main(int argc, char *argv[])
 	    || !pubkey_from_privkey(&funding_privkey[REMOTE], &funding_pubkey[REMOTE]))
 		errx(1, "Bad deriving funding pubkeys");
 
-	tx = bitcoin_tx(NULL, chainparams, 1, 2, 0);
+	tx = bitcoin_tx(NULL, chainparams, 1, 2, 0, 2);
 
 	num_outputs = 0;
 	if (amount_msat_greater_eq_sat(local_msat, dust_limit)) {

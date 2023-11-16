@@ -970,6 +970,22 @@ u8 *bitcoin_wscript_anchor(const tal_t *ctx,
 	return script;
 }
 
+u8 *bitcoin_ephemeral_anchor(const tal_t *ctx)
+{
+	u8 *script = tal_arr(ctx, u8, 0);
+    u8 push[2];
+    push[0] = 0x4e;
+    push[1] = 0x73;
+
+	/*
+	 * OP_1 <0x4e73>
+	 */
+	add_op(&script, OP_1);
+    script_push_bytes(&script, push, 2);
+
+	return script;
+}
+
 bool is_anchor_witness_script(const u8 *script, size_t script_len)
 {
 	if (script_len != 34 + 1 + 1 + 1 + 1 + 1 + 1)

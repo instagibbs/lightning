@@ -82,6 +82,11 @@ void json_add_uncommitted_channel(struct json_stream *response,
 			       OPT_ANCHORS_ZERO_FEE_HTLC_TX))
 		json_add_string(response, NULL, "option_anchors_zero_fee_htlc_tx");
 
+	if (feature_negotiated(uc->peer->ld->our_features,
+			       uc->peer->their_features,
+			       OPT_COMMIT_ZERO_FEES))
+		json_add_string(response, NULL, "option_commit_zero_fees");
+
 	json_array_end(response);
 	json_object_end(response);
 }

@@ -74,7 +74,7 @@ penalty_tx_create(const tal_t *ctx,
 					   &keyset.self_revocation_key,
 					   &keyset.self_delayed_payment_key);
 
-	tx = bitcoin_tx(ctx, chainparams, 1, 1, locktime);
+	tx = bitcoin_tx(ctx, chainparams, 1, 1, locktime, 2);
 	bitcoin_tx_add_input(tx, &outpoint, 0xFFFFFFFF,
 			     NULL, to_them_sats, NULL, wscript);
 

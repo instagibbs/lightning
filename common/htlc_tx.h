@@ -15,7 +15,8 @@ struct ripemd160;
 
 static inline struct amount_sat htlc_timeout_fee(u32 feerate_per_kw,
 						 bool option_anchor_outputs,
-						 bool option_anchors_zero_fee_htlc_tx)
+						 bool option_anchors_zero_fee_htlc_tx,
+						 bool option_commit_zero_fees)
 {
 	/* BOLT #3:
 	 *
@@ -28,7 +29,7 @@ static inline struct amount_sat htlc_timeout_fee(u32 feerate_per_kw,
 	 */
 	u32 base;
 
-	if (option_anchors_zero_fee_htlc_tx)
+	if (option_anchors_zero_fee_htlc_tx || option_commit_zero_fees)
 		return AMOUNT_SAT(0);
 
 	if (option_anchor_outputs)
@@ -41,7 +42,8 @@ static inline struct amount_sat htlc_timeout_fee(u32 feerate_per_kw,
 
 static inline struct amount_sat htlc_success_fee(u32 feerate_per_kw,
 						 bool option_anchor_outputs,
-						 bool option_anchors_zero_fee_htlc_tx)
+						 bool option_anchors_zero_fee_htlc_tx,
+						 bool option_commit_zero_fees)
 {
 	/* BOLT #3:
 	 *
@@ -54,7 +56,7 @@ static inline struct amount_sat htlc_success_fee(u32 feerate_per_kw,
 	 */
 	u32 base;
 
-	if (option_anchors_zero_fee_htlc_tx)
+	if (option_anchors_zero_fee_htlc_tx || option_commit_zero_fees)
 		return AMOUNT_SAT(0);
 
 	if (option_anchor_outputs)
@@ -76,7 +78,8 @@ struct bitcoin_tx *htlc_success_tx(const tal_t *ctx,
 				   u32 feerate_per_kw,
 				   const struct keyset *keyset,
 				   bool option_anchor_outputs,
-				   bool option_anchors_zero_fee_htlc_tx);
+				   bool option_anchors_zero_fee_htlc_tx,
+				   bool option_commit_zero_fees);
 
 /* Fill in the witness for HTLC-success tx produced above. */
 void htlc_success_tx_add_witness(struct bitcoin_tx *htlc_success,
@@ -102,7 +105,8 @@ struct bitcoin_tx *htlc_timeout_tx(const tal_t *ctx,
 				   u32 feerate_per_kw,
 				   const struct keyset *keyset,
 				   bool option_anchor_outputs,
-				   bool option_anchors_zero_fee_htlc_tx);
+				   bool option_anchors_zero_fee_htlc_tx,
+				   bool option_commit_zero_fees);
 
 /* Fill in the witness for HTLC-timeout tx produced above. */
 void htlc_timeout_tx_add_witness(struct bitcoin_tx *htlc_timeout,
@@ -142,5 +146,6 @@ struct bitcoin_tx *htlc_tx(const tal_t *ctx,
 			   struct amount_sat htlc_fee,
 			   u32 locktime,
 			   bool option_anchor_outputs,
-			   bool option_anchors_zero_fee_htlc_tx);
+			   bool option_anchors_zero_fee_htlc_tx,
+			  bool option_commit_zero_fees);
 #endif /* LIGHTNING_COMMON_HTLC_TX_H */
