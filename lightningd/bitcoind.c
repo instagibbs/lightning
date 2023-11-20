@@ -26,7 +26,7 @@
 
 /* The names of the requests we can make to our Bitcoin backend. */
 static const char *methods[] = {"getchaininfo", "getrawblockbyheight",
-                                "sendrawtransaction", "getutxout",
+                                "sendrawtransaction", "submitpackage", "getutxout",
                                 "estimatefees"};
 
 static void bitcoin_destructor(struct plugin *p)
@@ -433,6 +433,89 @@ void bitcoind_sendrawtx_(const tal_t *ctx,
 				    call);
 	json_add_string(req->stream, "tx", hextx);
 	json_add_bool(req->stream, "allowhighfees", allowhighfees);
+	jsonrpc_request_end(req);
+	bitcoin_plugin_send(bitcoind, req);
+}
+
+/* `submitpackage`
+ *
+ * Send a set pf transactions to the Bitcoin backend plugin. If the broadcast was
+ * not successful on its end, the plugin will populate the `errmsg` with
+ * the reason.
+ *
+ * Plugin response:
+ * {
+ *	"success": <true|false>,
+ *	"errmsg": "<not empty if !success>"
+ * }
+ */
+
+struct submitpackage_call {
+	struct bitcoind *bitcoind;
+	void (*cb)(struct bitcoind *bitcoind,
+		   bool success,
+		   const char *err_msg,
+		   void *);
+	void *cb_arg;
+};
+
+static void submitpackage_callback(const char *buf, const jsmntok_t *toks,
+			       const jsmntok_t *idtok,
+			       struct submitpackage_call *call)
+{
+	const char *err;
+	const char *errmsg = NULL;
+	bool success = false;
+
+	err = json_scan(tmpctx, buf, toks, "{result:{success:%}}",
+			JSON_SCAN(json_to_bool, &success));
+	if (err) {
+		bitcoin_plugin_error(call->bitcoind, buf, toks,
+				     "submitpackage",
+				     "bad 'result' field: %s", err);
+	} else if (!success) {
+		err = json_scan(tmpctx, buf, toks, "{result:{errmsg:%}}",
+				JSON_SCAN_TAL(tmpctx, json_strdup, &errmsg));
+		if (err)
+			bitcoin_plugin_error(call->bitcoind, buf, toks,
+					     "submitpackage",
+					     "bad 'errmsg' field: %s",
+					     err);
+	}
+
+	/* In case they don't free it, we will. */
+	tal_steal(tmpctx, call);
+	call->cb(call->bitcoind, success, errmsg, call->cb_arg);
+}
+void bitcoind_submit2package_(const tal_t *ctx,
+			 struct bitcoind *bitcoind,
+			 const char *id_prefix,
+			 const char *hextx1,
+			 const char *hextx2,
+			 bool allowhighfees,
+			 void (*cb)(struct bitcoind *bitcoind,
+				    bool success, const char *msg, void *),
+			 void *cb_arg)
+{
+	struct jsonrpc_request *req;
+	struct submitpackage_call *call = tal(ctx, struct submitpackage_call);
+
+	call->bitcoind = bitcoind;
+	call->cb = cb;
+	call->cb_arg = cb_arg;
+	log_debug(bitcoind->log, "submitpackage: %s, %s", hextx1, hextx2);
+
+	req = jsonrpc_request_start(call, "submitpackage",
+				    id_prefix, true,
+				    bitcoind->log,
+				    NULL, submitpackage_callback,
+				    call);
+    // json_array_start ? 
+	json_array_start(req->stream, "package");
+	json_add_string(req->stream, NULL, hextx1);
+	json_add_string(req->stream, NULL, hextx2);
+	json_array_end(req->stream);
+	// FIXME do we want this? json_add_bool(req->stream, "allowhighfees", allowhighfees);
 	jsonrpc_request_end(req);
 	bitcoin_plugin_send(bitcoind, req);
 }

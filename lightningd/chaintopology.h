@@ -30,6 +30,22 @@ struct outgoing_tx {
 	void *cbarg;
 };
 
+/* Package of size 2 for cpfp */
+struct outgoing_pkg {
+	struct channel *channel;
+	const struct bitcoin_tx *tx1;
+	const struct bitcoin_tx *tx2;
+	struct bitcoin_txid txid1;
+	struct bitcoin_txid txid2;
+	u32 minblock;
+	bool allowhighfees; // FIXME unused in core currently
+	const char *cmd_id;
+	bool (*finished)(struct channel *channel, const struct bitcoin_tx *, const struct bitcoin_tx *,
+			 bool success, const char *err, void *arg);
+	bool (*refresh)(struct channel *, const struct bitcoin_tx **, const struct bitcoin_tx **, void *arg);
+	void *cbarg;
+};
+
 struct block {
 	u32 height;
 
@@ -90,6 +106,28 @@ static inline bool outgoing_tx_eq(const struct outgoing_tx *b, const struct bitc
 HTABLE_DEFINE_TYPE(struct outgoing_tx, keyof_outgoing_tx_map,
 		   outgoing_tx_hash_sha, outgoing_tx_eq, outgoing_tx_map);
 
+/* Hash blocks by sha, uses child for uniqueness since they are assumed to be cpfps */
+static inline const struct bitcoin_txid *keyof_outgoing_pkg_map(const struct outgoing_pkg *pkg)
+{
+	return &pkg->txid2;
+}
+
+static inline size_t outgoing_pkg_hash_sha(const struct bitcoin_txid *key)
+{
+	size_t ret;
+	memcpy(&ret, key, sizeof(ret));
+	return ret;
+}
+
+static inline bool outgoing_pkg_eq(const struct outgoing_pkg *b, const struct bitcoin_txid *key)
+{
+	return bitcoin_txid_eq(&b->txid2, key);
+}
+
+HTABLE_DEFINE_TYPE(struct outgoing_pkg, keyof_outgoing_pkg_map,
+		   outgoing_pkg_hash_sha, outgoing_pkg_eq, outgoing_pkg_map);
+
+
 /* Our plugins give us a series of blockcount, feerate pairs. */
 struct feerate_est {
 	u32 blockcount;
@@ -138,6 +176,7 @@ struct chain_topology {
 
 	/* Bitcoin transactions we're broadcasting */
 	struct outgoing_tx_map *outgoing_txs;
+	struct outgoing_pkg_map *outgoing_pkgs;
 
 	/* Transactions/txos we are watching. */
 	struct txwatch_hash *txwatches;
@@ -232,6 +271,27 @@ u32 default_locktime(const struct chain_topology *topo);
 					  const struct bitcoin_tx **),	\
 		      (cbarg))
 
+/**
+ * broadcast_pkg: Same as broadcast_tx, but supports sending two related transactions
+ * for CPFP consideration at the Bitcoin node.
+ */
+#define broadcast_pkg(ctx, topo, channel, tx1, tx2, cmd_id, allowhighfees,	\
+		     minblock, finished, refresh, cbarg)		\
+	broadcast_pkg_((ctx), (topo), (channel), (tx1), (tx2), (cmd_id), (allowhighfees), \
+		      (minblock),					\
+		      typesafe_cb_preargs(bool, void *,			\
+					  (finished), (cbarg),		\
+					  struct channel *,		\
+					  const struct bitcoin_tx *,	\
+					  const struct bitcoin_tx *,	\
+					  bool, const char *),		\
+		      typesafe_cb_preargs(bool, void *,			\
+					  (refresh), (cbarg),		\
+					  struct channel *,		\
+					  const struct bitcoin_tx **,	\
+					  const struct bitcoin_tx **),	\
+		      (cbarg))
+
 void broadcast_tx_(const tal_t *ctx,
 		   struct chain_topology *topo,
 		   struct channel *channel,
@@ -243,6 +303,21 @@ void broadcast_tx_(const tal_t *ctx,
 				    const char *err,
 				    void *),
 		   bool (*refresh)(struct channel *, const struct bitcoin_tx **, void *),
+		   void *cbarg TAKES);
+
+void broadcast_pkg_(const tal_t *ctx,
+		   struct chain_topology *topo,
+		   struct channel *channel,
+		   const struct bitcoin_tx *tx1 TAKES,
+		   const struct bitcoin_tx *tx2 TAKES,
+		   const char *cmd_id, bool allowhighfees, u32 minblock,
+		   bool (*finished)(struct channel *,
+				    const struct bitcoin_tx *,
+				    const struct bitcoin_tx *,
+				    bool success,
+				    const char *err,
+				    void *),
+		   bool (*refresh)(struct channel *, const struct bitcoin_tx **, const struct bitcoin_tx **, void *),
 		   void *cbarg TAKES);
 
 struct chain_topology *new_topology(struct lightningd *ld, struct logger *log);

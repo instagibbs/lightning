@@ -81,6 +81,25 @@ void bitcoind_sendrawtx_(const tal_t *ctx,
 						bool, const char *),	\
 			    (arg))
 
+/* Sends two related transactions via submitpackage. If ctx is freed, cb won't be called! */
+void bitcoind_submit2package_(const tal_t *ctx,
+			 struct bitcoind *bitcoind,
+			 const char *id_prefix TAKES,
+			 const char *hextx1,
+			 const char *hextx2,
+			 bool allowhighfees,
+			 void (*cb)(struct bitcoind *bitcoind,
+				    bool success, const char *msg, void *),
+			 void *arg);
+#define bitcoind_submit2package(ctx, bitcoind_, id_prefix, hextx1, hextx2, allowhighfees, cb, arg) \
+	bitcoind_submit2package_((ctx), (bitcoind_), (id_prefix), (hextx1), (hextx2),	\
+			    (allowhighfees),				\
+			    typesafe_cb_preargs(void, void *,		\
+						(cb), (arg),		\
+						struct bitcoind *,	\
+						bool, const char *),	\
+			    (arg))
+
 void bitcoind_getfilteredblock_(struct bitcoind *bitcoind, u32 height,
 				void (*cb)(struct bitcoind *bitcoind,
 					   const struct filteredblock *fb,

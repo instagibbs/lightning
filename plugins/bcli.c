@@ -555,6 +555,33 @@ static struct command_result *process_sendrawtransaction(struct bitcoin_cli *bcl
 	return command_finished(bcli->cmd, response);
 }
 
+static struct command_result *process_submitpackage(struct bitcoin_cli *bcli)
+{
+	struct json_stream *response;
+
+	/* This is useful for functional tests. */
+	if (bcli->exitstatus)
+		plugin_log(bcli->cmd->plugin, LOG_DBG,
+			   "submitpackage exit %i (%s) %.*s",
+			   *bcli->exitstatus, bcli_args(tmpctx, bcli),
+			   *bcli->exitstatus ?
+				(u32)bcli->output_bytes-1 : 0,
+				bcli->output);
+
+	response = jsonrpc_stream_success(bcli->cmd);
+	json_add_bool(response, "success",
+		      *bcli->exitstatus == 0 ||
+			  *bcli->exitstatus ==
+			      RPC_TRANSACTION_ALREADY_IN_CHAIN);
+	json_add_string(response, "errmsg",
+			*bcli->exitstatus ?
+			tal_strndup(bcli->cmd,
+				    bcli->output, bcli->output_bytes-1)
+			: "");
+
+	return command_finished(bcli->cmd, response);
+}
+
 struct getrawblock_stash {
 	const char *block_hash;
 	u32 block_height;
@@ -879,6 +906,32 @@ static struct command_result *sendrawtransaction(struct command *cmd,
 	return command_still_pending(cmd);
 }
 
+/* Send a transaction package to the Bitcoin network.
+ * Calls `submitpackage` using the first parameter as the array of transactions.
+ */
+static struct command_result *submitpackage(struct command *cmd,
+                                                 const char *buf,
+                                                 const jsmntok_t *toks)
+{
+	//const char *hextx1, *hextx2;
+    const jsmntok_t *package;
+
+	/* bitcoin-cli wants strings. */
+	if (!param(cmd, buf, toks,
+	           p_req("package", param_array, &package),
+	           NULL))
+		return command_param_failed();
+
+    if (bitcoind->version < 260000) {
+        // FIXME give reasonable error
+    }
+    start_bitcoin_cli(NULL, cmd, process_submitpackage, true,
+              BITCOIND_HIGH_PRIO, NULL,
+              "submitpackage",
+              package, NULL);
+
+	return command_still_pending(cmd);
+}
 static struct command_result *getutxout(struct command *cmd,
                                        const char *buf,
                                        const jsmntok_t *toks)
@@ -1063,6 +1116,13 @@ static const struct plugin_command commands[] = {
 		"Send a raw transaction to the Bitcoin network.",
 		"",
 		sendrawtransaction
+	},
+	{
+		"submitpackage",
+		"bitcoin",
+		"Send a raw transaction package of size 2 to the Bitcoin network.",
+		"",
+		submitpackage
 	},
 	{
 		"getutxout",

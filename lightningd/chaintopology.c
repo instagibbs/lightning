@@ -253,6 +253,38 @@ static void broadcast_done(struct bitcoind *bitcoind,
 	tal_add_destructor2(otx, destroy_outgoing_tx, bitcoind->ld->topology);
 }
 
+static void destroy_outgoing_pkg(struct outgoing_pkg *opkg, struct chain_topology *topo)
+{
+	outgoing_pkg_map_del(topo->outgoing_pkgs, opkg);
+}
+
+static void broadcast_pkg_done(struct bitcoind *bitcoind,
+			   bool success, const char *msg,
+			   struct outgoing_pkg *opkg)
+{
+	if (opkg->finished) {
+		if (opkg->finished(opkg->channel, opkg->tx1, opkg->tx2, success, msg, opkg->cbarg)) {
+			tal_free(opkg);
+			return;
+		}
+	}
+
+	if (we_broadcast(bitcoind->ld->topology, &opkg->txid1) &&
+ 		we_broadcast(bitcoind->ld->topology, &opkg->txid2)) {
+		log_debug(
+		    bitcoind->ld->topology->log,
+		    "Not adding %s:%s to list of outgoing packages, already "
+		    "present",
+		    type_to_string(tmpctx, struct bitcoin_txid, &opkg->txid1),
+		    type_to_string(tmpctx, struct bitcoin_txid, &opkg->txid2));
+		tal_free(opkg);
+		return;
+	}
+
+	/* For continual rebroadcasting, until context freed. */
+	outgoing_pkg_map_add(bitcoind->ld->topology->outgoing_pkgs, opkg);
+	tal_add_destructor2(opkg, destroy_outgoing_pkg, bitcoind->ld->topology);
+}
 void broadcast_tx_(const tal_t *ctx,
 		   struct chain_topology *topo,
 		   struct channel *channel, const struct bitcoin_tx *tx,
@@ -304,6 +336,87 @@ void broadcast_tx_(const tal_t *ctx,
 			   fmt_bitcoin_tx(tmpctx, otx->tx),
 			   allowhighfees,
 			   broadcast_done, otx);
+}
+
+static struct outgoing_pkg* generate_outgoing_pkg(const tal_t *ctx,
+		   struct chain_topology *topo,
+		   struct channel *channel, const struct bitcoin_tx *tx1, const struct bitcoin_tx *tx2,
+		   const char *cmd_id, bool allowhighfees, u32 minblock,
+		   bool (*finished)(struct channel *channel,
+				    const struct bitcoin_tx *tx1,
+				    const struct bitcoin_tx *tx2,
+				    bool success,
+				    const char *err,
+				    void *cbarg),
+		   bool (*refresh)(struct channel *channel,
+				   const struct bitcoin_tx **tx1,
+				   const struct bitcoin_tx **tx2,
+				   void *cbarg),
+		   void *cbarg)
+{
+    struct outgoing_pkg *opkg = tal(ctx, struct outgoing_pkg);
+
+    opkg->channel = channel;
+    bitcoin_txid(tx1, &opkg->txid1);
+    bitcoin_txid(tx2, &opkg->txid2);
+    opkg->tx1 = clone_bitcoin_tx(opkg, tx1);
+    opkg->tx2 = clone_bitcoin_tx(opkg, tx2);
+    opkg->minblock = minblock;
+    opkg->allowhighfees = allowhighfees;
+    opkg->finished = finished;
+    opkg->refresh = refresh;
+    opkg->cbarg = cbarg;
+    if (taken(opkg->cbarg))
+        tal_steal(opkg, opkg->cbarg);
+    opkg->cmd_id = tal_strdup_or_null(opkg, cmd_id);
+
+    /* Note that if the minimum block is N, we broadcast it when
+     * we have block N-1! */
+    if (get_block_height(topo) + 1 < opkg->minblock) {
+        log_debug(topo->log, "Deferring broadcast of txids %s %s until block %u",
+              type_to_string(tmpctx, struct bitcoin_txid, &opkg->txid1),
+              type_to_string(tmpctx, struct bitcoin_txid, &opkg->txid2),
+              opkg->minblock - 1);
+
+        /* For continual rebroadcasting, until channel freed. */
+        tal_steal(opkg->channel, opkg);
+        outgoing_pkg_map_add(topo->outgoing_pkgs, opkg);
+        tal_add_destructor2(opkg, destroy_outgoing_pkg, topo);
+        return NULL;
+    }
+    return opkg;
+}
+
+void broadcast_pkg_(const tal_t *ctx,
+		   struct chain_topology *topo,
+		   struct channel *channel, const struct bitcoin_tx *tx1, const struct bitcoin_tx *tx2,
+		   const char *cmd_id, bool allowhighfees, u32 minblock,
+		   bool (*finished)(struct channel *channel,
+				    const struct bitcoin_tx *tx1,
+				    const struct bitcoin_tx *tx2,
+				    bool success,
+				    const char *err,
+				    void *cbarg),
+		   bool (*refresh)(struct channel *channel,
+				   const struct bitcoin_tx **tx1,
+				   const struct bitcoin_tx **tx2,
+				   void *cbarg),
+		   void *cbarg)
+{
+    struct outgoing_pkg* opkg = generate_outgoing_pkg(ctx, topo, channel, tx1, tx2, cmd_id, allowhighfees, minblock, finished, refresh, cbarg);
+    log_debug(topo->log, "Broadcasting txids %s%s%s%s",
+          type_to_string(tmpctx, struct bitcoin_txid, &opkg->txid1),
+          type_to_string(tmpctx, struct bitcoin_txid, &opkg->txid2),
+          cmd_id ? " for " : "", cmd_id ? cmd_id : "");
+
+    wallet_transaction_add(topo->ld->wallet, tx1->wtx, 0, 0);
+    wallet_transaction_add(topo->ld->wallet, tx2->wtx, 0, 0);
+
+    bitcoind_submit2package(opkg, topo->bitcoind, opkg->cmd_id,
+               fmt_bitcoin_tx(tmpctx, opkg->tx1),
+               fmt_bitcoin_tx(tmpctx, opkg->tx2),
+               allowhighfees,
+               broadcast_pkg_done, opkg);
 }
 
 static enum watch_result closeinfo_txid_confirmed(struct lightningd *ld,
@@ -1222,6 +1335,7 @@ u32 default_locktime(const struct chain_topology *topo)
  * do it now instead. */
 static void destroy_chain_topology(struct chain_topology *topo)
 {
+    // FIXME delete packages too
 	struct outgoing_tx *otx;
 	struct outgoing_tx_map_iter it;
 	for (otx = outgoing_tx_map_first(topo->outgoing_txs, &it); otx;
@@ -1239,7 +1353,9 @@ struct chain_topology *new_topology(struct lightningd *ld, struct logger *log)
 	topo->block_map = tal(topo, struct block_map);
 	block_map_init(topo->block_map);
 	topo->outgoing_txs = tal(topo, struct outgoing_tx_map);
+	topo->outgoing_pkgs = tal(topo, struct outgoing_pkg_map);
 	outgoing_tx_map_init(topo->outgoing_txs);
+	outgoing_pkg_map_init(topo->outgoing_pkgs);
 	topo->txwatches = tal(topo, struct txwatch_hash);
 	txwatch_hash_init(topo->txwatches);
 	topo->txowatches = tal(topo, struct txowatch_hash);

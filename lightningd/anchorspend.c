@@ -46,6 +46,9 @@ struct anchor_details {
 
 	/* A callback for each of these */
 	struct one_anchor *anchors;
+
+	/* Owned copy of the commitment tx being bumped*/
+	struct bitcoin_tx *commit_tx;
 };
 
 struct deadline_value {
@@ -197,6 +200,9 @@ struct anchor_details *create_anchor_details(const tal_t *ctx,
 		v.block = hout->cltv_expiry;
 		tal_arr_expand(&adet->vals, v);
 	}
+
+	/* Keep local copy of commit tx for package submission */
+	adet->commit_tx = clone_bitcoin_tx(adet, tx);
 
 	/* No htlcs in flight?  No reason to boost. */
 	if (tal_count(adet->vals) == 0)
@@ -401,7 +407,35 @@ static struct bitcoin_tx *spend_anchor(const tal_t *ctx,
 	return tx;
 }
 
+/*
 static bool refresh_anchor_spend(struct channel *channel,
+				 const struct bitcoin_tx **tx,
+				 struct one_anchor *anch)
+{
+	struct bitcoin_tx *replace;
+	struct amount_sat old_fee = anch->anchor_spend_fee;
+
+	replace = spend_anchor(tal_parent(*tx), channel, anch);
+	if (replace) {
+		struct bitcoin_txid txid;
+
+		bitcoin_txid(replace, &txid);
+		log_info(channel->log, "RBF anchor %s commit tx spend %s: fee was %s now %s",
+			 anch->commit_side == LOCAL ? "local" : "remote",
+			 type_to_string(tmpctx, struct bitcoin_txid, &txid),
+			 fmt_amount_sat(tmpctx, old_fee),
+			 fmt_amount_sat(tmpctx, anch->anchor_spend_fee));
+		log_debug(channel->log, "RBF anchor spend: Old tx %s new %s",
+			  type_to_string(tmpctx, struct bitcoin_tx, *tx),
+			  type_to_string(tmpctx, struct bitcoin_tx, replace));
+		tal_free(*tx);
+		*tx = replace;
+	}
+	return true;
+}
+*/
+static bool refresh_anchor_spend_pkg(struct channel *channel,
+				 const struct bitcoin_tx **commit_tx,
 				 const struct bitcoin_tx **tx,
 				 struct one_anchor *anch)
 {
@@ -447,8 +481,8 @@ static void create_and_broadcast_anchor(struct channel *channel,
 		 fmt_amount_sat(tmpctx, anch->anchor_spend_fee));
 
 	/* Send it! */
-	broadcast_tx(anch->adet, ld->topology, channel, take(newtx), NULL, true, 0, NULL,
-		     refresh_anchor_spend, anch);
+	broadcast_pkg(anch->adet, ld->topology, channel, anch->adet->commit_tx, take(newtx), NULL, true, 0, NULL,
+		     refresh_anchor_spend_pkg, anch);
 }
 
 void commit_tx_boost(struct channel *channel,
