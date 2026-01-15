@@ -1,5 +1,6 @@
 #include "config.h"
 #include <bitcoin/script.h>
+#include <bitcoin/tx.h>
 #include <ccan/array_size/array_size.h>
 #include <common/initial_settlement_tx.h>
 #include <common/keyset.h>
@@ -210,11 +211,12 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
 
 	/* BOLT #???:
 	 *
-	 * ## Commitment Transaction
+	 * ## Settlement Transaction
 	 *
-	 * * version: 2
+	 * * version: 3 (TRUC/BIP431 for anti-pinning)
 	 */
-	assert(tx->wtx->version == 2);
+	bitcoin_tx_set_version(tx, BITCOIN_TX_VERSION_TRUC);
+	assert(tx->wtx->version == BITCOIN_TX_VERSION_TRUC);
 
 	/* BOLT #???:
 	 *

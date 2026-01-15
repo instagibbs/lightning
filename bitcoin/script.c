@@ -572,11 +572,17 @@ bool is_ephemeral_anchor(const u8 *script)
 {
 	size_t script_len = tal_count(script);
 
-	if (script_len != 1)
+	/* P2A (Pay-To-Anchor): OP_1 <0x4e73>
+	 * Bytes: 0x51 0x02 0x4e 0x73 */
+	if (script_len != BITCOIN_SCRIPTPUBKEY_P2A_LEN)
 		return false;
 	if (script[0] != OP_1)
 		return false;
-    return true;
+	if (script[1] != OP_PUSHBYTES(2))
+		return false;
+	if (script[2] != 0x4e || script[3] != 0x73)
+		return false;
+	return true;
 }
 
 bool is_known_scripttype(const u8 *script)
@@ -1024,14 +1030,21 @@ bool scripteq(const u8 *s1, const u8 *s2)
 	return memcmp(s1, s2, tal_count(s1)) == 0;
 }
 
+/* P2A (Pay-To-Anchor) witness program bytes */
+static const u8 P2A_WITNESS_PROGRAM[] = { 0x4e, 0x73 };
+
 u8 *bitcoin_spk_ephemeral_anchor(const tal_t *ctx)
 {
 	u8 *script = tal_arr(ctx, u8, 0);
 
-	/* BOLT #3:
-     * FIXME cite the extension bolts
+	/* P2A (Pay-To-Anchor) output as per Bitcoin Core #30352.
+	 * ScriptPubKey: OP_1 <0x4e73> (witness v1, 2-byte program)
+	 * Address: bc1pfeessrawgf (bech32m)
+	 * This is a keyless anyone-can-spend output for TRUC transaction
+	 * fee bumping via CPFP.
 	 */
-	add_op(&script, OP_TRUE);
+	add_op(&script, OP_1);
+	script_push_bytes(&script, P2A_WITNESS_PROGRAM, sizeof(P2A_WITNESS_PROGRAM));
 	return script;
 }
 

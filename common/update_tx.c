@@ -404,8 +404,9 @@ struct bitcoin_tx *unbound_update_tx(const tal_t *ctx,
     /* Add unsigned, un-bound funding input */
     tx_add_unbound_input(update_tx, funding_sats, inner_pubkey);
 
-    /* Set global fields */
-    assert(update_tx->wtx->version == 2);
+    /* Set global fields: TRUC (BIP431) version 3 for anti-pinning */
+    bitcoin_tx_set_version(update_tx, BITCOIN_TX_VERSION_TRUC);
+    assert(update_tx->wtx->version == BITCOIN_TX_VERSION_TRUC);
     bitcoin_tx_set_locktime(update_tx,
         settle_tx->wtx->locktime);
 

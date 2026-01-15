@@ -170,7 +170,7 @@ bool is_p2wpkh(const u8 *script, struct bitcoin_address *addr);
 /* Is this a taproot output? (exract xonly_pubkey bytes if not NULL) */
 bool is_p2tr(const u8 *script, u8 *xonly_pubkey);
 
-/* Is this output an ephemeral anchor? */
+/* Is this output a P2A (Pay-To-Anchor) ephemeral anchor? */
 bool is_ephemeral_anchor(const u8 *script);
 
 /* Is this one of the four above script types? */
@@ -185,8 +185,12 @@ bool scripteq(const u8 *s1, const u8 *s2);
 /* Raw "push these bytes" accessor. */
 void script_push_bytes(u8 **scriptp, const void *mem, size_t len);
 
-/* "anyonecanspend" Ephemeral anchor outputs */
+/* P2A (Pay-To-Anchor) output: OP_1 <0x4e73>, address bc1pfeessrawgf
+ * Keyless anyone-can-spend witness v1 output for TRUC CPFP fee bumping */
 u8 *bitcoin_spk_ephemeral_anchor(const tal_t *ctx);
+
+/* P2A scriptPubKey length */
+#define BITCOIN_SCRIPTPUBKEY_P2A_LEN 4
 
 /* Computes taproot merkle root from list of up to two scripts in depth 1 tree, in order */
 void compute_taptree_merkle_root(struct sha256 *hash_out, u8 **scripts, size_t num_scripts);
