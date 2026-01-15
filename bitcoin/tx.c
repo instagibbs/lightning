@@ -222,6 +222,12 @@ static struct wally_tx_input *wally_tx_input_from_outpoint_sequence(const struct
 	return tx_in;
 }
 
+void bitcoin_tx_set_version(struct bitcoin_tx *tx, u32 version)
+{
+	tx->wtx->version = version;
+	tx->psbt->tx->version = version;
+}
+
 int bitcoin_tx_add_unbound_input(struct bitcoin_tx *tx,
 			 u32 sequence,
 			 struct amount_sat amount,

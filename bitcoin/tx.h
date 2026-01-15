@@ -139,6 +139,12 @@ void bitcoin_tx_remove_output(struct bitcoin_tx *tx, size_t outnum);
 /* Set the locktime for a transaction */
 void bitcoin_tx_set_locktime(struct bitcoin_tx *tx, u32 locktime);
 
+/* Set the version for a transaction (use 3 for TRUC/BIP431) */
+void bitcoin_tx_set_version(struct bitcoin_tx *tx, u32 version);
+
+/* TRUC (BIP431) transaction version */
+#define BITCOIN_TX_VERSION_TRUC 3
+
 /* Add a new input to a bitcoin tx that will be signed
  * using ANYPREVOUT(ANYSCRIPT).
  * Since at signing time we do not know what the outpoint

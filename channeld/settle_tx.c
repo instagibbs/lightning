@@ -1,5 +1,6 @@
 #include "config.h"
 #include <bitcoin/script.h>
+#include <bitcoin/tx.h>
 #include <channeld/settle_tx.h>
 #include <common/htlc_trim.h>
 #include <common/htlc_tx.h>
@@ -251,13 +252,14 @@ struct bitcoin_tx *settle_tx(const tal_t *ctx,
 	 */
 	permute_outputs(tx, cltvs, (const void **)*htlcmap);
 
-	/* BOLT #3:
+	/* BOLT #???:
 	 *
-	 * ## Commitment Transaction
+	 * ## Settlement Transaction
 	 *
-	 * * version: 2
+	 * * version: 3 (TRUC/BIP431 for anti-pinning)
 	 */
-	assert(tx->wtx->version == 2);
+	bitcoin_tx_set_version(tx, BITCOIN_TX_VERSION_TRUC);
+	assert(tx->wtx->version == BITCOIN_TX_VERSION_TRUC);
 
 	bitcoin_tx_set_locktime(tx, obscured_update_number + 500000000);
 
