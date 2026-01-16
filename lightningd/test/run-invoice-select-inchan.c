@@ -589,6 +589,10 @@ bool peer_start_eltoo_channeld(struct channel *channel UNNEEDED,
 bool peer_start_openingd(struct peer *peer UNNEEDED,
 			 struct peer_fd *peer_fd UNNEEDED)
 { fprintf(stderr, "peer_start_openingd called!\n"); abort(); }
+/* Generated stub for peer_start_eltoo_openingd */
+bool peer_start_eltoo_openingd(struct peer *peer UNNEEDED,
+			       struct peer_fd *peer_fd UNNEEDED)
+{ fprintf(stderr, "peer_start_eltoo_openingd called!\n"); abort(); }
 /* Generated stub for plugin_hook_call_ */
 bool plugin_hook_call_(struct lightningd *ld UNNEEDED,
 		       struct plugin_hook *hook UNNEEDED,

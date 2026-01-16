@@ -112,19 +112,16 @@ struct bitcoin_tx *initial_update_channel_tx(const tal_t *ctx,
 				      const struct channel *channel)
 {
 	struct bitcoin_tx *init_update_tx;
-    /* This should be gathered from settle_tx PSBT when stored there,
-     * it's generated in initial_settlement_tx. This is unused otherwise.
-     */
-    struct pubkey dummy_inner_pubkey;
-    memset(dummy_inner_pubkey.pubkey.data, 0, sizeof(dummy_inner_pubkey.pubkey.data));
 
 	/* This assumes no HTLCs! */
 	assert(!channel->htlcs);
 
+	/* Use the inner_pubkey from the eltoo keyset, which is the aggregate
+	 * of the two parties' funding pubkeys computed in new_initial_eltoo_channel */
 	init_update_tx = unbound_update_tx(ctx,
                     settle_tx,
                     channel->funding_sats,
-                    &dummy_inner_pubkey);
+                    &channel->eltoo_keyset.inner_pubkey);
 
 	if (init_update_tx) {
 		psbt_input_add_pubkey(init_update_tx->psbt, 0,

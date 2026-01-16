@@ -83,7 +83,7 @@ struct {
 	struct ext_key bip32;
 	struct secret bolt12;
 	struct secret derived_secret;
-	struct musig_state_map musig_map;
+	struct musig_state_map *musig_map;
 } secretstuff;
 
 /* Have we initialized the secretstuff? */
@@ -939,7 +939,7 @@ static u8 *handle_gen_nonce(struct hsmd_client *c,
            NULL /* msg32 */);
 
     /* Store secret nonce in hash table */
-    musig_state_map_add(&secretstuff.musig_map, new_musig_state);
+    musig_state_map_add(secretstuff.musig_map, new_musig_state);
 
 	return towire_hsmd_gen_nonce_reply(NULL, &local_pub_nonce);
 }
@@ -954,7 +954,7 @@ static u8 *handle_migrate_nonce(struct hsmd_client *c,
 	if (!fromwire_hsmd_migrate_nonce(msg_in, &temp_id, &perm_id))
 		return hsmd_status_malformed_request(c, msg_in);
 
-    musig_lookup = musig_state_map_get(&secretstuff.musig_map, &temp_id);
+    musig_lookup = musig_state_map_get(secretstuff.musig_map, &temp_id);
     if (!musig_lookup) {
 		return hsmd_status_bad_request_fmt(c, msg_in,
 						   "Nonce for channel migration not found");
@@ -962,8 +962,8 @@ static u8 *handle_migrate_nonce(struct hsmd_client *c,
 
     /* Update channel id, move keys */
     musig_lookup->channel_id = perm_id;
-    musig_state_map_add(&secretstuff.musig_map, musig_lookup);
-    musig_state_map_delkey(&secretstuff.musig_map, &temp_id);
+    musig_state_map_add(secretstuff.musig_map, musig_lookup);
+    musig_state_map_delkey(secretstuff.musig_map, &temp_id);
 
 	return towire_hsmd_migrate_nonce_reply(NULL);
 }
@@ -1644,7 +1644,7 @@ static u8 *handle_psign_update_tx(struct hsmd_client *c, const u8 *msg_in)
     pubnonce_ptrs[1] = &local_nonce.nonce;
 
     /* Find secnonce in map */
-    musig_state_lookup = musig_state_map_get(&secretstuff.musig_map, &channel_id);
+    musig_state_lookup = musig_state_map_get(secretstuff.musig_map, &channel_id);
     if (!musig_state_lookup) {
 		return hsmd_status_bad_request(c, msg_in,
 					       "No secret nonce found for this musig request");
@@ -1689,7 +1689,7 @@ static u8 *handle_regen_nonce(struct hsmd_client *c, const u8 *msg_in)
 	derive_basepoints(&channel_seed,
 			  &local_funding_pubkey, NULL, &secrets, NULL);
 
-    musig_state_lookup = musig_state_map_get(&secretstuff.musig_map, &channel_id);
+    musig_state_lookup = musig_state_map_get(secretstuff.musig_map, &channel_id);
     if (!musig_state_lookup) {
 		return hsmd_status_bad_request(c, msg_in,
 					       "No secret nonce found for this regen request");
@@ -2340,8 +2340,10 @@ u8 *hsmd_init(const u8 *secret_data, size_t secret_len, const u64 hsmd_version,
 	memcpy(&secretstuff.bolt12, child_extkey.priv_key+1,
 	       sizeof(secretstuff.bolt12));
 
-	/* Initialize a hash table for musig state, one entry per channel */
-	musig_state_map_init(&secretstuff.musig_map);
+	/* Initialize a hash table for musig state, one entry per channel.
+	 * Must be tal-allocated because htable_tal uses it as parent context. */
+	secretstuff.musig_map = tal(NULL, struct musig_state_map);
+	musig_state_map_init(secretstuff.musig_map);
 
 	/* Now we can consider ourselves initialized, and we won't get
 	 * upset if we get a non-init message. */

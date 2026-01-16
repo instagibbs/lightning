@@ -2,6 +2,7 @@
 #include <ccan/array_size/array_size.h>
 #include <common/channel_type.h>
 #include <common/utils.h>
+#include <stdio.h>
 
 static struct channel_type *new_channel_type(const tal_t *ctx)
 {
@@ -73,6 +74,15 @@ struct channel_type *channel_type_anchors_zero_fee_htlc(const tal_t *ctx)
 	return type;
 }
 
+struct channel_type *channel_type_eltoo(const tal_t *ctx)
+{
+	struct channel_type *type = new_channel_type(ctx);
+
+	set_feature_bit(&type->features,
+			COMPULSORY_FEATURE(OPT_ELTOO));
+	return type;
+}
+
 bool channel_type_has(const struct channel_type *type, int feature)
 {
 	return feature_offered(type->features, feature);
@@ -114,7 +124,12 @@ struct channel_type *channel_type_accept(const tal_t *ctx,
 	/* Need to copy since we're going to blank variant bits for equality. */
 	proposed.features = tal_dup_talarr(tmpctx, u8, t);
 
-	static const size_t feats[] = {
+	/* Check if this is an eltoo channel type. Eltoo channels don't use
+	 * the same features as legacy channels, so we handle them specially. */
+	bool is_eltoo = feature_offered(t, OPT_ELTOO);
+
+	/* Features that apply to non-eltoo channel types */
+	static const size_t legacy_feats[] = {
 		OPT_ANCHORS_ZERO_FEE_HTLC_TX,
 		OPT_STATIC_REMOTEKEY,
 		OPT_SCID_ALIAS,
@@ -131,19 +146,26 @@ struct channel_type *channel_type_accept(const tal_t *ctx,
 		OPT_ZEROCONF,
 	};
 
-	for (size_t i = 0; i < ARRAY_SIZE(feats); i++) {
-		size_t f = feats[i];
+	if (is_eltoo) {
+		/* For eltoo, just verify we support eltoo */
+		if (!feature_offered(our_features->bits[INIT_FEATURE], OPT_ELTOO))
+			return NULL;
+	} else {
+		/* For non-eltoo channels, check legacy features */
+		for (size_t i = 0; i < ARRAY_SIZE(legacy_feats); i++) {
+			size_t f = legacy_feats[i];
 
-		if (feature_offered(t, f)) {
-			/* If we don't offer a feature, we don't allow it. */
-			if (!feature_offered(our_features->bits[INIT_FEATURE], f))
-				return NULL;
-		} else {
-			/* We assume that if we *require* a feature, we require
-			 * channels have that. */
-			if (feature_is_set(our_features->bits[INIT_FEATURE],
-					   COMPULSORY_FEATURE(f)))
-				return NULL;
+			if (feature_offered(t, f)) {
+				/* If we don't offer a feature, we don't allow it. */
+				if (!feature_offered(our_features->bits[INIT_FEATURE], f))
+					return NULL;
+			} else {
+				/* We assume that if we *require* a feature, we require
+				 * channels have that. */
+				if (feature_is_set(our_features->bits[INIT_FEATURE],
+						   COMPULSORY_FEATURE(f)))
+					return NULL;
+			}
 		}
 	}
 
@@ -155,7 +177,9 @@ struct channel_type *channel_type_accept(const tal_t *ctx,
 	if (channel_type_eq(&proposed,
 			    channel_type_static_remotekey(tmpctx)) ||
 	    channel_type_eq(&proposed,
-			    channel_type_anchors_zero_fee_htlc(tmpctx))) {
+			    channel_type_anchors_zero_fee_htlc(tmpctx)) ||
+	    channel_type_eq(&proposed,
+			    channel_type_eltoo(tmpctx))) {
 		/* At this point we know it matches, and maybe has
 		 * a couple of extra options. So let's just reply
 		 * with their proposal. */

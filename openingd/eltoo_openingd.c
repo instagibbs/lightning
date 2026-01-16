@@ -14,7 +14,6 @@
 #include <ccan/tal/str/str.h>
 #include <common/channel_type.h>
 #include <common/fee_states.h>
-#include <common/gossip_rcvd_filter.h>
 #include <common/gossip_store.h>
 #include <common/initial_channel.h> // channel
 #include <common/initial_eltoo_channel.h>
@@ -40,13 +39,13 @@
 #define REQ_FD STDIN_FILENO
 #define HSM_FD 4
 
-#if DEVELOPER
 /* If --dev-force-tmp-channel-id is set, it ends up here */
 static struct channel_id *dev_force_tmp_channel_id;
-#endif /* DEVELOPER */
 
 /* Global state structure.  This is only for the one specific peer and channel */
 struct eltoo_state {
+	/* Set to true if developer mode enabled */
+	bool developer;
 	struct per_peer_state *pps;
 
 	/* Features they offered */
@@ -151,9 +150,7 @@ static u8 *opening_negotiate_msg(const tal_t *ctx, struct eltoo_state *state,
 	 * form, but we use it in a very limited way. */
 	for (;;) {
 		u8 *msg;
-		char *err;
-		bool warning;
-		struct channel_id actual;
+		const char *err;
 
 		/* The event loop is responsible for freeing tmpctx, so our
 		 * temporary allocations don't grow unbounded. */
@@ -172,42 +169,18 @@ static u8 *opening_negotiate_msg(const tal_t *ctx, struct eltoo_state *state,
 			continue;
 
 		/* A helper which decodes an error. */
-		if (is_peer_error(tmpctx, msg, &state->channel_id,
-				  &err, &warning)) {
-			/* BOLT #1:
-			 *
-			 *  - if no existing channel is referred to by `channel_id`:
-			 *    - MUST ignore the message.
-			 */
-			/* In this case, is_peer_error returns true, but sets
-			 * err to NULL */
-			if (!err) {
-				tal_free(msg);
-				continue;
-			}
+		err = is_peer_error(tmpctx, msg);
+		if (err) {
 			negotiation_aborted(state,
 					    tal_fmt(tmpctx, "They sent %s",
 						    err));
 			/* Return NULL so caller knows to stop negotiating. */
-			return NULL;
+			return tal_free(msg);
 		}
 
-		/*~ We do not support multiple "live" channels, though the
-		 * protocol has a "channel_id" field in all non-gossip messages
-		 * so it's possible.  Our one-process-one-channel mechanism
-		 * keeps things simple: if we wanted to change this, we would
-		 * probably be best with another daemon to de-multiplex them;
-		 * this could be connectd itself, in fact. */
-		if (is_wrong_channel(msg, &state->channel_id, &actual)
-		    && is_wrong_channel(msg, alternate, &actual)) {
-			status_debug("Rejecting %s for unknown channel_id %s",
-				     peer_wire_name(fromwire_peektype(msg)),
-				     type_to_string(tmpctx, struct channel_id,
-						    &actual));
-			peer_write(state->pps,
-				   take(towire_errorfmt(NULL, &actual,
-							"Multiple channels"
-							" unsupported")));
+		err = is_peer_warning(tmpctx, msg);
+		if (err) {
+			status_info("They sent %s", err);
 			tal_free(msg);
 			continue;
 		}
@@ -219,12 +192,10 @@ static u8 *opening_negotiate_msg(const tal_t *ctx, struct eltoo_state *state,
 
 static bool setup_channel_funder(struct eltoo_state *state)
 {
-
-#if DEVELOPER
 	/* --dev-force-tmp-channel-id specified */
-	if (dev_force_tmp_channel_id)
+	if (state->developer && dev_force_tmp_channel_id)
 		state->channel_id = *dev_force_tmp_channel_id;
-#endif
+
 	/* BOLT #2:
 	 *
 	 * The sending node:
@@ -240,10 +211,10 @@ static bool setup_channel_funder(struct eltoo_state *state)
 				  chainparams->max_funding)) {
 		status_failed(STATUS_FAIL_MASTER_IO,
 			      "funding_satoshis must be < %s, not %s",
-			      type_to_string(tmpctx, struct amount_sat,
-					     &chainparams->max_funding),
-			      type_to_string(tmpctx, struct amount_sat,
-					     &state->funding_sats));
+			      fmt_amount_sat(tmpctx,
+					     chainparams->max_funding),
+			      fmt_amount_sat(tmpctx,
+					     state->funding_sats));
 		return false;
 	}
 
@@ -253,35 +224,15 @@ static bool setup_channel_funder(struct eltoo_state *state)
 static void set_remote_upfront_shutdown(struct eltoo_state *state,
 					u8 *shutdown_scriptpubkey STEALS)
 {
-	bool anysegwit = feature_negotiated(state->our_features,
-					    state->their_features,
-					    OPT_SHUTDOWN_ANYSEGWIT);
-	bool anchors = feature_negotiated(state->our_features,
-					  state->their_features,
-					  OPT_ANCHOR_OUTPUTS)
-		|| feature_negotiated(state->our_features,
-				      state->their_features,
-				      OPT_ANCHORS_ZERO_FEE_HTLC_TX);
+	char *err;
 
-	/* BOLT #2:
-	 *
-	 * - MUST include `upfront_shutdown_script` with either a valid
-         *   `shutdown_scriptpubkey` as required by `shutdown` `scriptpubkey`,
-         *   or a zero-length `shutdown_scriptpubkey` (ie. `0x0000`).
-	 */
-	/* We turn empty into NULL. */
-	if (tal_bytelen(shutdown_scriptpubkey) == 0)
-		shutdown_scriptpubkey = tal_free(shutdown_scriptpubkey);
+	err = validate_remote_upfront_shutdown(state, state->our_features,
+					       state->their_features,
+					       shutdown_scriptpubkey,
+					       &state->upfront_shutdown_script[REMOTE]);
 
-	state->upfront_shutdown_script[REMOTE]
-		= tal_steal(state, shutdown_scriptpubkey);
-
-	if (shutdown_scriptpubkey
-	    && !valid_shutdown_scriptpubkey(shutdown_scriptpubkey, anysegwit, anchors))
-		peer_failed_err(state->pps,
-				&state->channel_id,
-				"Unacceptable upfront_shutdown_script %s",
-				tal_hex(tmpctx, shutdown_scriptpubkey));
+	if (err)
+		peer_failed_err(state->pps, &state->channel_id, "%s", err);
 }
 
 /* We start the 'open a channel' negotation with the supplied peer, but
@@ -301,13 +252,11 @@ static u8 *funder_channel_start(struct eltoo_state *state, u8 channel_flags)
 
 	if (!state->upfront_shutdown_script[LOCAL])
 		state->upfront_shutdown_script[LOCAL]
-			= no_upfront_shutdown_script(state,
+			= no_upfront_shutdown_script(state, state->developer,
 						     state->our_features,
 						     state->their_features);
 
-	state->channel_type = default_channel_type(state,
-						   state->our_features,
-						   state->their_features);
+	state->channel_type = channel_type_eltoo(state);
 
 	open_tlvs = tlv_open_channel_eltoo_tlvs_new(tmpctx);
 	open_tlvs->upfront_shutdown_script
@@ -335,7 +284,7 @@ static u8 *funder_channel_start(struct eltoo_state *state, u8 channel_flags)
     }
 
 	status_debug("temp channel_id being sent during open_channel: %s",
-		     type_to_string(tmpctx, struct channel_id, &state->channel_id));
+		     fmt_channel_id(tmpctx, &state->channel_id));
 
 	msg = towire_open_channel_eltoo(NULL,
 				  &chainparams->genesis_blockhash,
@@ -389,7 +338,7 @@ static u8 *funder_channel_start(struct eltoo_state *state, u8 channel_flags)
 	set_remote_upfront_shutdown(state, accept_tlvs->upfront_shutdown_script);
 
 	status_debug("temp channel_id being accepted during accept_channel: %s",
-		     type_to_string(tmpctx, struct channel_id, &state->channel_id));
+		     fmt_channel_id(tmpctx, &state->channel_id));
 
 	/* BOLT #2:
 	 * - if `channel_type` is set, and `channel_type` was set in
@@ -414,8 +363,8 @@ static u8 *funder_channel_start(struct eltoo_state *state, u8 channel_flags)
 		/* In this case we exit, since we don't know what's going on. */
 		peer_failed_err(state->pps, &id_in,
 				"accept_channel ids don't match: sent %s got %s",
-				type_to_string(msg, struct channel_id, &id_in),
-				type_to_string(msg, struct channel_id,
+				fmt_channel_id(msg, &id_in),
+				fmt_channel_id(msg,
 					       &state->channel_id));
 
 	if (!check_eltoo_config_bounds(tmpctx, state->funding_sats,
@@ -578,19 +527,19 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
 	wire_sync_write(HSM_FD, take(msg));
 
 	status_debug("partial signature req on update tx %s, settlement tx %s, using our keys %s:%s, their keys %s:%s, our nonce %s, their nonce %s",
-        type_to_string(tmpctx, struct bitcoin_tx, *update_tx),
-        type_to_string(tmpctx, struct bitcoin_tx, *settle_tx),
-        type_to_string(tmpctx, struct pubkey,
+        fmt_bitcoin_tx(tmpctx, *update_tx),
+        fmt_bitcoin_tx(tmpctx, *settle_tx),
+        fmt_pubkey(tmpctx,
                &state->channel->eltoo_keyset.self_funding_key),
-        type_to_string(tmpctx, struct pubkey,
+        fmt_pubkey(tmpctx,
                &state->channel->eltoo_keyset.self_settle_key),
-        type_to_string(tmpctx, struct pubkey,
+        fmt_pubkey(tmpctx,
                &state->channel->eltoo_keyset.other_funding_key),
-        type_to_string(tmpctx, struct pubkey,
+        fmt_pubkey(tmpctx,
                &state->channel->eltoo_keyset.other_settle_key),
-        type_to_string(tmpctx, struct nonce,
+        fmt_nonce(tmpctx,
                &state->channel->eltoo_keyset.self_next_nonce),
-        type_to_string(tmpctx, struct nonce,
+        fmt_nonce(tmpctx,
                &state->channel->eltoo_keyset.other_next_nonce));
 
 	msg = wire_sync_read(tmpctx, HSM_FD);
@@ -602,17 +551,17 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
 	/* You can tell this has been a problem before, since there's a debug
 	 * message here: */
 	status_debug("partial signature %s on tx %s using our key %s, their key %s, inner pubkey %s, NEW our nonce %s, OLD their nonce %s",
-		     type_to_string(tmpctx, struct partial_sig, &state->channel->eltoo_keyset.last_committed_state.self_psig),
-		     type_to_string(tmpctx, struct bitcoin_tx, *update_tx),
-		     type_to_string(tmpctx, struct pubkey,
+		     fmt_partial_sig(tmpctx, &state->channel->eltoo_keyset.last_committed_state.self_psig),
+		     fmt_bitcoin_tx(tmpctx, *update_tx),
+		     fmt_pubkey(tmpctx,
 				    &state->our_funding_pubkey),
-             type_to_string(tmpctx, struct pubkey,
+             fmt_pubkey(tmpctx,
                     &state->their_funding_pubkey),
-             type_to_string(tmpctx, struct pubkey,
+             fmt_pubkey(tmpctx,
                     &state->channel->eltoo_keyset.inner_pubkey),
-             type_to_string(tmpctx, struct nonce,
+             fmt_nonce(tmpctx,
                     &state->channel->eltoo_keyset.self_next_nonce),
-             type_to_string(tmpctx, struct nonce,
+             fmt_nonce(tmpctx,
                     &state->channel->eltoo_keyset.other_next_nonce));
 
 	/* Now we give our peer the partial signature for the first update
@@ -648,9 +597,9 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
 				"Parsing funding_signed_eltoo: %s", tal_hex(msg, msg));
 
 	status_debug("NEW nonce from self: %s NEW nonce from peer: %s",
-             type_to_string(tmpctx, struct nonce,
+             fmt_nonce(tmpctx,
                     &state->channel->eltoo_keyset.self_next_nonce),
-             type_to_string(tmpctx, struct nonce,
+             fmt_nonce(tmpctx,
                     &state->channel->eltoo_keyset.other_next_nonce));
 
 	/* BOLT #2:
@@ -681,9 +630,9 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
 	if (!channel_id_eq(&id_in, &state->channel_id))
 		peer_failed_err(state->pps, &id_in,
 				"funding_signed ids don't match: expected %s got %s",
-				type_to_string(msg, struct channel_id,
+				fmt_channel_id(msg,
 					       &state->channel_id),
-				type_to_string(msg, struct channel_id, &id_in));
+				fmt_channel_id(msg, &id_in));
 
 	/* BOLT #2:
 	 *
@@ -730,17 +679,17 @@ static u8 *funder_channel_complete(struct eltoo_state *state)
 	/* Update the billboard about what we're doing*/
 	peer_billboard(false,
 		       "Funding channel con't: continuing with funding_txid %s",
-		       type_to_string(tmpctx, struct bitcoin_txid, &state->funding.txid));
+		       fmt_bitcoin_txid(tmpctx, &state->funding.txid));
 
 	/* We recalculate the local_msat from cached values; should
 	 * succeed because we checked it earlier */
 	if (!amount_sat_sub_msat(&local_msat, state->funding_sats, state->push_msat))
 		status_failed(STATUS_FAIL_INTERNAL_ERROR,
 			      "push_msat %s > funding %s?",
-			      type_to_string(tmpctx, struct amount_msat,
-					     &state->push_msat),
-			      type_to_string(tmpctx, struct amount_sat,
-					     &state->funding_sats));
+			      fmt_amount_msat(tmpctx,
+					     state->push_msat),
+			      fmt_amount_sat(tmpctx,
+					     state->funding_sats));
 
 	if (!funder_finalize_channel_setup(state, local_msat, &update_tx, &settle_tx))
 		return NULL;
@@ -813,7 +762,7 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 	set_remote_upfront_shutdown(state, open_tlvs->upfront_shutdown_script);
 
 	status_debug("temp channel_id being received during open_channel: %s",
-		     type_to_string(tmpctx, struct channel_id, &state->channel_id));
+		     fmt_channel_id(tmpctx, &state->channel_id));
 
 	/* BOLT #2:
 	 * The receiving node MUST fail the channel if:
@@ -825,8 +774,7 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 		state->channel_type =
 			channel_type_accept(state,
 					    open_tlvs->channel_type,
-					    state->our_features,
-					    state->their_features);
+					    state->our_features);
 		if (!state->channel_type) {
 			negotiation_failed(state,
 					   "Did not support channel_type %s",
@@ -835,10 +783,7 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 			return NULL;
 		}
 	} else
-		state->channel_type
-			= default_channel_type(state,
-					       state->our_features,
-					       state->their_features);
+		state->channel_type = channel_type_eltoo(state);
 
 	/* BOLT #2:
 	 *
@@ -849,9 +794,7 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 	if (!bitcoin_blkid_eq(&chain_hash, &chainparams->genesis_blockhash)) {
 		negotiation_failed(state,
 				   "Unknown chain-hash %s",
-				   type_to_string(tmpctx,
-						  struct bitcoin_blkid,
-						  &chain_hash));
+				   fmt_bitcoin_blkid(tmpctx, &chain_hash));
 		return NULL;
 	}
 
@@ -867,8 +810,8 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 	    && amount_sat_greater(state->funding_sats, chainparams->max_funding)) {
 		negotiation_failed(state,
 				   "funding_satoshis %s too large",
-				   type_to_string(tmpctx, struct amount_sat,
-						  &state->funding_sats));
+				   fmt_amount_sat(tmpctx,
+						  state->funding_sats));
 		return NULL;
 	}
 
@@ -882,10 +825,10 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 		peer_failed_err(state->pps, &state->channel_id,
 				"Their push_msat %s"
 				" would be too large for funding_satoshis %s",
-				type_to_string(tmpctx, struct amount_msat,
-					       &state->push_msat),
-				type_to_string(tmpctx, struct amount_sat,
-					       &state->funding_sats));
+				fmt_amount_msat(tmpctx,
+					       state->push_msat),
+				fmt_amount_sat(tmpctx,
+					       state->funding_sats));
 		return NULL;
 	}
 
@@ -906,7 +849,7 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 
 	if (!state->upfront_shutdown_script[LOCAL])
 		state->upfront_shutdown_script[LOCAL]
-			= no_upfront_shutdown_script(state,
+			= no_upfront_shutdown_script(state, state->developer,
 						     state->our_features,
 						     state->their_features);
 
@@ -932,7 +875,7 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
     }
 
 	status_debug("temp channel_id being sent during accept channel: %s",
-		     type_to_string(tmpctx, struct channel_id, &state->channel_id));
+		     fmt_channel_id(tmpctx, &state->channel_id));
 
 	msg = towire_accept_channel_eltoo(NULL, &state->channel_id,
 				    state->localconf.dust_limit,
@@ -975,9 +918,9 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 	if (!channel_id_eq(&id_in, &state->channel_id))
 		peer_failed_err(state->pps, &id_in,
 				"funding_created ids don't match: sent %s got %s",
-				type_to_string(msg, struct channel_id,
+				fmt_channel_id(msg,
 					       &state->channel_id),
-				type_to_string(msg, struct channel_id, &id_in));
+				fmt_channel_id(msg, &id_in));
 
 	/*~ Channel is ready; Report the channel parameters to the signer. */
 	msg = towire_hsmd_ready_eltoo_channel(NULL,
@@ -1102,18 +1045,18 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
 	wire_sync_write(HSM_FD, take(msg));
 
 	status_debug("partial signature req on tx %s, using our keys %s:%s, their keys %s:%s, our nonce %s, their nonce %s",
-        type_to_string(tmpctx, struct bitcoin_tx, update_tx),
-        type_to_string(tmpctx, struct pubkey,
+        fmt_bitcoin_tx(tmpctx, update_tx),
+        fmt_pubkey(tmpctx,
                &state->channel->eltoo_keyset.self_funding_key),
-        type_to_string(tmpctx, struct pubkey,
+        fmt_pubkey(tmpctx,
                &state->channel->eltoo_keyset.self_settle_key),
-        type_to_string(tmpctx, struct pubkey,
+        fmt_pubkey(tmpctx,
                &state->channel->eltoo_keyset.other_funding_key),
-        type_to_string(tmpctx, struct pubkey,
+        fmt_pubkey(tmpctx,
                &state->channel->eltoo_keyset.other_settle_key),
-             type_to_string(tmpctx, struct nonce,
+             fmt_nonce(tmpctx,
                     &state->channel->eltoo_keyset.self_next_nonce),
-            type_to_string(tmpctx, struct nonce,
+            fmt_nonce(tmpctx,
                    &state->channel->eltoo_keyset.other_next_nonce));
 
 	msg = wire_sync_read(tmpctx, HSM_FD);
@@ -1129,22 +1072,15 @@ static u8 *fundee_channel(struct eltoo_state *state, const u8 *open_channel_msg)
     state->channel->eltoo_keyset.other_next_nonce = their_second_nonce;
 
 	status_debug("partial signature %s on tx %s using our keys %s:%s, their keys %s:%s, inner pubkey %s, NEW our nonce %s, NEW their nonce %s",
-		     type_to_string(tmpctx, struct partial_sig, &state->channel->eltoo_keyset.last_committed_state.self_psig),
-		     type_to_string(tmpctx, struct bitcoin_tx, update_tx),
-             type_to_string(tmpctx, struct pubkey,
-                    &state->channel->eltoo_keyset.self_funding_key),
-             type_to_string(tmpctx, struct pubkey,
-                    &state->channel->eltoo_keyset.self_settle_key),
-             type_to_string(tmpctx, struct pubkey,
-                    &state->channel->eltoo_keyset.other_funding_key),
-             type_to_string(tmpctx, struct pubkey,
-                    &state->channel->eltoo_keyset.other_settle_key),
-             type_to_string(tmpctx, struct pubkey,
-                    &state->channel->eltoo_keyset.inner_pubkey),
-             type_to_string(tmpctx, struct nonce,
-                    &state->channel->eltoo_keyset.self_next_nonce),
-             type_to_string(tmpctx, struct nonce,
-                    &state->channel->eltoo_keyset.other_next_nonce));
+		     fmt_partial_sig(tmpctx, &state->channel->eltoo_keyset.last_committed_state.self_psig),
+		     fmt_bitcoin_tx(tmpctx, update_tx),
+		     fmt_pubkey(tmpctx, &state->channel->eltoo_keyset.self_funding_key),
+		     fmt_pubkey(tmpctx, &state->channel->eltoo_keyset.self_settle_key),
+		     fmt_pubkey(tmpctx, &state->channel->eltoo_keyset.other_funding_key),
+		     fmt_pubkey(tmpctx, &state->channel->eltoo_keyset.other_settle_key),
+		     fmt_pubkey(tmpctx, &state->channel->eltoo_keyset.inner_pubkey),
+		     fmt_nonce(tmpctx, &state->channel->eltoo_keyset.self_next_nonce),
+		     fmt_nonce(tmpctx, &state->channel->eltoo_keyset.other_next_nonce));
 
     /* Now that it's signed by both sides, we check if it's valid signature, get full sig back */
     msg = towire_hsmd_combine_psig(NULL,
@@ -1213,7 +1149,7 @@ static u8 *handle_peer_in(struct eltoo_state *state)
 		return fundee_channel(state, msg);
 
 	/* Handles error cases. */
-	if (handle_peer_error(state->pps, &state->channel_id, msg))
+	if (handle_peer_error_or_warning(state->pps, msg))
 		return NULL;
 
 	extracted = extract_channel_id(msg, &channel_id);
@@ -1232,11 +1168,7 @@ static u8 *handle_peer_in(struct eltoo_state *state)
 	peer_failed_connection_lost();
 }
 
-/* Memory leak detection is DEVELOPER-only because we go to great lengths to
- * record the backtrace when allocations occur: without that, the leak
- * detection tends to be useless for diagnosing where the leak came from, but
- * it has significant overhead. */
-#if DEVELOPER
+/* Memory leak detection has significant overhead, only useful in developer mode. */
 static void handle_dev_memleak(struct eltoo_state *state, const u8 *msg)
 {
 	struct htable *memtable;
@@ -1244,18 +1176,18 @@ static void handle_dev_memleak(struct eltoo_state *state, const u8 *msg)
 
 	/* Populate a hash table with all our allocations (except msg, which
 	 * is in use right now). */
-	memtable = memleak_find_allocations(tmpctx, msg, msg);
+	memtable = memleak_start(tmpctx);
+	memleak_ptr(memtable, msg);
 
 	/* Now delete state and things it has pointers to. */
-	memleak_remove_region(memtable, state, sizeof(*state));
+	memleak_scan_obj(memtable, state);
 
 	/* If there's anything left, dump it to logs, and return true. */
-	found_leak = dump_memleak(memtable, memleak_status_broken);
+	found_leak = dump_memleak(memtable, memleak_status_broken, NULL);
 	wire_sync_write(REQ_FD,
 			take(towire_openingd_eltoo_dev_memleak_reply(NULL,
 							      found_leak)));
 }
-#endif /* DEVELOPER */
 
 /* Standard lightningd-fd-is-ready-to-read demux code.  Again, we could hang
  * here, but if we can't trust our parent, who can we trust? */
@@ -1301,10 +1233,11 @@ static u8 *handle_master_in(struct eltoo_state *state)
 		negotiation_aborted(state, "Channel open canceled by RPC");
 		return NULL;
 	case WIRE_OPENINGD_ELTOO_DEV_MEMLEAK:
-#if DEVELOPER
-		handle_dev_memleak(state, msg);
-		return NULL;
-#endif
+		if (state->developer) {
+			handle_dev_memleak(state, msg);
+			return NULL;
+		}
+		/* fall thru */
 	case WIRE_OPENINGD_ELTOO_DEV_MEMLEAK_REPLY:
 	case WIRE_OPENINGD_ELTOO_INIT:
 	case WIRE_OPENINGD_ELTOO_FUNDER_REPLY:
@@ -1329,7 +1262,7 @@ int main(int argc, char *argv[])
 	struct eltoo_state *state = tal(NULL, struct eltoo_state);
 	struct channel_id *force_tmp_channel_id;
 
-	subdaemon_setup(argc, argv);
+	state->developer = subdaemon_setup(argc, argv);
 
 	/*~ This makes status_failed, status_debug etc work synchronously by
 	 * writing to REQ_FD */
@@ -1351,9 +1284,8 @@ int main(int argc, char *argv[])
 				   &force_tmp_channel_id))
 		master_badmsg(WIRE_OPENINGD_ELTOO_INIT, msg);
 
-#if DEVELOPER
-	dev_force_tmp_channel_id = force_tmp_channel_id;
-#endif
+	if (state->developer)
+		dev_force_tmp_channel_id = force_tmp_channel_id;
 
 	/* 3 == peer, 4 = hsmd */
 	state->pps = new_per_peer_state(state);

@@ -940,6 +940,8 @@ static struct feature_set *default_features(const tal_t *ctx)
 		COMPULSORY_FEATURE(OPT_CHANNEL_TYPE),
 		OPTIONAL_FEATURE(OPT_ROUTE_BLINDING),
 		OPTIONAL_FEATURE(OPT_PROVIDE_STORAGE),
+		/* LN-symmetry / eltoo support */
+		OPTIONAL_FEATURE(OPT_ELTOO),
 		/* Removed later for elements */
 		OPTIONAL_FEATURE(OPT_ANCHORS_ZERO_FEE_HTLC_TX),
 	};

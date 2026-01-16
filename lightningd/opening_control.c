@@ -7,6 +7,7 @@
 #include <common/blockheight_states.h>
 #include <common/clock_time.h>
 #include <common/fee_states.h>
+#include <common/channel_type.h>
 #include <common/json_channel_type.h>
 #include <common/json_command.h>
 #include <common/memleak.h>
@@ -371,20 +372,45 @@ failed:
 	tal_free(fc->uc);
 }
 
-/* TODO: eltoo opening requires eltoo-specific wire messages.
- * When implemented, uncomment this function. */
-#if 0
-static void opening_eltoo_funder_finished(struct subd *openingd, const u8 *resp,
-				    const int *fds UNUSED,
-				    struct funding_channel *fc)
+/* Handle WIRE_OPENINGD_ELTOO_FUNDER_START_REPLY: channel establishment starting */
+static void eltoo_opening_funder_start_replied(struct subd *openingd, const u8 *resp,
+					       const int *fds UNUSED,
+					       struct funding_channel *fc)
 {
-	log_broken(fc->uc->log,
-		   "eltoo opening not yet fully implemented");
-	was_pending(command_fail(fc->cmd, LIGHTNINGD,
-				 "eltoo opening not yet fully implemented"));
+	bool supports_shutdown_script;
+
+	/* It will tell us the resulting channel type (which can vary
+	 * by ZEROCONF and SCID_ALIAS), so free old one */
+	tal_free(fc->channel_type);
+
+	if (!fromwire_openingd_eltoo_funder_start_reply(fc, resp,
+						       &fc->funding_scriptpubkey,
+						       &supports_shutdown_script,
+						       &fc->channel_type)) {
+		log_broken(fc->uc->log,
+			   "bad ELTOO_FUNDER_START_REPLY %s",
+			   tal_hex(resp, resp));
+		was_pending(command_fail(fc->cmd, LIGHTNINGD,
+					 "bad ELTOO_FUNDER_START_REPLY %s",
+					 tal_hex(fc->cmd, resp)));
+		goto failed;
+	}
+
+	/* If we're not using the upfront shutdown script, forget it */
+	if (!supports_shutdown_script)
+		fc->our_upfront_shutdown_script =
+			tal_free(fc->our_upfront_shutdown_script);
+
+	funding_started_success(fc);
+
+	/* Mark that we're in-flight */
+	fc->inflight = true;
+	return;
+
+failed:
+	/* Frees fc too */
 	tal_free(fc->uc);
 }
-#endif
 
 static void opening_funder_finished(struct subd *openingd, const u8 *resp,
 				    const int *fds,
@@ -1079,10 +1105,121 @@ static void eltoo_opening_fundee_finished(struct subd *openingd,
 					  const int *fds,
 					  struct uncommitted_channel *uc)
 {
-	/* TODO: Implement eltoo fundee channel creation */
-	log_broken(uc->log, "eltoo fundee channel creation not yet implemented");
-	uncommitted_channel_disconnect(uc, LOG_BROKEN,
-				       "eltoo fundee not yet implemented");
+	const u8 *fwd_msg;
+	struct channel_info channel_info;
+	struct bitcoin_tx *first_update, *first_settle;
+	struct channel_id cid;
+	struct lightningd *ld = openingd->ld;
+	struct bitcoin_outpoint funding;
+	struct amount_sat funding_sats;
+	struct amount_msat push;
+	u8 channel_flags;
+	struct channel *channel;
+	u8 *remote_upfront_shutdown_script, *local_upfront_shutdown_script;
+	struct peer_fd *peer_fd;
+	struct channel_type *type;
+	struct pubkey remote_fundingkey, remote_settlekey;
+	struct partial_sig other_psig, self_psig;
+	struct musig_session session;
+	struct nonce their_next_nonce, our_next_nonce;
+
+	log_debug(uc->log, "Got eltoo_opening_fundee_finished_response");
+
+	/* Initialize channel_info - for eltoo channels, we don't use basepoints */
+	memset(&channel_info, 0, sizeof(channel_info));
+	channel_info.their_config.id = 0;
+
+	peer_fd = new_peer_fd_arr(tmpctx, fds);
+
+	if (!fromwire_openingd_eltoo_fundee(tmpctx, reply,
+					    &channel_info.their_config,
+					    &first_update,
+					    &first_settle,
+					    &remote_fundingkey,
+					    &remote_settlekey,
+					    &other_psig,
+					    &self_psig,
+					    &session,
+					    &their_next_nonce,
+					    &our_next_nonce,
+					    &funding,
+					    &funding_sats,
+					    &push,
+					    &channel_flags,
+					    cast_const2(u8 **, &fwd_msg),
+					    &local_upfront_shutdown_script,
+					    &remote_upfront_shutdown_script,
+					    &type)) {
+		log_broken(uc->log, "bad OPENINGD_ELTOO_FUNDEE %s",
+			   tal_hex(reply, reply));
+		uncommitted_channel_disconnect(uc, LOG_BROKEN,
+					       "bad OPENINGD_ELTOO_FUNDEE");
+		goto failed;
+	}
+
+	first_update->chainparams = chainparams;
+	first_settle->chainparams = chainparams;
+
+	derive_channel_id(&cid, &funding);
+
+	/* For eltoo, we need to store the remote funding key in channel_info.
+	 * The basepoint fields are not used for eltoo but the wallet code
+	 * requires valid pubkeys to serialize, so use remote_fundingkey as
+	 * a placeholder for all of them. */
+	channel_info.remote_fundingkey = remote_fundingkey;
+	channel_info.theirbase.revocation = remote_fundingkey;
+	channel_info.theirbase.payment = remote_fundingkey;
+	channel_info.theirbase.htlc = remote_fundingkey;
+	channel_info.theirbase.delayed_payment = remote_fundingkey;
+	channel_info.remote_per_commit = remote_fundingkey;
+	channel_info.old_remote_per_commit = remote_fundingkey;
+
+	/* Consumes uc */
+	channel = wallet_commit_channel(ld, uc,
+					&cid,
+					first_settle,  /* Use settle tx as "commit" for storage */
+					NULL,  /* No bitcoin_signature for eltoo */
+					&funding,
+					funding_sats,
+					push,
+					channel_flags,
+					&channel_info,
+					0,  /* No feerate for eltoo initial tx */
+					local_upfront_shutdown_script,
+					remote_upfront_shutdown_script,
+					type,
+					NULL,
+					false);
+	if (!channel) {
+		uncommitted_channel_disconnect(uc, LOG_BROKEN,
+					       "Commit channel failed");
+		goto failed;
+	}
+
+	/* Store eltoo-specific data in channel struct.
+	 * Note: This data should be persisted to the database in the future */
+	channel->their_last_psig = other_psig;
+	channel->our_last_psig = self_psig;
+	channel->session = session;
+	/* TODO: Store first_update, first_settle, eltoo keys, nonces
+	 * For now, we rely on eltoo_channeld to handle these via the init message */
+
+	log_debug(channel->log, "Watching funding tx %s",
+		  fmt_bitcoin_txid(reply,
+				 &channel->funding.txid));
+
+	channel_watch_funding(ld, channel);
+
+	/* Tell plugins about the success */
+	notify_channel_opened(ld, &channel->peer->id, &channel->funding_sats,
+			      &channel->funding.txid, channel->remote_channel_ready);
+
+	/* On to normal operation - start eltoo channeld (frees if it fails!) */
+	if (peer_start_eltoo_channeld(channel, peer_fd, fwd_msg, false, false))
+		tal_free(uc);
+	return;
+
+failed:
 	tal_free(uc);
 }
 
@@ -1090,15 +1227,47 @@ static void eltoo_opening_got_offer(struct subd *openingd,
 				    const u8 *msg,
 				    struct uncommitted_channel *uc)
 {
-	/* TODO: Implement eltoo offer handling with plugin hook */
-	log_info(uc->log, "Received eltoo channel offer, rejecting (not yet implemented)");
+	/* TODO: Add plugin hook support like openchannel_hook for regular channels */
+	struct amount_sat funding_satoshis;
+	struct amount_msat push_msat;
+	struct amount_sat dust_limit_satoshis;
+	struct amount_msat max_htlc_value_in_flight_msat;
+	struct amount_msat htlc_minimum_msat;
+	u16 shared_delay;
+	u16 max_accepted_htlcs;
+	u8 channel_flags;
+	u8 *shutdown_scriptpubkey;
 
-	/* Reject the offer for now */
+	if (!fromwire_openingd_eltoo_got_offer(tmpctx, msg,
+					       &funding_satoshis,
+					       &push_msat,
+					       &dust_limit_satoshis,
+					       &max_htlc_value_in_flight_msat,
+					       &htlc_minimum_msat,
+					       &shared_delay,
+					       &max_accepted_htlcs,
+					       &channel_flags,
+					       &shutdown_scriptpubkey)) {
+		log_broken(openingd->log, "Malformed eltoo_got_offer %s",
+			   tal_hex(tmpctx, msg));
+		tal_free(openingd);
+		return;
+	}
+
+	log_info(uc->log, "Received eltoo channel offer: funding=%s push=%s",
+		 fmt_amount_sat(tmpctx, funding_satoshis),
+		 fmt_amount_msat(tmpctx, push_msat));
+
+	/* Cancel any funder-side commands since we're being opened to */
+	opening_funder_failed_cancel_commands(uc, "Have in-progress `open_channel` from peer");
+	uc->got_offer = true;
+
+	/* Accept the offer with no rejection message, no upfront shutdown script */
 	subd_send_msg(openingd,
 		      take(towire_openingd_eltoo_got_offer_reply(NULL,
-								"eltoo channels not yet supported",
-								NULL,
-								NULL)));
+								NULL,  /* No rejection - accept */
+								NULL,  /* No upfront shutdown script */
+								NULL))); /* No wallet index */
 }
 
 static unsigned int eltoo_openingd_msg(struct subd *openingd,
@@ -1131,11 +1300,7 @@ static unsigned int eltoo_openingd_msg(struct subd *openingd,
 			tal_free(openingd);
 			return 0;
 		}
-		/* TODO: Implement eltoo funder start reply handling */
-		log_broken(uc->log, "eltoo funder start not yet implemented");
-		was_pending(command_fail(uc->fc->cmd, LIGHTNINGD,
-					 "eltoo funder start not yet implemented"));
-		tal_free(uc);
+		eltoo_opening_funder_start_replied(openingd, msg, fds, uc->fc);
 		return 0;
 
 	case WIRE_OPENINGD_ELTOO_FAILED:
@@ -1337,10 +1502,19 @@ static struct command_result *json_fundchannel_complete(struct command *cmd,
 
 	/* Set the cmd to this new cmd */
 	peer->uncommitted_channel->fc->cmd = cmd;
-	msg = towire_openingd_funder_complete(NULL,
-					      funding_txid,
-					      *funding_txout_num,
-					      peer->uncommitted_channel->fc->channel_type);
+
+	/* Use the appropriate message based on channel type */
+	if (channel_type_has(fc->channel_type, OPT_ELTOO)) {
+		msg = towire_openingd_eltoo_funder_complete(NULL,
+							   funding_txid,
+							   *funding_txout_num,
+							   fc->channel_type);
+	} else {
+		msg = towire_openingd_funder_complete(NULL,
+						      funding_txid,
+						      *funding_txout_num,
+						      fc->channel_type);
+	}
 	subd_send_msg(peer->uncommitted_channel->open_daemon, take(msg));
 	return command_still_pending(cmd);
 }
@@ -1378,7 +1552,10 @@ static struct command_result *json_fundchannel_cancel(struct command *cmd,
 
 		/* Make sure this gets notified if we succeed or cancel */
 		tal_arr_expand(&peer->uncommitted_channel->fc->cancels, cmd);
-		msg = towire_openingd_funder_cancel(NULL);
+		if (channel_type_has(peer->uncommitted_channel->fc->channel_type, OPT_ELTOO))
+			msg = towire_openingd_eltoo_funder_cancel(NULL);
+		else
+			msg = towire_openingd_funder_cancel(NULL);
 		subd_send_msg(peer->uncommitted_channel->open_daemon, take(msg));
 		return command_still_pending(cmd);
 	}
@@ -1433,10 +1610,21 @@ static struct command_result *fundchannel_start(struct command *cmd,
 				    "Failed to create socketpair: %s",
 				    strerror(errno));
 	}
-	if (!peer_start_openingd(peer, new_peer_fd(cmd, fds[0]))) {
-		close(fds[1]);
-		/* FIXME: gets completed by failure path above! */
-		return command_its_complicated("completed by peer_start_openingd");
+	/* Use eltoo_openingd for eltoo channels */
+	log_debug(cmd->ld->log, "fundchannel_start: channel_type has OPT_ELTOO=%d",
+		  channel_type_has(fc->channel_type, OPT_ELTOO));
+	if (channel_type_has(fc->channel_type, OPT_ELTOO)) {
+		log_debug(cmd->ld->log, "fundchannel_start: using eltoo_openingd");
+		if (!peer_start_eltoo_openingd(peer, new_peer_fd(cmd, fds[0]))) {
+			close(fds[1]);
+			return command_its_complicated("completed by peer_start_eltoo_openingd");
+		}
+	} else {
+		if (!peer_start_openingd(peer, new_peer_fd(cmd, fds[0]))) {
+			close(fds[1]);
+			/* FIXME: gets completed by failure path above! */
+			return command_its_complicated("completed by peer_start_openingd");
+		}
 	}
 
 	/* Tell it to start funding */
@@ -1647,6 +1835,11 @@ static struct command_result *json_fundchannel_start(struct command *cmd,
 		fc->channel_type = desired_channel_type(fc, cmd->ld->our_features,
 							peer->their_features);
 
+	log_debug(cmd->ld->log, "fundchannel: our OPT_ELTOO offered=%d, their OPT_ELTOO offered=%d, channel_type has OPT_ELTOO=%d",
+		  feature_offered(cmd->ld->our_features->bits[INIT_FEATURE], OPT_ELTOO),
+		  feature_offered(peer->their_features, OPT_ELTOO),
+		  channel_type_has(fc->channel_type, OPT_ELTOO));
+
 	fc->push = push_msat ? *push_msat : AMOUNT_MSAT(0);
 	fc->channel_flags = OUR_CHANNEL_FLAGS;
 	if (!*announce_channel) {
@@ -1673,18 +1866,30 @@ static struct command_result *json_fundchannel_start(struct command *cmd,
 		upfront_shutdown_script_wallet_index = NULL;
 
 	temporary_channel_id(&tmp_channel_id);
-	fc->open_msg = towire_openingd_funder_start(
-			fc,
-			*amount,
-			fc->push,
-			fc->our_upfront_shutdown_script,
-			upfront_shutdown_script_wallet_index,
-			*feerate_non_anchor,
-			feerate_anchor,
-			&tmp_channel_id,
-			fc->channel_flags,
-			reserve,
-			fc->channel_type);
+	/* Use eltoo-specific message format for eltoo channels */
+	if (channel_type_has(fc->channel_type, OPT_ELTOO)) {
+		fc->open_msg = towire_openingd_eltoo_funder_start(
+				fc,
+				*amount,
+				fc->push,
+				fc->our_upfront_shutdown_script,
+				upfront_shutdown_script_wallet_index,
+				&tmp_channel_id,
+				fc->channel_flags);
+	} else {
+		fc->open_msg = towire_openingd_funder_start(
+				fc,
+				*amount,
+				fc->push,
+				fc->our_upfront_shutdown_script,
+				upfront_shutdown_script_wallet_index,
+				*feerate_non_anchor,
+				feerate_anchor,
+				&tmp_channel_id,
+				fc->channel_flags,
+				reserve,
+				fc->channel_type);
+	}
 
 	if (!topology_synced(cmd->ld->topology)) {
 		struct fundchannel_start_info *info
