@@ -19,6 +19,9 @@ void NON_NULL_ARGS(2, 4) json_add_uncommitted_channel(struct command *cmd,
 bool peer_start_openingd(struct peer *peer,
 			 struct peer_fd *peer_fd);
 
+bool peer_start_eltoo_openingd(struct peer *peer,
+			       struct peer_fd *peer_fd);
+
 struct subd *peer_get_owning_subd(struct peer *peer);
 
 #endif /* LIGHTNING_LIGHTNINGD_OPENING_CONTROL_H */

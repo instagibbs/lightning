@@ -161,7 +161,6 @@ bool hsmd_check_client_capabilities(struct hsmd_client *client,
 	case WIRE_HSMD_SETUP_CHANNEL:
 	case WIRE_HSMD_CHECK_OUTPOINT:
 	case WIRE_HSMD_LOCK_OUTPOINT:
-	case WIRE_HSMD_FORGET_CHANNEL:
 		return (client->capabilities & HSM_PERM_COMMITMENT_POINT) != 0;
 
 	case WIRE_HSMD_SIGN_REMOTE_COMMITMENT_TX:
@@ -207,6 +206,7 @@ bool hsmd_check_client_capabilities(struct hsmd_client *client,
 	case WIRE_HSMD_PREAPPROVE_KEYSEND_CHECK:
 	case WIRE_HSMD_SIGN_SPLICE_TX:
 	case WIRE_HSMD_SIGN_ANY_CANNOUNCEMENT_REQ:
+	case WIRE_HSMD_FORGET_CHANNEL:
 		return (client->capabilities & HSM_PERM_MASTER) != 0;
 
 	/*~ These are messages sent by the HSM so we should never receive them. */
@@ -1974,6 +1974,65 @@ static u8 *handle_sign_delayed_payment_to_us(struct hsmd_client *c,
 				    SIGHASH_ALL);
 }
 
+/* This will derive pseudorandom secret Key from a derived key */
+static u8 *handle_derive_secret(struct hsmd_client *c, const u8 *msg_in)
+{
+	u8 *info;
+	struct secret secret;
+
+	if (!fromwire_hsmd_derive_secret(tmpctx, msg_in, &info))
+		return hsmd_status_malformed_request(c, msg_in);
+
+	hkdf_sha256(&secret, sizeof(struct secret), NULL, 0,
+		    &secretstuff.derived_secret, sizeof(secretstuff.derived_secret),
+		    info, tal_bytelen(info));
+
+	return towire_hsmd_derive_secret_reply(NULL, &secret);
+}
+
+/* Clean up any secrets associated with a forgotten channel */
+static u8 *handle_forget_channel(struct hsmd_client *c, const u8 *msg_in)
+{
+	struct node_id peer_id;
+	u64 dbid;
+
+	if (!fromwire_hsmd_forget_channel(msg_in, &peer_id, &dbid))
+		return hsmd_status_malformed_request(c, msg_in);
+
+	/* TODO: Clean up musig state for this channel when we can map
+	 * (peer_id, dbid) -> channel_id. For now, the musig state will leak
+	 * but this is acceptable for initial eltoo testing. */
+
+	return towire_hsmd_forget_channel_reply(NULL);
+}
+
+/* Verify a derived BIP32 pubkey matches what we would derive */
+static u8 *handle_check_pubkey(struct hsmd_client *c, const u8 *msg_in)
+{
+	u32 index;
+	struct pubkey pubkey, derived_pubkey;
+	struct ext_key ext;
+	bool ok;
+
+	if (!fromwire_hsmd_check_pubkey(msg_in, &index, &pubkey))
+		return hsmd_status_malformed_request(c, msg_in);
+
+	if (index >= BIP32_INITIAL_HARDENED_CHILD) {
+		ok = false;
+	} else if (bip32_key_from_parent(&secretstuff.bip32, index,
+					 BIP32_FLAG_KEY_PUBLIC, &ext) != WALLY_OK) {
+		ok = false;
+	} else if (!secp256k1_ec_pubkey_parse(secp256k1_ctx,
+					      &derived_pubkey.pubkey,
+					      ext.pub_key, sizeof(ext.pub_key))) {
+		ok = false;
+	} else {
+		ok = pubkey_eq(&pubkey, &derived_pubkey);
+	}
+
+	return towire_hsmd_check_pubkey_reply(NULL, ok);
+}
+
 u8 *hsmd_handle_client_message(const tal_t *ctx, struct hsmd_client *client,
 			       const u8 *msg)
 {
@@ -2057,6 +2116,12 @@ u8 *hsmd_handle_client_message(const tal_t *ctx, struct hsmd_client *client,
 		return handle_sign_remote_htlc_to_us(client, msg);
 	case WIRE_HSMD_SIGN_DELAYED_PAYMENT_TO_US:
 		return handle_sign_delayed_payment_to_us(client, msg);
+	case WIRE_HSMD_DERIVE_SECRET:
+		return handle_derive_secret(client, msg);
+	case WIRE_HSMD_CHECK_PUBKEY:
+		return handle_check_pubkey(client, msg);
+	case WIRE_HSMD_FORGET_CHANNEL:
+		return handle_forget_channel(client, msg);
     /* Eltoo stuff here */
     case WIRE_HSMD_READY_ELTOO_CHANNEL:
         return handle_ready_eltoo_channel(client, msg);
@@ -2111,9 +2176,7 @@ u8 *hsmd_handle_client_message(const tal_t *ctx, struct hsmd_client *client,
 	case WIRE_HSMD_SIGN_BOLT12_REPLY:
 	case WIRE_HSMD_SIGN_BOLT12_2:
 	case WIRE_HSMD_SIGN_BOLT12_2_REPLY:
-	case WIRE_HSMD_DERIVE_SECRET:
 	case WIRE_HSMD_DERIVE_SECRET_REPLY:
-	case WIRE_HSMD_CHECK_PUBKEY:
 	case WIRE_HSMD_CHECK_PUBKEY_REPLY:
 	case WIRE_HSMD_CHECK_BIP86_PUBKEY:
 	case WIRE_HSMD_CHECK_BIP86_PUBKEY_REPLY:
@@ -2129,7 +2192,6 @@ u8 *hsmd_handle_client_message(const tal_t *ctx, struct hsmd_client *client,
 	case WIRE_HSMD_CHECK_OUTPOINT_REPLY:
 	case WIRE_HSMD_LOCK_OUTPOINT:
 	case WIRE_HSMD_LOCK_OUTPOINT_REPLY:
-	case WIRE_HSMD_FORGET_CHANNEL:
 	case WIRE_HSMD_FORGET_CHANNEL_REPLY:
 	case WIRE_HSMD_SIGN_SPLICE_TX:
 	case WIRE_HSMD_SIGN_ANCHORSPEND:

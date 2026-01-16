@@ -25,6 +25,7 @@
 #include <lightningd/plugin_hook.h>
 #include <lightningd/subd.h>
 #include <openingd/openingd_wiregen.h>
+#include <openingd/eltoo_openingd_wiregen.h>
 #include <unistd.h>
 #include <wally_psbt.h>
 
@@ -1041,6 +1042,203 @@ bool peer_start_openingd(struct peer *peer, struct peer_fd *peer_fd)
 				   peer->ld->dev_force_tmp_channel_id,
 				   peer->ld->config.allowdustreserve,
 				   peer->ld->dev_any_channel_type);
+	subd_send_msg(uc->open_daemon, take(msg));
+	return true;
+}
+
+static void eltoo_openingd_failed(struct subd *openingd, const u8 *msg,
+				  struct uncommitted_channel *uc)
+{
+	char *desc;
+
+	/* Since we're detaching from uc, we'll be unreferenced until
+	 * our imminent exit (as will our parent, openingd->conn). */
+	notleak(openingd);
+	notleak(tal_parent(openingd));
+
+	if (!fromwire_openingd_eltoo_failed(msg, msg, &desc)) {
+		log_broken(uc->log,
+			   "bad OPENINGD_ELTOO_FAILED %s",
+			   tal_hex(tmpctx, msg));
+		if (uc->fc)
+			was_pending(command_fail(uc->fc->cmd, LIGHTNINGD,
+						 "bad OPENINGD_ELTOO_FAILED %s",
+						 tal_hex(uc->fc->cmd, msg)));
+		tal_free(uc);
+		return;
+	}
+
+	/* Noop if we're not funder. */
+	opening_funder_failed_cancel_commands(uc, desc);
+	/* Detaches from ->peer */
+	tal_free(uc);
+}
+
+static void eltoo_opening_fundee_finished(struct subd *openingd,
+					  const u8 *reply,
+					  const int *fds,
+					  struct uncommitted_channel *uc)
+{
+	/* TODO: Implement eltoo fundee channel creation */
+	log_broken(uc->log, "eltoo fundee channel creation not yet implemented");
+	uncommitted_channel_disconnect(uc, LOG_BROKEN,
+				       "eltoo fundee not yet implemented");
+	tal_free(uc);
+}
+
+static void eltoo_opening_got_offer(struct subd *openingd,
+				    const u8 *msg,
+				    struct uncommitted_channel *uc)
+{
+	/* TODO: Implement eltoo offer handling with plugin hook */
+	log_info(uc->log, "Received eltoo channel offer, rejecting (not yet implemented)");
+
+	/* Reject the offer for now */
+	subd_send_msg(openingd,
+		      take(towire_openingd_eltoo_got_offer_reply(NULL,
+								"eltoo channels not yet supported",
+								NULL,
+								NULL)));
+}
+
+static unsigned int eltoo_openingd_msg(struct subd *openingd,
+				       const u8 *msg, const int *fds)
+{
+	enum eltoo_openingd_wire t = fromwire_peektype(msg);
+	struct uncommitted_channel *uc = openingd->channel;
+
+	switch (t) {
+	case WIRE_OPENINGD_ELTOO_FUNDER_REPLY:
+		if (!uc->fc) {
+			log_broken(openingd->log, "Unexpected ELTOO_FUNDER_REPLY %s",
+				   tal_hex(tmpctx, msg));
+			tal_free(openingd);
+			return 0;
+		}
+		if (tal_count(fds) != 1)
+			return 1;
+		/* TODO: Implement eltoo funder channel creation */
+		log_broken(uc->log, "eltoo funder channel creation not yet implemented");
+		was_pending(command_fail(uc->fc->cmd, LIGHTNINGD,
+					 "eltoo funder not yet implemented"));
+		tal_free(uc);
+		return 0;
+
+	case WIRE_OPENINGD_ELTOO_FUNDER_START_REPLY:
+		if (!uc->fc) {
+			log_broken(openingd->log, "Unexpected ELTOO_FUNDER_START_REPLY %s",
+				   tal_hex(tmpctx, msg));
+			tal_free(openingd);
+			return 0;
+		}
+		/* TODO: Implement eltoo funder start reply handling */
+		log_broken(uc->log, "eltoo funder start not yet implemented");
+		was_pending(command_fail(uc->fc->cmd, LIGHTNINGD,
+					 "eltoo funder start not yet implemented"));
+		tal_free(uc);
+		return 0;
+
+	case WIRE_OPENINGD_ELTOO_FAILED:
+		eltoo_openingd_failed(openingd, msg, uc);
+		return 0;
+
+	case WIRE_OPENINGD_ELTOO_FUNDEE:
+		if (tal_count(fds) != 1)
+			return 1;
+		eltoo_opening_fundee_finished(openingd, msg, fds, uc);
+		return 0;
+
+	case WIRE_OPENINGD_ELTOO_GOT_OFFER:
+		eltoo_opening_got_offer(openingd, msg, uc);
+		return 0;
+
+	/* We send these! */
+	case WIRE_OPENINGD_ELTOO_INIT:
+	case WIRE_OPENINGD_ELTOO_FUNDER_START:
+	case WIRE_OPENINGD_ELTOO_FUNDER_COMPLETE:
+	case WIRE_OPENINGD_ELTOO_FUNDER_CANCEL:
+	case WIRE_OPENINGD_ELTOO_GOT_OFFER_REPLY:
+	case WIRE_OPENINGD_ELTOO_DEV_MEMLEAK:
+	/* Replies never get here */
+	case WIRE_OPENINGD_ELTOO_DEV_MEMLEAK_REPLY:
+		break;
+	}
+
+	log_broken(openingd->log, "Unexpected eltoo msg %s: %s",
+		   eltoo_openingd_wire_name(t), tal_hex(tmpctx, msg));
+	tal_free(openingd);
+	return 0;
+}
+
+bool peer_start_eltoo_openingd(struct peer *peer, struct peer_fd *peer_fd)
+{
+	int hsmfd;
+	u32 max_shared_delay;
+	struct amount_msat min_effective_htlc_capacity;
+	struct uncommitted_channel *uc;
+	const u8 *msg;
+	u32 minrate, maxrate;
+
+	assert(peer->uncommitted_channel);
+	uc = peer->uncommitted_channel;
+	assert(!uc->open_daemon);
+
+	hsmfd = hsm_get_client_fd(peer->ld, &uc->peer->id, uc->dbid,
+				  HSM_PERM_COMMITMENT_POINT
+				  | HSM_PERM_SIGN_REMOTE_TX);
+
+	if (hsmfd < 0) {
+		uncommitted_channel_disconnect(uc, LOG_BROKEN,
+					       tal_fmt(tmpctx,
+						       "Getting hsmfd for lightning_eltoo_openingd: %s",
+						       strerror(errno)));
+		tal_free(uc);
+		return false;
+	}
+
+	uc->open_daemon = new_channel_subd(peer, peer->ld,
+					"lightning_eltoo_openingd",
+					uc, &peer->id, uc->log,
+					true, eltoo_openingd_wire_name,
+					eltoo_openingd_msg,
+					opend_channel_errmsg,
+					opend_channel_set_billboard,
+					take(&peer_fd->fd),
+					take(&hsmfd), NULL);
+	if (!uc->open_daemon) {
+		uncommitted_channel_disconnect(uc, LOG_BROKEN,
+					       tal_fmt(tmpctx,
+						       "Running lightning_eltoo_openingd: %s",
+						       strerror(errno)));
+		tal_free(uc);
+		return false;
+	}
+
+	eltoo_channel_config(peer->ld, &uc->our_config,
+			     &max_shared_delay,
+			     &min_effective_htlc_capacity);
+
+	if (peer->ld->config.ignore_fee_limits) {
+		minrate = 1;
+		maxrate = 0xFFFFFFFF;
+	} else {
+		minrate = feerate_min(peer->ld, NULL);
+		maxrate = feerate_max(peer->ld, NULL);
+	}
+
+	/* For eltoo, the settle_pubkey is the payment basepoint */
+	msg = towire_openingd_eltoo_init(NULL,
+				   chainparams,
+				   peer->ld->our_features,
+				   peer->their_features,
+				   &uc->our_config,
+				   max_shared_delay,
+				   min_effective_htlc_capacity,
+				   &uc->local_funding_pubkey,
+				   &uc->local_basepoints.payment, /* settle_pubkey */
+				   uc->minimum_depth,
+				   minrate, maxrate,
+				   peer->ld->dev_force_tmp_channel_id);
 	subd_send_msg(uc->open_daemon, take(msg));
 	return true;
 }

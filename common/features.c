@@ -144,6 +144,10 @@ static const struct feature_style feature_styles[] = {
 	  .copy_style = { [INIT_FEATURE] = FEATURE_REPRESENT,
 			  [NODE_ANNOUNCE_FEATURE] = FEATURE_REPRESENT,
 			  [CHANNEL_FEATURE] = FEATURE_DONT_REPRESENT} },
+	{ OPT_ELTOO,
+	  .copy_style = { [INIT_FEATURE] = FEATURE_REPRESENT,
+			  [NODE_ANNOUNCE_FEATURE] = FEATURE_REPRESENT,
+			  [CHANNEL_FEATURE] = FEATURE_DONT_REPRESENT} },
 };
 
 struct dependency {
@@ -490,7 +494,7 @@ const char *feature_name(const tal_t *ctx, size_t f)
 		NULL,
 		NULL, /* 160/161 */
 		"option_experimental_splice", /* https://github.com/lightning/bolts/pull/863 */
-		NULL,
+		"option_eltoo", /* LN-symmetry / eltoo */
 		NULL,
 		NULL,
 		NULL, /* 170/171 */

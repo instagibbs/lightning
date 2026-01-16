@@ -3,11 +3,7 @@ from pyln.client import RpcError, Millisatoshi
 from shutil import copyfile
 from pyln.testing.utils import SLOW_MACHINE
 from utils import (
-    only_one, sync_blockheight, wait_for, TIMEOUT,
-    account_balance, first_channel_id, closing_fee, TEST_NETWORK,
-    scriptpubkey_addr, calc_lease_fee, EXPERIMENTAL_FEATURES,
-    check_utxos_channel, anchor_expected, check_coin_moves,
-    check_balance_snaps, mine_funding_to_announce
+    wait_for, first_channel_id
 )
 
 import os
@@ -101,7 +97,8 @@ def test_eltoo_base_reestablishment(node_factory, bitcoind):
     """Test that channel reestablishment does the expected thing when all prior messages completed """
 
     l1, l2 = node_factory.line_graph(2,
-                                    opts=[{'may_reconnect': True}, {'may_reconnect': True}])
+                                    opts=[{'may_reconnect': True, 'developer': None},
+                                          {'may_reconnect': True, 'developer': None}])
 
     # Simple reestblishment where funding is locked   
     l1.rpc.disconnect(l2.info['id'], force=True)

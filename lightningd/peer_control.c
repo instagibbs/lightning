@@ -2095,6 +2095,30 @@ void handle_peer_spoke(struct lightningd *ld, const u8 *msg)
 		close(other_fd);
 		return;
 
+	case WIRE_OPEN_CHANNEL_ELTOO:
+		if (!feature_negotiated(ld->our_features,
+					peer->their_features,
+					OPT_ELTOO)) {
+			error = towire_errorfmt(tmpctx, &channel_id,
+						"Didn't negotiate OPT_ELTOO: cannot use open_channel_eltoo");
+			goto send_error;
+		}
+		if (peer->uncommitted_channel) {
+			error = towire_errorfmt(tmpctx, &channel_id,
+						"Multiple simultaneous opens not supported");
+			goto send_error;
+		}
+		peer->uncommitted_channel = new_uncommitted_channel(peer);
+		peer->uncommitted_channel->cid = channel_id;
+		pfd = sockpair(tmpctx, channel, &other_fd, &error);
+		if (!pfd)
+			goto send_error;
+		if (peer_start_eltoo_openingd(peer, pfd))
+			goto tell_connectd;
+		/* FIXME: Send informative error? */
+		close(other_fd);
+		return;
+
 	case WIRE_CHANNEL_REESTABLISH:
 		/* Maybe a previously closed channel? */
 		closed_channel = closed_channel_map_get(peer->ld->closed_channels, &channel_id);
