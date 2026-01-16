@@ -42,12 +42,13 @@ void add_settlement_input(struct bitcoin_tx *tx, const struct bitcoin_outpoint *
     u8 *script_pubkey;
     u8 **witness; /* settle_and_update_tapscripts[0] script and control_block */
 
-    /* 
+    /*
      * We do not know what scriptPubKey, tap_tree look like yet because we're computing
-     * a sighash to then put into the input script. We pass in dummies
-     * where necessary for now.
+     * a sighash to then put into the input script. We use a P2TR scriptpubkey from the
+     * inner_pubkey here; SIGHASH_ANYPREVOUTANYSCRIPT excludes the scriptPubkey from
+     * the sighash so any valid P2TR script works.
      */
-    dummy_script = bitcoin_spk_ephemeral_anchor(tmpctx);
+    dummy_script = scriptpubkey_p2tr(tmpctx, inner_pubkey);
 	input_num = bitcoin_tx_add_input(tx, update_outpoint, shared_delay,
 			     /* scriptSig */ NULL, update_outpoint_sats, dummy_script, /* input_wscript */ NULL, inner_pubkey, /* tap_tree */ NULL);
     assert(input_num == 0);

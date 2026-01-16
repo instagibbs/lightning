@@ -241,7 +241,7 @@ int bitcoin_tx_add_unbound_input(struct bitcoin_tx *tx,
     struct bitcoin_outpoint fake_outpoint;
     u8 *script_pubkey;
 
-    memset(fake_outpoint.txid.shad.sha.u.u8, 0x00, sizeof(fake_outpoint.txid.shad.sha.u.u8));
+    memset(fake_outpoint.txid.shad.sha.u.u8, 0xff, sizeof(fake_outpoint.txid.shad.sha.u.u8));
     fake_outpoint.n = 0;
 
     /* Generate P2TR scriptPubkey from inner_pubkey for taproot signing */

@@ -1066,11 +1066,14 @@ bool scripteq(const u8 *s1, const u8 *s2)
 u8 *bitcoin_spk_ephemeral_anchor(const tal_t *ctx)
 {
 	u8 *script = tal_arr(ctx, u8, 0);
-
-	/* BOLT #3:
-     * FIXME cite the extension bolts
+	/* BIP-431 ephemeral anchor: OP_1 <0x4e73>
+	 * The magic bytes 0x4e73 are outside valid witness version range,
+	 * making this unambiguously an ephemeral anchor output.
 	 */
+	static const u8 ephemeral_anchor_data[] = { 0x4e, 0x73 };
+
 	add_op(&script, OP_TRUE);
+	script_push_bytes(&script, ephemeral_anchor_data, sizeof(ephemeral_anchor_data));
 	return script;
 }
 
@@ -1260,14 +1263,14 @@ u8 *make_eltoo_settle_script(const tal_t *ctx, const struct bitcoin_tx *settle_t
     struct privkey g;
     unsigned char one_G_bytes[33];
 
-    /* We use tapleaf_script as a switch for doing BIP342 hash
-     * We really shouldn't, but for now we pass in dummy
-     * since APOAS sighash doesn't cover it anyways.
+    /* For SIGHASH_ANYPREVOUTANYSCRIPT, the script is not committed to,
+     * so we pass NULL for tapleaf_script. The script will contain this
+     * signature and be built afterwards.
      */
     bitcoin_tx_taproot_hash_for_sig(settle_tx,
                  input_index,
                  sh_type,
-                 script,
+                 /* tapleaf_script */ NULL,
                  /* annex */ NULL,
                  &sighash);
 

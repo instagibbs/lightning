@@ -139,7 +139,7 @@ struct bitcoin_tx *settle_tx(const tal_t *ctx,
      * so just put something in to satisfy PSBT et al
      */
     struct bitcoin_outpoint dummy_update_outpoint;
-    memset(dummy_update_outpoint.txid.shad.sha.u.u8, 0, 32);
+    memset(dummy_update_outpoint.txid.shad.sha.u.u8, 0xff, 32);
     dummy_update_outpoint.n = 0;
 
    /* For MuSig aggregation for outputs */

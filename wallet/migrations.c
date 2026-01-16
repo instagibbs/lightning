@@ -1079,6 +1079,8 @@ static const struct db_migration dbmigrations[] = {
      NULL, revert_withheld_column},
     /* ^v25.12 */
 
+    /* eltoo: shared_delay column for channel_configs */
+    {SQL("ALTER TABLE channel_configs ADD shared_delay INTEGER DEFAULT 0"), NULL},
 };
 
 const struct db_migration *get_db_migrations(size_t *num)

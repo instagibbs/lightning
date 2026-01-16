@@ -411,7 +411,7 @@ void bitcoin_tx_taproot_hash_for_sig(const struct bitcoin_tx *tx,
 
 	ret = wally_tx_get_btc_taproot_signature_hash(
 		tx->wtx, input_index, scripts, input_val_sats, input_count,
-		tapleaf_script, tal_bytelen(tapleaf_script), key_version,
+		tapleaf_script, tapleaf_script ? tal_bytelen(tapleaf_script) : 0, key_version,
 		0xFFFFFFFF /* codesep_position */, annex, annex ? tal_count(annex) : 0,
 		sighash_type, 0 /* flags */, dest->sha.u.u8, sizeof(*dest));
 	assert(ret == WALLY_OK);
