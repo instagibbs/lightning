@@ -1,6 +1,5 @@
 #include "config.h"
 #include <assert.h>
-#include <stdio.h>
 #include <bitcoin/psbt.h>
 #include <bitcoin/pubkey.h>
 #include <bitcoin/script.h>
@@ -858,18 +857,9 @@ struct wally_psbt *psbt_from_b64(const tal_t *ctx,
 char *fmt_wally_psbt(const tal_t *ctx, const struct wally_psbt *psbt)
 {
 	char *serialized_psbt;
-	int ret;
 
 	tal_wally_start();
-	ret = wally_psbt_to_base64(psbt, 0, &serialized_psbt);
-	if (ret != WALLY_OK) {
-		fprintf(stderr, "fmt_wally_psbt: wally_psbt_to_base64 returned %d, psbt num_inputs=%zu, num_outputs=%zu\n",
-			ret, psbt->num_inputs, psbt->num_outputs);
-		if (psbt->num_inputs > 0)
-			fprintf(stderr, "  input[0] txhash[0]=%02x, index=%u\n",
-				psbt->inputs[0].txhash[0], psbt->inputs[0].index);
-	}
-	assert(ret == WALLY_OK);
+	assert(wally_psbt_to_base64(psbt, 0, &serialized_psbt) == WALLY_OK);
 	tal_wally_end_onto(ctx, serialized_psbt, char);
 
 	return serialized_psbt;
