@@ -16,10 +16,12 @@ bool psbt_output_set_keypath(u32 index,
 	u32 path[1];
 	path[0] = index;
 
-	/* For taproot, use x-only pubkey (skip the prefix byte) */
+	/* For taproot, use x-only pubkey (skip the prefix byte) and
+	 * wally_psbt_output_taproot_keypath_add which expects 32-byte pubkey */
 	if (is_taproot) {
-		if (wally_psbt_output_keypath_add(output,
+		if (wally_psbt_output_taproot_keypath_add(output,
 						       ext->pub_key + 1, sizeof(ext->pub_key) - 1,
+						       NULL, 0, /* no tapleaf hashes for key-path spend */
 						       fingerprint, sizeof(fingerprint),
 						       path, 1) != WALLY_OK)
 			return false;

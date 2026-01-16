@@ -134,7 +134,8 @@
                       "anchors/even",
                       "anchors_zero_fee_htlc_tx/even",
                       "scid_alias/even",
-                      "zeroconf/even"
+                      "zeroconf/even",
+                      "eltoo/even"
                     ],
                     "description": [
                       "Name of feature bit."
@@ -994,6 +995,12 @@
                   }
                 ]
               }
+            },
+            "last_tx": {
+              "type": "hex",
+              "description": [
+                "The last transaction for this channel (commitment or settle)."
+              ]
             }
           },
           "allOf": [
@@ -1115,7 +1122,8 @@
                     "description": [
                       "The bitcoin address we will close to (present if close_to_addr is a standardized address)."
                     ]
-                  }
+                  },
+                  "last_tx": {}
                 }
               }
             },
@@ -1215,7 +1223,8 @@
                     "description": [
                       "Fee attached to this the current tx."
                     ]
-                  }
+                  },
+                  "last_tx": {}
                 }
               }
             },
@@ -1316,7 +1325,8 @@
                     "description": [
                       "0 if we're the lesser node_id, 1 if we're the greater (as used in BOLT #7 channel_update)."
                     ]
-                  }
+                  },
+                  "last_tx": {}
                 }
               }
             },
@@ -1428,7 +1438,8 @@
                     "description": [
                       "The minimum feerate for the next funding transaction in per-1000-weight, with `kpw` appended."
                     ]
-                  }
+                  },
+                  "last_tx": {}
                 }
               }
             }

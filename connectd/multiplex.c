@@ -1005,8 +1005,9 @@ static bool extract_funding_created_funding(const u8 *funding_created,
 
 	switch (t) {
  	case WIRE_FUNDING_CREATED:
+	case WIRE_FUNDING_CREATED_ELTOO:
 	/* BOLT #2:
-	 * 1. type: 34 (`funding_created`)
+	 * 1. type: 34 (`funding_created`) / 32770 (`funding_created_eltoo`)
 	 * 2. data:
 	 *     * [`32*byte`:`temporary_channel_id`]
 	 *     * [`sha256`:`funding_txid`]
@@ -1060,6 +1061,7 @@ static void maybe_update_channelid(struct subd *subd, const u8 *msg)
 {
 	switch (fromwire_peektype(msg)) {
 	case WIRE_OPEN_CHANNEL:
+	case WIRE_OPEN_CHANNEL_ELTOO:
 		extract_channel_id(msg, &subd->channel_id);
 		break;
 	case WIRE_OPEN_CHANNEL2:
@@ -1070,6 +1072,7 @@ static void maybe_update_channelid(struct subd *subd, const u8 *msg)
 		update_v2_channelid(subd, msg);
 		break;
 	case WIRE_FUNDING_CREATED:
+	case WIRE_FUNDING_CREATED_ELTOO:
 		update_v1_channelid(subd, msg);
 		break;
 	}

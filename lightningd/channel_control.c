@@ -1649,20 +1649,21 @@ static unsigned channel_msg(struct subd *sd, const u8 *msg, const int *fds)
 		peer_got_channel_ready_eltoo(sd->channel, msg);
 		break;
 	case WIRE_CHANNELD_GOT_UPDATESIG:
-		/* FIXME handle this */
-		break;
-	case WIRE_CHANNELD_INIT_ELTOO:
-	case WIRE_CHANNELD_GOT_UPDATESIG_REPLY:
 	case WIRE_CHANNELD_GOT_ACK:
-	case WIRE_CHANNELD_GOT_ACK_REPLY:
 	case WIRE_CHANNELD_GOT_SHUTDOWN_ELTOO:
 	case WIRE_CHANNELD_SENDING_UPDATESIG:
-	case WIRE_CHANNELD_SENDING_UPDATESIG_REPLY:
 	case WIRE_CHANNELD_RESENDING_UPDATESIG:
-	case WIRE_CHANNELD_RESENDING_UPDATESIG_REPLY:
+		/* FIXME: handle eltoo state updates properly */
+		break;
 	case WIRE_CHANNELD_UPGRADED:
 		handle_channel_upgrade(sd->channel, msg);
 		break;
+	/* These are messages TO channeld, not from it, or replies */
+	case WIRE_CHANNELD_INIT_ELTOO:
+	case WIRE_CHANNELD_GOT_UPDATESIG_REPLY:
+	case WIRE_CHANNELD_GOT_ACK_REPLY:
+	case WIRE_CHANNELD_SENDING_UPDATESIG_REPLY:
+	case WIRE_CHANNELD_RESENDING_UPDATESIG_REPLY:
 	/* And we never get these from channeld. */
 	case WIRE_CHANNELD_INIT:
 	case WIRE_CHANNELD_FUNDING_DEPTH:

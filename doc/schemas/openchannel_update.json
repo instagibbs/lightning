@@ -86,7 +86,8 @@
                 "anchors_zero_fee_htlc_tx/even",
                 "anchors/even",
                 "scid_alias/even",
-                "zeroconf/even"
+                "zeroconf/even",
+                "eltoo/even"
               ],
               "description": [
                 "Name of feature bit."

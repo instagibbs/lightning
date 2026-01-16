@@ -1,3 +1,4 @@
+#include <bitcoin/signature.h>
 msgtype,protocol_batch_element,0
 msgdata,protocol_batch_element,channel_id,channel_id,
 msgdata,protocol_batch_element,element_size,u16,

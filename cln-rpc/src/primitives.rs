@@ -72,6 +72,8 @@ pub enum ChannelTypeName {
     ZEROCONF_EVEN = 4,
     #[serde(rename = "anchors/even")]
     ANCHORS_EVEN = 5,
+    #[serde(rename = "eltoo/even")]
+    ELTOO_EVEN = 6,
 }
 
 #[derive(Copy, Clone, Serialize, Deserialize, Debug)]

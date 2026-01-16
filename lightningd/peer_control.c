@@ -305,7 +305,13 @@ static struct bitcoin_tx *sign_and_send_last(const tal_t *ctx,
 	struct anchor_details *adet;
 	struct bitcoin_tx *tx;
 
-	tx = sign_last_tx(ctx, channel, last_tx, last_sig);
+	/* For eltoo channels, the settle tx is already fully signed with
+	 * the MuSig2 aggregate signature. We just need to clone and broadcast. */
+	if (channel_type_has(channel->type, OPT_ELTOO)) {
+		tx = clone_bitcoin_tx(ctx, last_tx);
+	} else {
+		tx = sign_last_tx(ctx, channel, last_tx, last_sig);
+	}
 	bitcoin_txid(tx, &txid);
 	wallet_transaction_add(ld->wallet, tx->wtx, 0, 0);
 	wallet_extract_owned_outputs(ld->wallet, tx->wtx, false, NULL);
@@ -701,7 +707,12 @@ static struct amount_sat commit_txfee(const struct channel *channel,
 	struct htlc_out_map_iter outi;
 	struct lightningd *ld = channel->peer->ld;
 	size_t num_untrimmed_htlcs = 0;
-	u32 feerate = get_feerate(channel->fee_states,
+	u32 feerate;
+	/* Eltoo channels don't have traditional commitment tx fees:
+	 * they use update transactions that can be RBF'd. */
+	if (channel_type_has(channel->type, OPT_ELTOO))
+		return AMOUNT_SAT(0);
+	feerate = get_feerate(channel->fee_states,
 				  channel->opener, side);
 	struct amount_sat dust_limit;
 	struct amount_sat fee;
@@ -1399,9 +1410,15 @@ static void connect_activate_subd(struct lightningd *ld, struct channel *channel
 		if (!pfd)
 			goto send_error;
 
-		if (peer_start_channeld(channel,
-					pfd,
-					NULL, true)) {
+		if (channel_type_has(channel->type, OPT_ELTOO)) {
+			if (peer_start_eltoo_channeld(channel,
+						      pfd,
+						      NULL, true, false)) {
+				goto tell_connectd;
+			}
+		} else if (peer_start_channeld(channel,
+					       pfd,
+					       NULL, true)) {
 			goto tell_connectd;
 		}
 		close(other_fd);

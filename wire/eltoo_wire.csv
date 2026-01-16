@@ -1,3 +1,4 @@
+#include <bitcoin/signature.h>
 msgtype,open_channel_eltoo,32778
 msgdata,open_channel_eltoo,chain_hash,chain_hash,
 msgdata,open_channel_eltoo,temporary_channel_id,byte,32

@@ -1,3 +1,4 @@
+#include <bitcoin/signature.h>
 msgtype,init,16
 msgdata,init,gflen,u16,
 msgdata,init,globalfeatures,byte,gflen
