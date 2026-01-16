@@ -99,7 +99,8 @@ enum channel_add_err eltoo_channel_add_htlc(struct channel *channel,
 				      u32 cltv_expiry,
 				      const struct sha256 *payment_hash,
 				      const u8 routing[TOTAL_PACKET_SIZE(ROUTING_INFO_SIZE)],
-				      const struct pubkey *blinding TAKES,
+				      const struct pubkey *path_key TAKES,
+				      struct tlv_field *extra_tlvs TAKES,
 				      struct htlc **htlcp,
 				      bool err_immediate_failures);
 

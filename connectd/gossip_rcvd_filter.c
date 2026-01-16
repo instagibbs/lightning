@@ -96,6 +96,19 @@ static bool is_msg_gossip_broadcast(const u8 *cursor)
 	case WIRE_SPLICE:
 	case WIRE_SPLICE_ACK:
 	case WIRE_SPLICE_LOCKED:
+	/* Eltoo wire types */
+	case WIRE_UPDATE_NOOP:
+	case WIRE_YIELD:
+	case WIRE_OPEN_CHANNEL_ELTOO:
+	case WIRE_ACCEPT_CHANNEL_ELTOO:
+	case WIRE_FUNDING_CREATED_ELTOO:
+	case WIRE_FUNDING_SIGNED_ELTOO:
+	case WIRE_FUNDING_LOCKED_ELTOO:
+	case WIRE_SHUTDOWN_ELTOO:
+	case WIRE_CLOSING_SIGNED_ELTOO:
+	case WIRE_UPDATE_SIGNED:
+	case WIRE_UPDATE_SIGNED_ACK:
+	case WIRE_CHANNEL_REESTABLISH_ELTOO:
 		break;
 	}
 	return false;

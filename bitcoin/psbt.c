@@ -619,7 +619,8 @@ const unsigned char *psbt_input_get_scriptpubkey(const struct wally_psbt *psbt,
     if (psbt->inputs[in].witness_utxo) {
         return psbt->inputs[in].witness_utxo->script;
     } else if (psbt->inputs[in].utxo) {
-        return psbt->inputs[in].utxo->outputs[psbt->tx->inputs[in].index].script;
+        /* PSBTv2: index is stored directly in the input, not in psbt->tx */
+        return psbt->inputs[in].utxo->outputs[psbt->inputs[in].index].script;
     } else {
         abort();
     }

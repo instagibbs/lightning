@@ -1585,9 +1585,6 @@ static unsigned channel_msg(struct subd *sd, const u8 *msg, const int *fds)
 	case WIRE_CHANNELD_GOT_CHANNEL_READY:
 		peer_got_channel_ready(sd->channel, msg);
 		break;
-	case WIRE_CHANNELD_GOT_FUNDING_LOCKED_ELTOO:
-		peer_got_funding_locked_eltoo(sd->channel, msg);
-        break;
 	case WIRE_CHANNELD_GOT_ANNOUNCEMENT:
 		peer_got_announcement(sd->channel, msg);
 		break;
@@ -1661,6 +1658,8 @@ static unsigned channel_msg(struct subd *sd, const u8 *msg, const int *fds)
 	case WIRE_CHANNELD_GOT_SHUTDOWN_ELTOO:
 	case WIRE_CHANNELD_SENDING_UPDATESIG:
 	case WIRE_CHANNELD_SENDING_UPDATESIG_REPLY:
+	case WIRE_CHANNELD_RESENDING_UPDATESIG:
+	case WIRE_CHANNELD_RESENDING_UPDATESIG_REPLY:
 	case WIRE_CHANNELD_UPGRADED:
 		handle_channel_upgrade(sd->channel, msg);
 		break;
@@ -1733,7 +1732,8 @@ bool peer_start_eltoo_channeld(struct channel *channel,
 	struct lightningd *ld = channel->peer->ld;
 	const struct config *cfg = &ld->config;
 	bool reached_announce_depth;
-	secp256k1_ecdsa_signature *remote_ann_node_sig, *remote_ann_bitcoin_sig;
+	secp256k1_ecdsa_signature remote_ann_node_sig, remote_ann_bitcoin_sig;
+	bool have_remote_ann_sigs;
 
 	hsmfd = hsm_get_client_fd(ld, &channel->peer->id,
 				  channel->dbid,
@@ -1742,6 +1742,13 @@ bool peer_start_eltoo_channeld(struct channel *channel,
 				  | HSM_PERM_COMMITMENT_POINT
 				  | HSM_PERM_SIGN_REMOTE_TX
 				  | HSM_PERM_SIGN_ONCHAIN_TX);
+	if (hsmfd < 0) {
+		log_broken(channel->log, "Could not get hsm fd: %s",
+			   strerror(errno));
+		force_peer_disconnect(ld, channel->peer,
+				      "Failed to get hsm fd");
+		return false;
+	}
 
 	channel_set_owner(channel,
 			  new_channel_subd(channel, ld,
@@ -1759,8 +1766,8 @@ bool peer_start_eltoo_channeld(struct channel *channel,
 	if (!channel->owner) {
 		log_broken(channel->log, "Could not subdaemon channel: %s",
 			   strerror(errno));
-		channel_fail_reconnect_later(channel,
-					     "Failed to subdaemon channel");
+		force_peer_disconnect(ld, channel->peer,
+				      "Failed to create channeld");
 		return false;
 	}
 
@@ -1769,7 +1776,7 @@ bool peer_start_eltoo_channeld(struct channel *channel,
 	if (channel->scid) {
 		scid = *channel->scid;
 		reached_announce_depth
-			= is_scid_depth_announceable(&scid,
+			= is_scid_depth_announceable(scid,
 						     get_block_height(ld->topology));
 		log_debug(channel->log, "Already have funding locked in%s",
 			  reached_announce_depth
@@ -1784,19 +1791,14 @@ bool peer_start_eltoo_channeld(struct channel *channel,
 	if (ld->config.ignore_fee_limits)
 		log_debug(channel->log, "Ignoring fee limits!");
 
-	if (!wallet_remote_ann_sigs_load(tmpctx, channel->peer->ld->wallet,
-					 channel->dbid,
+	have_remote_ann_sigs = wallet_remote_ann_sigs_load(ld->wallet,
+					 channel,
 					 &remote_ann_node_sig,
-					 &remote_ann_bitcoin_sig)) {
-		channel_internal_error(channel,
-				       "Could not load remote announcement"
-				       " signatures");
-		return false;
-	}
+					 &remote_ann_bitcoin_sig);
 
 	struct ext_key final_ext_key;
 	if (bip32_key_from_parent(
-		    ld->wallet->bip32_base,
+		    ld->bip32_base,
 		    channel->final_key_idx,
 		    BIP32_FLAG_KEY_PUBLIC,
 		    &final_ext_key) != WALLY_OK) {
@@ -1818,6 +1820,15 @@ bool peer_start_eltoo_channeld(struct channel *channel,
 				       &channel->their_last_psig,
 				       &channel->our_last_psig,
 				       &channel->session,
+				       NULL, /* their_committed_psig - TODO */
+				       NULL, /* our_committed_psig - TODO */
+				       NULL, /* committed_session - TODO */
+				       NULL, /* their_next_nonce - TODO */
+				       NULL, /* our_next_nonce - TODO */
+				       NULL, /* complete_update_tx - TODO */
+				       NULL, /* complete_settle_tx - TODO */
+				       NULL, /* committed_update_tx - TODO */
+				       NULL, /* committed_settle_tx - TODO */
 				       &channel->channel_info.remote_fundingkey,
 				       &channel->channel_info.theirbase.payment, /* their_settle_pubkey */
 				       channel->opener,
@@ -1827,25 +1838,23 @@ bool peer_start_eltoo_channeld(struct channel *channel,
 				       channel->htlc_maximum_msat,
 				       channel->our_msat,
 				       &channel->local_funding_pubkey,
-				       &channel->local_basepoints.payment /* our_settle_pubkey */,
-				       &ld->id,
+				       &channel->local_basepoints.payment, /* our_settle_pubkey */
+				       &ld->our_nodeid,
 				       &channel->peer->id,
 				       cfg->commit_time_ms,
 				       cfg->cltv_expiry_delta,
 				       channel->last_sent_commit,
 				       channel->next_index[LOCAL],
-				       0 /* updates_received FIXME is this even necessary? locktime has this */,
+				       0, /* updates_received FIXME is this even necessary? locktime has this */
 				       channel->next_htlc_id,
 				       htlcs,
 				       channel->scid != NULL,
-				       channel->remote_funding_locked,
-				       &scid,
+				       channel->remote_channel_ready,
+				       scid,
 				       reconnected,
 				       /* Anything that indicates we are or have
 					* shut down */
-				       channel->state == CHANNELD_SHUTTING_DOWN
-				       || channel->state == CLOSINGD_SIGEXCHANGE
-				       || channel_closed(channel),
+				       channel_state_closing(channel->state),
 				       channel->shutdown_scriptpubkey[REMOTE] != NULL,
 				       channel->final_key_idx,
 				       &final_ext_key,
@@ -1855,17 +1864,16 @@ bool peer_start_eltoo_channeld(struct channel *channel,
 				       reached_announce_depth,
 				       channel->peer->their_features,
 				       channel->remote_upfront_shutdown_script,
-				       remote_ann_node_sig,
-				       remote_ann_bitcoin_sig,
+				       have_remote_ann_sigs ? &remote_ann_node_sig : NULL,
+				       have_remote_ann_sigs ? &remote_ann_bitcoin_sig : NULL,
 				       channel->type,
-				       IFDEV(ld->dev_fast_gossip, false),
-				       IFDEV(dev_fail_process_onionpacket, false),
-				       IFDEV(ld->dev_disable_commit == -1
+				       ld->dev_fast_gossip,
+				       false, /* dev_fail_process_onionpacket */
+				       ld->dev_disable_commit == -1
 					     ? NULL
 					     : (u32 *)&ld->dev_disable_commit,
-					     NULL),
 				       reestablish_only,
-				       channel->channel_update);
+				       NULL); /* channel_update */
 
 	/* We don't expect a response: we are triggered by funding_depth_cb. */
 	subd_send_msg(channel->owner, take(initmsg));

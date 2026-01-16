@@ -1,5 +1,6 @@
 #include "config.h"
 #include <ccan/ccan/tal/str/str.h>
+#include <common/amount.h>
 #include <common/channel_config.h>
 #include <common/initial_commit_tx.h>
 #include <common/shutdown_scriptpubkey.h>
@@ -45,12 +46,9 @@ bool check_eltoo_config_bounds(const tal_t *ctx,
 		*err_reason = tal_fmt(ctx, "htlc_minimum_msat %s"
 				      " too large for funding %s"
 				      " capacity_msat %s",
-				      type_to_string(ctx, struct amount_msat,
-						     &remoteconf->htlc_minimum),
-				      type_to_string(ctx, struct amount_sat,
-						     &funding),
-				      type_to_string(ctx, struct amount_sat,
-						     &capacity));
+				      fmt_amount_msat(ctx, remoteconf->htlc_minimum),
+				      fmt_amount_sat(ctx, funding),
+				      fmt_amount_sat(ctx, capacity));
 		return false;
 	}
 
@@ -58,21 +56,14 @@ bool check_eltoo_config_bounds(const tal_t *ctx,
 	 * set by lightningd, don't bother opening it. */
 	if (amount_msat_greater_sat(min_effective_htlc_capacity,
 				    capacity)) {
-		struct amount_sat min_effective_htlc_capacity_sat =
-			amount_msat_to_sat_round_down(min_effective_htlc_capacity);
-
 		*err_reason = tal_fmt(ctx,
 				      "channel capacity with funding %s,"
 				      " max_htlc_value_in_flight_msat is %s,"
 				      " channel capacity is %s, which is below %s",
-				      type_to_string(ctx, struct amount_sat,
-						     &funding),
-				      type_to_string(ctx, struct amount_msat,
-						     &remoteconf->max_htlc_value_in_flight),
-				      type_to_string(ctx, struct amount_sat,
-						     &capacity),
-				      type_to_string(ctx, struct amount_sat,
-						     &min_effective_htlc_capacity_sat));
+				      fmt_amount_sat(ctx, funding),
+				      fmt_amount_msat(ctx, remoteconf->max_htlc_value_in_flight),
+				      fmt_amount_sat(ctx, capacity),
+				      fmt_amount_msat(ctx, min_effective_htlc_capacity));
 		return false;
 	}
 

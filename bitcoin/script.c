@@ -1112,7 +1112,7 @@ void compute_taptree_merkle_root(struct sha256 *hash_out, u8 **scripts, size_t n
         p += script_len;
 
         /* k0 == km, this is the merkle root so we directly write it out */
-        ok = wally_tagged_hash(tag_hash_buf, p - tag_hash_buf, "TapLeaf", hash_out->u.u8);
+        ok = wally_bip340_tagged_hash(tag_hash_buf, p - tag_hash_buf, "TapLeaf", hash_out->u.u8, 32);
         assert(ok == WALLY_OK);
     } else if (num_scripts == 2) {
 		/* First script */
@@ -1125,7 +1125,7 @@ void compute_taptree_merkle_root(struct sha256 *hash_out, u8 **scripts, size_t n
 		memcpy(p, scripts[0], script_len);
 		p += script_len;
 
-		ok = wally_tagged_hash(tag_hash_buf, p - tag_hash_buf, "TapLeaf", tap_hashes);
+		ok = wally_bip340_tagged_hash(tag_hash_buf, p - tag_hash_buf, "TapLeaf", tap_hashes, 32);
 		assert(ok == WALLY_OK);
 
 		/* Second script */
@@ -1138,7 +1138,7 @@ void compute_taptree_merkle_root(struct sha256 *hash_out, u8 **scripts, size_t n
 		memcpy(p, scripts[1], script_len);
 		p += script_len;
 
-		ok = wally_tagged_hash(tag_hash_buf, p - tag_hash_buf, "TapLeaf", tap_hashes + 32);
+		ok = wally_bip340_tagged_hash(tag_hash_buf, p - tag_hash_buf, "TapLeaf", tap_hashes + 32, 32);
 		assert(ok == WALLY_OK);
 
         /* If kj ≥ ej: kj+1 = hashTapBranch(ej || kj), swap them*/
@@ -1147,7 +1147,7 @@ void compute_taptree_merkle_root(struct sha256 *hash_out, u8 **scripts, size_t n
             memcpy(tap_hashes, tap_hashes + 32, 32);
             memcpy(tap_hashes + 32, tag_hash_buf, 32);
         }
-        ok = wally_tagged_hash(tap_hashes, sizeof(tap_hashes), "TapBranch", hash_out->u.u8);
+        ok = wally_bip340_tagged_hash(tap_hashes, sizeof(tap_hashes), "TapBranch", hash_out->u.u8, 32);
         assert(ok == WALLY_OK);
     }
 }
@@ -1171,7 +1171,7 @@ void compute_taptree_merkle_root_with_hint(struct sha256 *update_merkle_root, co
     memcpy(p, update_tapscript, script_len);
     p += script_len;
 
-    ok = wally_tagged_hash(tag_hash_buf, p - tag_hash_buf, "TapLeaf", tap_hashes);
+    ok = wally_bip340_tagged_hash(tag_hash_buf, p - tag_hash_buf, "TapLeaf", tap_hashes, 32);
     assert(ok == WALLY_OK);
 
     /* Put invalidated hint in place as a tapleaf hash directly */
@@ -1183,7 +1183,7 @@ void compute_taptree_merkle_root_with_hint(struct sha256 *update_merkle_root, co
         memcpy(tap_hashes, tap_hashes + 32, 32);
         memcpy(tap_hashes + 32, tag_hash_buf, 32);
     }
-    ok = wally_tagged_hash(tap_hashes, sizeof(tap_hashes), "TapBranch", update_merkle_root->u.u8);
+    ok = wally_bip340_tagged_hash(tap_hashes, sizeof(tap_hashes), "TapBranch", update_merkle_root->u.u8, 32);
     assert(ok == WALLY_OK);
 }
 
@@ -1234,7 +1234,7 @@ u8 *compute_control_block(const tal_t *ctx, const u8 *other_script, const u8 *an
         memcpy(p, other_script, script_len);
         p += script_len;
 
-        ok = wally_tagged_hash(tag_hash_buf, p - tag_hash_buf, "TapLeaf", control_block_cursor);
+        ok = wally_bip340_tagged_hash(tag_hash_buf, p - tag_hash_buf, "TapLeaf", control_block_cursor, 32);
         assert(ok == WALLY_OK);
         control_block_cursor += 32;
     } else if (annex_hint) {
@@ -1334,7 +1334,7 @@ u8 *make_eltoo_funding_update_script(const tal_t *ctx)
     return script;
 }
 
-u8 *make_eltoo_htlc_success_script(const tal_t *ctx, const struct pubkey *settlement_pubkey, const u8 *invoice_hash)
+u8 *make_eltoo_htlc_success_script(const tal_t *ctx, const struct pubkey *settlement_pubkey, const struct ripemd160 *invoice_hash)
 {
     /* where EXPR_SUCCESS =
      *
@@ -1348,7 +1348,7 @@ u8 *make_eltoo_htlc_success_script(const tal_t *ctx, const struct pubkey *settle
 	add_number(&script, 32);
 	add_op(&script, OP_EQUALVERIFY);
 	add_op(&script, OP_HASH160);
-    script_push_bytes(&script, invoice_hash, 20);
+    script_push_bytes(&script, invoice_hash->u.u8, sizeof(*invoice_hash));
 	add_op(&script, OP_EQUALVERIFY);
 	add_number(&script, 1);
 	add_op(&script, OP_CHECKSEQUENCEVERIFY);

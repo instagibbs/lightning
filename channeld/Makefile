@@ -36,6 +36,7 @@ ELTOO_CHANNELD_HEADERS :=			\
 ELTOO_CHANNELD_SRC := channeld/eltoo_channeld.c	\
 	channeld/eltoo_full_channel.c			\
 	channeld/channeld_wiregen.c		\
+	channeld/inflight.c			\
     channeld/settle_tx.c            \
 	channeld/watchtower.c
 
@@ -60,6 +61,6 @@ channeld/full_channel_error_names_gen.h: channeld/full_channel_error.h ccan/ccan
 
 lightningd/lightning_channeld: $(CHANNELD_OBJS) $(HSMD_CLIENT_OBJS) libcommon.a
 
-lightningd/lightning_eltoo_channeld: $(ELTOO_CHANNELD_OBJS) $(WIRE_ONION_OBJS) $(CHANNELD_COMMON_OBJS) $(WIRE_OBJS) $(BITCOIN_OBJS) $(HSMD_CLIENT_OBJS)
+lightningd/lightning_eltoo_channeld: $(ELTOO_CHANNELD_OBJS) $(HSMD_CLIENT_OBJS) libcommon.a
 
 include channeld/test/Makefile

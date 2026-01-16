@@ -82,4 +82,8 @@ void fromwire_point32(const u8 **cursor, size_t *max, struct point32 *pubkey);
 void towire_nonce(u8 **pptr, const struct nonce *nonce);
 void fromwire_nonce(const u8 **cursor, size_t *max, struct nonce *nonce);
 
+/* Formatting functions */
+char *fmt_point32(const tal_t *ctx, const struct point32 *point32);
+char *fmt_nonce(const tal_t *ctx, const struct nonce *nonce);
+
 #endif /* LIGHTNING_BITCOIN_PUBKEY_H */

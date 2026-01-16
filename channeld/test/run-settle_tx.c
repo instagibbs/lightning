@@ -1,12 +1,16 @@
 #include "config.h"
 #include <inttypes.h>
 #include <stdio.h>
-#include <common/type_to_string.h>
+#include <stdbool.h>
+#include <common/bigsize.h>
+#include <common/wireaddr.h>
+#include <common/node_id.h>
 static bool print_superverbose;
 #define SUPERVERBOSE(...)					\
 	do { if (print_superverbose) printf(__VA_ARGS__); } while(0)
 #define PRINT_ACTUAL_FEE
 #include "../settle_tx.c"
+#include <bitcoin/privkey.h>
 #include <bitcoin/tx.h>
 #include <bitcoin/preimage.h>
 #include <bitcoin/psbt.h>
@@ -19,6 +23,9 @@ static bool print_superverbose;
 #include <common/setup.h>
 #include <common/status.h>
 #include <common/update_tx.h>
+
+/* Global pubkeys used in musig_sign */
+static struct pubkey alice_pubkey, bob_pubkey;
 
 /* Turn this on to brute-force fee values */
 /*#define DEBUG */
@@ -59,14 +66,6 @@ void towire_wireaddr(u8 **pptr UNNEEDED, const struct wireaddr *addr UNNEEDED)
 
 /* Updated for TRUC (version 3) and P2A anchor output (OP_1 <0x4e73>) */
 char regression_tx_hex[] = "03000000000101ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00000000002a0000000300000000000000000451024e731027000000000000225120466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f271ce80000000000002251204f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa02654160eaf28143d0a21c26c4d966c441f7b0b9aa7ce4552b53cbcff22df50a8c196f3ff3c53d0db77cfbba95e5cfd91b28b4197c3133c465df985015b0a6728fb283c1210179be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac41c1442b558d2430be010fc3aa405a78b81d3c254145fc96dc28f9347e4748cc70a4b4d868d7231ff3d15775dbd01acf0051b86eccd1f1139772222152b32986c4df0065cd1d";
-
-static char *fmt_bitcoin_tx(const tal_t *ctx, const struct bitcoin_tx *tx)
-{
-    u8 *lin = linearize_tx(ctx, tx);
-    char *s = tal_hex(ctx, lin);
-    tal_free(lin);
-    return s;
-}
 
 /* bitcoind loves its backwards txids! */
 static struct bitcoin_txid txid_from_hex(const char *hex)
@@ -117,6 +116,7 @@ static struct bip340sig musig_sign(struct bitcoin_tx *update_tx, u8 *annex, stru
         bipmusig_gen_nonce(&secnonce[i],
                &pubnonces[i],
                (i == 0) ? alice_privkey : bob_privkey,
+               (i == 0) ? &alice_pubkey : &bob_pubkey,
                &keyagg_cache[i],
                /* msg32 */ NULL);
         pubnonce_ptrs[i] = &pubnonces[i];
@@ -359,7 +359,7 @@ static int test_settlement_tx(void)
 
     tx_hex = fmt_bitcoin_tx(tmpctx, tx);
     printf("Settlement tx: %s\n", tx_hex);
-    psbt_b64 = psbt_to_b64(tmpctx, tx->psbt);
+    psbt_b64 = fmt_wally_psbt(tmpctx, tx->psbt);
     printf("Settlement psbt: %s\n", psbt_b64);
 
     assert(tx->wtx->locktime == obscured_update_number + 500000000);
@@ -556,7 +556,7 @@ static int test_invalid_update_tx(void)
                      obscured_update_number,
                      /* direct_outputs FIXME Cannot figure out how this is used. */ NULL);
 
-    psbt_b64 = psbt_to_b64(tmpctx, tx->psbt);
+    psbt_b64 = fmt_wally_psbt(tmpctx, tx->psbt);
     printf("Settlement psbt 0: %s\n", psbt_b64);
 
     /* Regression test vector for now */
@@ -589,7 +589,7 @@ static int test_invalid_update_tx(void)
                     &inner_pubkey,
                     &sig);
 
-    psbt_b64 = psbt_to_b64(tmpctx, update_tx->psbt);
+    psbt_b64 = fmt_wally_psbt(tmpctx, update_tx->psbt);
     printf("Update transaction 0: %s\n", psbt_b64);
 
     /* Go to second update, Bob gets paid */
@@ -612,7 +612,7 @@ static int test_invalid_update_tx(void)
 
     assert(settle_tx_1);
 
-    psbt_b64 = psbt_to_b64(tmpctx, settle_tx_1->psbt);
+    psbt_b64 = fmt_wally_psbt(tmpctx, settle_tx_1->psbt);
     printf("Settlement psbt 1: %s\n", psbt_b64);
 
     /* Will be bound to funding output */
@@ -633,7 +633,7 @@ static int test_invalid_update_tx(void)
                     &inner_pubkey,
                     &sig);
 
-    psbt_b64 = psbt_to_b64(tmpctx, update_tx_1_A->psbt);
+    psbt_b64 = fmt_wally_psbt(tmpctx, update_tx_1_A->psbt);
     printf("Update transaction 1A(funding output): %s\n", psbt_b64);
 
     /* Re-bind same transaction and signature to non-funding output? */
@@ -646,7 +646,7 @@ static int test_invalid_update_tx(void)
                     &inner_pubkey,
                     &sig);
 
-    psbt_b64 = psbt_to_b64(tmpctx, update_tx_1_A->psbt);
+    psbt_b64 = fmt_wally_psbt(tmpctx, update_tx_1_A->psbt);
     printf("Update transaction 1B(update output): %s\n", psbt_b64);
 
 	return 0;
@@ -722,7 +722,7 @@ static int test_initial_settlement_tx(void)
                      obscured_update_number,
                      /* direct_outputs FIXME Cannot figure out how this is used. */ NULL);
 
-    psbt_b64 = psbt_to_b64(tmpctx, tx->psbt);
+    psbt_b64 = fmt_wally_psbt(tmpctx, tx->psbt);
     printf("Initial Settlement psbt: %s\n", psbt_b64);
 
     /* Regression test vector for now */
@@ -743,7 +743,7 @@ static int test_initial_settlement_tx(void)
                      update_output_sats,
                      &inner_pubkey);
 
-    psbt_b64 = psbt_to_b64(tmpctx, update_tx->psbt);
+    psbt_b64 = fmt_wally_psbt(tmpctx, update_tx->psbt);
     printf("Unbound update psbt: %s\n", psbt_b64);
 
     /* Signing happens next */
@@ -760,7 +760,7 @@ static int test_initial_settlement_tx(void)
                     &inner_pubkey,
                     &sig);
 
-    psbt_b64 = psbt_to_b64(tmpctx, update_tx->psbt);
+    psbt_b64 = fmt_wally_psbt(tmpctx, update_tx->psbt);
     printf("Initial update psbt with finalized witness for input: %s\n", psbt_b64);
 
 	return 0;
@@ -873,12 +873,10 @@ static int test_htlc_output(void)
 
 
 	printf("Alice key: %s\n",
-		type_to_string(NULL, struct pubkey,
-                    &alice_pubkey));
+		fmt_pubkey(NULL, &alice_pubkey));
 
 	printf("Bob key: %s\n",
-		type_to_string(NULL, struct pubkey,
-                    &bob_pubkey));
+		fmt_pubkey(NULL, &bob_pubkey));
 
 
 	hex_decode(success_hex, sizeof(success_hex), success_bytes, sizeof(success_bytes));
@@ -903,20 +901,16 @@ static int test_htlc_output(void)
 	bipmusig_inner_pubkey(&inner_pubkey2, &keyagg_cache2, pubkey_ptrs, 2);
 
 	printf("Inner key: %s\n",
-		type_to_string(NULL, struct pubkey,
-                    &inner_pubkey));
+		fmt_pubkey(NULL, &inner_pubkey));
 
 	printf("Inner key 2: %s\n",
-		type_to_string(NULL, struct pubkey,
-                    &inner_pubkey2));
+		fmt_pubkey(NULL, &inner_pubkey2));
 
 	printf("Final key: %s\n",
-		type_to_string(NULL, struct pubkey,
-                    &agg_pubkey));
+		fmt_pubkey(NULL, &agg_pubkey));
 
 	printf("Scriptwiz' key: %s\n",
-		type_to_string(NULL, struct pubkey,
-                    &wiz_tweaked_key));
+		fmt_pubkey(NULL, &wiz_tweaked_key));
 
 
 	return 0;

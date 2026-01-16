@@ -3,6 +3,9 @@
 #include <stdio.h>
 #include <stdbool.h>
 
+/* From bitcoin/signature.c */
+extern bool dev_no_signature_grind;
+
 static bool print_superverbose;
 #define SUPERVERBOSE(...)					\
 	do { if (print_superverbose) printf(__VA_ARGS__); } while(0)

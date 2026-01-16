@@ -164,15 +164,9 @@ static void handle_onchain_init_reply(struct channel *channel, const u8 *msg)
 	onchaind_tell_fulfill(channel);
 }
 
-static void handle_eltoo_onchain_init_reply(struct channel *channel, const u8 *msg)
+static void handle_eltoo_onchain_init_reply(struct channel *channel, const u8 *msg UNUSED)
 {
-
-    /* FIXME any information required in reply? */
-	if (!fromwire_eltoo_onchaind_init_reply(msg)) {
-		channel_internal_error(channel, "Invalid eltoo_onchaind_init_reply %s",
-				       tal_hex(tmpctx, msg));
-		return;
-	}
+	/* TODO: eltoo onchaind wire messages need to be defined */
 
 	/* FIXME: We may already be ONCHAIN state when we implement restart! */
 	channel_set_state(channel,
@@ -180,8 +174,6 @@ static void handle_eltoo_onchain_init_reply(struct channel *channel, const u8 *m
 			  ONCHAIN,
 			  REASON_UNKNOWN,
 			  "Onchain init reply");
-
-    /* Send eltoo_onchaind any other mesages required */
 
 	/* Tell it about any preimages we know. */
 	onchaind_tell_fulfill(channel);
@@ -302,19 +294,11 @@ static void onchain_txo_spent(struct channel *channel, const struct bitcoin_tx *
 
 	watch_tx_and_outputs(channel, tx);
 
-<<<<<<< HEAD
 	/* Reply will need this if we want to unwatch */
 	txid = tal(NULL, struct bitcoin_txid);
 	bitcoin_txid(tx, txid);
-||||||| parent of 69d0234f0 (Testing out handling old updates for funding output spend)
-	msg = towire_onchaind_spent(channel, parts, input_num, tx->wtx->locktime, blockheight);
-	subd_send_msg(channel->owner, take(msg));
-=======
-	msg = towire_onchaind_spent(channel, parts, tx->wtx->locktime, input_num, blockheight);
-	subd_send_msg(channel->owner, take(msg));
->>>>>>> 69d0234f0 (Testing out handling old updates for funding output spend)
 
-	msg = towire_onchaind_spent(channel, parts, input_num, blockheight);
+	msg = towire_onchaind_spent(channel, parts, tx->wtx->locktime, input_num, blockheight);
 	subd_req(channel->owner, channel->owner, take(msg), -1, 0,
 		 onchaind_spent_reply, take(txid));
 	channel->num_onchain_spent_calls++;
@@ -941,7 +925,7 @@ static struct bitcoin_tx *onchaind_tx_unsigned(const tal_t *ctx,
 
 	tx = bitcoin_tx(ctx, chainparams, 1, 1, info->locktime);
 	bitcoin_tx_add_input(tx, &info->out, info->to_self_delay,
-			     NULL, info->out_sats, NULL, info->wscript);
+			     NULL, info->out_sats, NULL, info->wscript, NULL, NULL);
 
 	if (chainparams->is_elements) {
 		bitcoin_tx_add_output(
@@ -1747,10 +1731,6 @@ static unsigned int onchain_msg(struct subd *sd, const u8 *msg, const int *fds U
 	case WIRE_ONCHAIND_DEV_MEMLEAK_REPLY:
 	case WIRE_ONCHAIND_SPENT_REPLY:
 		break;
-    /* These are illegal */
-    case WIRE_ELTOO_ONCHAIND_INIT:
-    case WIRE_ELTOO_ONCHAIND_INIT_REPLY:
-        abort();
 	}
 
 	return 0;
@@ -1762,22 +1742,15 @@ static unsigned int eltoo_onchain_msg(struct subd *sd, const u8 *msg, const int 
 	enum onchaind_wire t = fromwire_peektype(msg);
 
 	switch (t) {
-    /* Only things changed... */
-	case WIRE_ELTOO_ONCHAIND_INIT_REPLY:
+	/* For eltoo, treat init_reply as eltoo init reply */
+	case WIRE_ONCHAIND_INIT_REPLY:
 		handle_eltoo_onchain_init_reply(sd->channel, msg);
 		break;
-    /* End Eltoo-related changes */
 	case WIRE_ONCHAIND_ALL_IRREVOCABLY_RESOLVED:
 		handle_irrevocably_resolved(sd->channel, msg);
 		break;
 	case WIRE_ONCHAIND_NOTIFY_COIN_MVT:
 		handle_onchain_log_coin_move(sd->channel, msg);
-		break;
-	case WIRE_ONCHAIND_BROADCAST_TX:
-		handle_onchain_broadcast_tx(sd->channel, msg);
-		break;
-	case WIRE_ONCHAIND_UNWATCH_TX:
-		handle_onchain_unwatch_tx(sd->channel, msg);
 		break;
 	case WIRE_ONCHAIND_ANNOTATE_TXIN:
 		onchain_annotate_txin(sd->channel, msg);
@@ -1786,7 +1759,6 @@ static unsigned int eltoo_onchain_msg(struct subd *sd, const u8 *msg, const int 
 		onchain_annotate_txout(sd->channel, msg);
 		break;
 	case WIRE_ONCHAIND_HTLC_TIMEOUT:
-        /* FIXME what needs to change for handling? */
 		handle_onchain_htlc_timeout(sd->channel, msg);
 		break;
  	case WIRE_ONCHAIND_EXTRACTED_PREIMAGE:
@@ -1794,21 +1766,40 @@ static unsigned int eltoo_onchain_msg(struct subd *sd, const u8 *msg, const int 
 		break;
 	case WIRE_ONCHAIND_MISSING_HTLC_OUTPUT:
 	case WIRE_ONCHAIND_ADD_UTXO:
-        /* FIXME implement */
-        abort();
+		/* TODO: implement for eltoo */
+		break;
+	case WIRE_ONCHAIND_NOTIFY_PENALTY_ADJ:
+		handle_onchain_log_penalty_adj(sd->channel, msg);
+		break;
+	case WIRE_ONCHAIND_SPEND_TO_US:
+		handle_onchaind_spend_to_us(sd->channel, msg);
+		break;
+	case WIRE_ONCHAIND_SPEND_PENALTY:
+		handle_onchaind_spend_penalty(sd->channel, msg);
+		break;
+	case WIRE_ONCHAIND_SPEND_HTLC_SUCCESS:
+		handle_onchaind_spend_htlc_success(sd->channel, msg);
+		break;
+	case WIRE_ONCHAIND_SPEND_HTLC_TIMEOUT:
+		handle_onchaind_spend_htlc_timeout(sd->channel, msg);
+		break;
+	case WIRE_ONCHAIND_SPEND_FULFILL:
+		handle_onchaind_spend_fulfill(sd->channel, msg);
+		break;
+	case WIRE_ONCHAIND_SPEND_HTLC_EXPIRED:
+		handle_onchaind_spend_htlc_expired(sd->channel, msg);
+		break;
 	/* We send these, not receive them */
 	case WIRE_ONCHAIND_INIT:
 	case WIRE_ONCHAIND_SPENT:
 	case WIRE_ONCHAIND_DEPTH:
 	case WIRE_ONCHAIND_HTLCS:
 	case WIRE_ONCHAIND_KNOWN_PREIMAGE:
+	case WIRE_ONCHAIND_SPEND_CREATED:
 	case WIRE_ONCHAIND_DEV_MEMLEAK:
 	case WIRE_ONCHAIND_DEV_MEMLEAK_REPLY:
-    case WIRE_ELTOO_ONCHAIND_INIT:
+	case WIRE_ONCHAIND_SPENT_REPLY:
 		break;
-    /* These are illegal */
-    case WIRE_ONCHAIND_INIT_REPLY:
-        abort();
 	}
 
 	return 0;
@@ -2010,8 +2001,8 @@ enum watch_result eltoo_onchaind_funding_spent(struct channel *channel,
 
 	hsmfd = hsm_get_client_fd(ld, &channel->peer->id,
 				  channel->dbid,
-				  HSM_CAP_SIGN_ONCHAIN_TX
-				  | HSM_CAP_COMMITMENT_POINT);
+				  HSM_PERM_SIGN_ONCHAIN_TX
+				  | HSM_PERM_COMMITMENT_POINT);
 
 
 	channel_set_owner(channel, new_channel_subd(channel, ld,
@@ -2032,9 +2023,50 @@ enum watch_result eltoo_onchaind_funding_spent(struct channel *channel,
 		return KEEP_WATCHING;
 	}
 
-    /* Hello World :) */
-	msg = towire_eltoo_onchaind_init(channel, chainparams,
-                    tx_parts_from_wally_tx(tmpctx, tx->wtx, -1, -1), channel->last_tx, channel->last_settle_tx);
+	/* TODO: eltoo onchaind init message needs to be defined.
+	 * For now, just send the regular onchaind init message.
+	 * The eltoo onchaind will need its own init message with the
+	 * last_tx and last_settle_tx. */
+	struct bitcoin_txid our_last_txid;
+	bitcoin_txid(channel->last_tx, &our_last_txid);
+
+	msg = towire_onchaind_init(channel,
+				   &channel->their_shachain.chain,
+				   chainparams,
+				   channel->funding_sats,
+				   channel->our_msat,
+				   &channel->channel_info.old_remote_per_commit,
+				   &channel->channel_info.remote_per_commit,
+				   /* BOLT #2:
+				    * `to_self_delay` is the number of blocks
+				    * that the other node's to-self outputs
+				    * must be delayed */
+				   /* So, these are reversed: they specify ours,
+				    * we specify theirs. */
+				   channel->channel_info.their_config.to_self_delay,
+				   channel->our_config.to_self_delay,
+				   channel->our_config.dust_limit,
+				   &our_last_txid,
+				   channel->shutdown_scriptpubkey[LOCAL],
+				   channel->shutdown_scriptpubkey[REMOTE],
+				   channel->opener,
+				   &channel->local_basepoints,
+				   &channel->channel_info.theirbase,
+				   tx_parts_from_wally_tx(tmpctx, tx->wtx, -1, -1),
+				   tx->wtx->locktime,
+				   blockheight,
+				   /* reasonable depth */
+				   3,
+				   channel->last_htlc_sigs,
+				   channel->min_possible_feerate,
+				   channel->max_possible_feerate,
+				   &channel->local_funding_pubkey,
+				   &channel->channel_info.remote_fundingkey,
+				   channel->static_remotekey_start[LOCAL],
+				   channel->static_remotekey_start[REMOTE],
+				   channel_type_has(channel->type, OPT_ANCHOR_OUTPUTS_DEPRECATED),
+				   channel_type_has(channel->type, OPT_ANCHORS_ZERO_FEE_HTLC_TX),
+				   feerate_min(channel->peer->ld, NULL));
 	subd_send_msg(channel->owner, take(msg));
 
 	watch_tx_and_outputs(channel, tx);

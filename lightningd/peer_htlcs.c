@@ -2146,8 +2146,14 @@ static bool peer_save_updatesig_received(struct channel *channel, u64 update_num
 
 	channel->next_index[LOCAL]++;
 
-	/* Update transactions before saving to db */
-	channel_set_last_eltoo_txs(channel, update_tx, settle_tx, their_psig, our_psig, session, TX_CHANNEL_UNILATERAL);
+	/* TODO: channel_set_last_eltoo_txs needs to be implemented
+	 * to store eltoo state properly */
+	/* channel_set_last_eltoo_txs(channel, update_tx, settle_tx, their_psig, our_psig, session, TX_CHANNEL_UNILATERAL); */
+	(void)update_tx;
+	(void)settle_tx;
+	(void)their_psig;
+	(void)our_psig;
+	(void)session;
 
 	return true;
 }
@@ -2263,11 +2269,11 @@ void peer_got_ack(struct channel *channel, const u8 *msg)
 		struct htlc_in *hin;
 
 		if (badonions[i]) {
-			hin = find_htlc_in(&ld->htlcs_in, channel,
+			hin = find_htlc_in(ld->htlcs_in, channel,
 					   changed[i].id);
 			local_fail_in_htlc_badonion(hin, badonions[i]);
 		} else if (failmsgs[i]) {
-			hin = find_htlc_in(&ld->htlcs_in, channel,
+			hin = find_htlc_in(ld->htlcs_in, channel,
 					   changed[i].id);
 			local_fail_in_htlc(hin, failmsgs[i]);
 		} else
@@ -2566,9 +2572,9 @@ static void retry_deferred_commitsig(struct chain_topology *topo,
 void peer_got_updatesig(struct channel *channel, const u8 *msg)
 {
 	u32 update_num;
-    struct partial_sig our_psig, their_psig;
-    struct musig_session session;
-	struct added_htlc *added;
+	struct partial_sig our_psig, their_psig;
+	struct musig_session session;
+	struct added_htlc **added;
 	struct fulfilled_htlc *fulfilled;
 	struct failed_htlc **failed;
 	struct changed_htlc *changed;
@@ -2623,7 +2629,7 @@ void peer_got_updatesig(struct channel *channel, const u8 *msg)
 
 	/* New HTLCs */
 	for (i = 0; i < tal_count(added); i++) {
-		if (!channel_added_their_htlc(channel, &added[i]))
+		if (!channel_added_their_htlc(channel, added[i]))
 			return;
 	}
 

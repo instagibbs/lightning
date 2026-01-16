@@ -370,89 +370,20 @@ failed:
 	tal_free(fc->uc);
 }
 
+/* TODO: eltoo opening requires eltoo-specific wire messages.
+ * When implemented, uncomment this function. */
+#if 0
 static void opening_eltoo_funder_finished(struct subd *openingd, const u8 *resp,
-				    const int *fds,
+				    const int *fds UNUSED,
 				    struct funding_channel *fc)
 {
-	struct channel_info channel_info;
-	struct channel_id cid;
-	struct bitcoin_outpoint funding;
-	struct bip340sig first_update_sig;
-	struct bitcoin_tx *update_tx;
-	struct channel *channel;
-	struct lightningd *ld = openingd->ld;
-	u8 *remote_upfront_shutdown_script;
-	struct peer_fd *peer_fd;
-	struct channel_type *type;
-
-	/* This is a new channel_info.their_config so set its ID to 0 */
-	channel_info.their_config.id = 0;
-
-	if (!fromwire_openingd_eltoo_funder_reply(resp, resp,
-					   &channel_info.their_config,
-					   &update_tx,
-					   &first_update_sig,
-					   &fc->uc->minimum_depth,
-					   &channel_info.remote_fundingkey,
-					   &channel_info.theirbase.payment,
-					   &funding,
-					   &remote_upfront_shutdown_script,
-					   &type)) {
-		log_broken(fc->uc->log,
-			   "bad OPENING_ELTOO_FUNDER_REPLY %s",
-			   tal_hex(resp, resp));
-		was_pending(command_fail(fc->cmd, LIGHTNINGD,
-					 "bad OPENING_ELTOO_FUNDER_REPLY %s",
-					 tal_hex(fc->cmd, resp)));
-		goto cleanup;
-	}
-	update_tx->chainparams = chainparams;
-
-    /* We make sure other basepoints are valid
-     * even if unused...
-     * FIXME wallet db gets upset if I don't do this due to statement construction...  */
-    memcpy(&channel_info.theirbase.revocation, &channel_info.theirbase.payment, sizeof(channel_info.theirbase.payment));
-    memcpy(&channel_info.theirbase.htlc, &channel_info.theirbase.payment, sizeof(channel_info.theirbase.payment));
-    memcpy(&channel_info.theirbase.delayed_payment, &channel_info.theirbase.payment, sizeof(channel_info.theirbase.payment));
-    memcpy(&channel_info.remote_per_commit, &channel_info.theirbase.payment, sizeof(channel_info.theirbase.payment));
-    memcpy(&channel_info.old_remote_per_commit, &channel_info.theirbase.payment, sizeof(channel_info.theirbase.payment));
-
-	peer_fd = new_peer_fd_arr(resp, fds);
-
-	/* Saved with channel to disk */
-	derive_channel_id(&cid, &funding);
-
-	/* Steals fields from uc */
-	channel = wallet_commit_channel(ld, fc->uc,
-					&cid,
-					update_tx,
-					NULL /* remote_commit_sig */,
-					&funding,
-					fc->funding_sats,
-					fc->push,
-					fc->channel_flags,
-					&channel_info,
-					0 /* feerate */,
-					fc->our_upfront_shutdown_script,
-					remote_upfront_shutdown_script,
-					type,
-					&first_update_sig);
-	if (!channel) {
-		was_pending(command_fail(fc->cmd, LIGHTNINGD,
-					 "Key generation failure"));
-		goto cleanup;
-	}
-
-	/* Watch for funding confirms */
-	channel_watch_funding(ld, channel);
-
-	funding_success(channel);
-	peer_start_eltoo_channeld(channel, peer_fd, NULL, false /* reconnected */, false /* reestablish_only */);
-
-cleanup:
-	/* Frees fc too */
+	log_broken(fc->uc->log,
+		   "eltoo opening not yet fully implemented");
+	was_pending(command_fail(fc->cmd, LIGHTNINGD,
+				 "eltoo opening not yet fully implemented"));
 	tal_free(fc->uc);
 }
+#endif
 
 static void opening_funder_finished(struct subd *openingd, const u8 *resp,
 				    const int *fds,
@@ -560,109 +491,20 @@ cleanup:
 	tal_free(fc->uc);
 }
 
-static void opening_eltoo_fundee_finished(struct subd *openingd,
-				    const u8 *reply,
-				    const int *fds,
+/* TODO: eltoo opening requires eltoo-specific wire messages.
+ * When implemented, uncomment this function. */
+#if 0
+static void opening_eltoo_fundee_finished(struct subd *openingd UNUSED,
+				    const u8 *reply UNUSED,
+				    const int *fds UNUSED,
 				    struct uncommitted_channel *uc)
 {
-	const u8 *fwd_msg;
-	struct channel_info channel_info;
-	struct bip340sig first_update_sig;
-	struct bitcoin_tx *settle_tx;
-	struct channel_id cid;
-	struct lightningd *ld = openingd->ld;
-	struct bitcoin_outpoint funding;
-	struct amount_sat funding_sats;
-	struct amount_msat push;
-	u8 channel_flags;
-	struct channel *channel;
-	u8 *remote_upfront_shutdown_script, *local_upfront_shutdown_script;
-	struct peer_fd *peer_fd;
-	struct channel_type *type;
-
-	log_debug(uc->log, "Got opening_eltoo_fundee_finish_response");
-
-	/* This is a new channel_info.their_config, set its ID to 0 */
-	channel_info.their_config.id = 0;
-
-	peer_fd = new_peer_fd_arr(tmpctx, fds);
-
-    /* FIXME is this really the right fields to send? */
-    if (!fromwire_openingd_eltoo_fundee(tmpctx, reply,
-				     &channel_info.their_config,
-				     &settle_tx,
-				     &first_update_sig,
-				     &channel_info.remote_fundingkey,
-				     &channel_info.theirbase.payment,
-				     &funding,
-				     &funding_sats,
-				     &push,
-				     &channel_flags,
-				     cast_const2(u8 **, &fwd_msg),
-				     &local_upfront_shutdown_script,
-				     &remote_upfront_shutdown_script,
-				     &type)) {
-		log_broken(uc->log, "bad OPENING_ELTOO_FUNDEE_REPLY %s",
-			   tal_hex(reply, reply));
-		uncommitted_channel_disconnect(uc, LOG_BROKEN,
-					       "bad OPENING_ELTOO_FUNDEE_REPLY");
-		goto failed;
-	}
-
-
-    /* We make sure other basepoints are valid
-     * even if unused...
-     * FIXME wallet db gets upset if I don't do this due to statement construction...  */
-    memcpy(&channel_info.theirbase.revocation, &channel_info.theirbase.payment, sizeof(channel_info.theirbase.payment));
-    memcpy(&channel_info.theirbase.htlc, &channel_info.theirbase.payment, sizeof(channel_info.theirbase.payment));
-    memcpy(&channel_info.theirbase.delayed_payment, &channel_info.theirbase.payment, sizeof(channel_info.theirbase.payment));
-    memcpy(&channel_info.remote_per_commit, &channel_info.theirbase.payment, sizeof(channel_info.theirbase.payment));
-    memcpy(&channel_info.old_remote_per_commit, &channel_info.theirbase.payment, sizeof(channel_info.theirbase.payment));
-
-	settle_tx->chainparams = chainparams;
-
-	derive_channel_id(&cid, &funding);
-
-	/* Consumes uc */
-	channel = wallet_commit_channel(ld, uc,
-					&cid,
-					settle_tx,
-					NULL /* remote_commit_sig */,
-					&funding,
-					funding_sats,
-					push,
-					channel_flags,
-					&channel_info,
-					0 /* feerate */,
-					local_upfront_shutdown_script,
-					remote_upfront_shutdown_script,
-					type,
-                    &first_update_sig);
-	if (!channel) {
-		uncommitted_channel_disconnect(uc, LOG_BROKEN,
-					       "Commit channel failed");
-		goto failed;
-	}
-
-	log_debug(channel->log, "Watching funding tx %s",
-		  type_to_string(reply, struct bitcoin_txid,
-				 &channel->funding.txid));
-
-	channel_watch_funding(ld, channel);
-
-	/* Tell plugins about the success */
-	notify_channel_opened(ld, &channel->peer->id, &channel->funding_sats,
-			      &channel->funding.txid, &channel->remote_funding_locked);
-
-	/* On to normal operation! */
-	peer_start_eltoo_channeld(channel, peer_fd, fwd_msg, false /* reconnected */, false /* reestablish_only */);
-
-	tal_free(uc);
-	return;
-
-failed:
+	log_broken(uc->log, "eltoo opening not yet fully implemented");
+	uncommitted_channel_disconnect(uc, LOG_BROKEN,
+				       "eltoo opening not yet fully implemented");
 	tal_free(uc);
 }
+#endif
 
 static void opening_fundee_finished(struct subd *openingd,
 				    const u8 *reply,
@@ -1067,65 +909,8 @@ static void opening_got_offer(struct subd *openingd,
 	plugin_hook_call_openchannel(openingd->ld, NULL, payload);
 }
 
-static unsigned int eltoo_openingd_msg(struct subd *openingd,
-				 const u8 *msg, const int *fds)
-{
-	enum eltoo_openingd_wire t = fromwire_peektype(msg);
-	struct uncommitted_channel *uc = openingd->channel;
-
-	switch (t) {
-	case WIRE_OPENINGD_ELTOO_FUNDER_REPLY:
-		if (!uc->fc) {
-			log_broken(openingd->log, "Unexpected FUNDER_REPLY %s",
-				   tal_hex(tmpctx, msg));
-			tal_free(openingd);
-			return 0;
-		}
-		if (tal_count(fds) != 1)
-			return 1;
-		opening_eltoo_funder_finished(openingd, msg, fds, uc->fc);
-		return 0;
-	case WIRE_OPENINGD_ELTOO_FUNDER_START_REPLY:
-		if (!uc->fc) {
-			log_broken(openingd->log, "Unexpected FUNDER_START_REPLY %s",
-				   tal_hex(tmpctx, msg));
-			tal_free(openingd);
-			return 0;
-		}
-		opening_funder_start_replied(openingd, msg, fds, uc->fc, true /* eltoo */);
-		return 0;
-	case WIRE_OPENINGD_ELTOO_FAILED:
-		openingd_failed(openingd, msg, uc);
-		return 0;
-
-	case WIRE_OPENINGD_ELTOO_FUNDEE:
-		if (tal_count(fds) != 1)
-			return 1;
-		opening_eltoo_fundee_finished(openingd, msg, fds, uc);
-		return 0;
-
-	case WIRE_OPENINGD_ELTOO_GOT_OFFER:
-		opening_got_offer(openingd, msg, uc);
-		return 0;
-
-	/* We send these! */
-	case WIRE_OPENINGD_ELTOO_INIT:
-	case WIRE_OPENINGD_ELTOO_FUNDER_START:
-	case WIRE_OPENINGD_ELTOO_FUNDER_COMPLETE:
-	case WIRE_OPENINGD_ELTOO_FUNDER_CANCEL:
-	case WIRE_OPENINGD_ELTOO_GOT_OFFER_REPLY:
-	case WIRE_OPENINGD_ELTOO_DEV_MEMLEAK:
-	/* Replies never get here */
-	case WIRE_OPENINGD_DEV_MEMLEAK_REPLY:
-		break;
-	}
-
-	log_broken(openingd->log, "Unexpected msg %s: %s",
-		   openingd_wire_name(t), tal_hex(tmpctx, msg));
-	tal_free(openingd);
-	return 0;
-}
-
+/* TODO: eltoo_openingd_msg requires eltoo-specific wire messages which
+ * have not been defined. For now, use the regular openingd_msg handler. */
 
 static unsigned int openingd_msg(struct subd *openingd,
 				 const u8 *msg, const int *fds)

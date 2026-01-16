@@ -1,4 +1,5 @@
 #include "config.h"
+#include <bitcoin/pubkey.h>
 #include <bitcoin/script.h>
 #include <bitcoin/tx.h>
 #include <channeld/settle_tx.h>
@@ -8,7 +9,6 @@
 #include <common/keyset.h>
 #include <common/update_tx.h>
 #include <common/permute_tx.h>
-#include <common/type_to_string.h>
 
 #include <stdio.h>
 
@@ -22,7 +22,8 @@ static bool trim(const struct htlc *htlc,
 {
 	return htlc_is_trimmed(htlc_owner(htlc), htlc->amount,
 			       /* feerate_per_kw */ 0, dust_limit, /* side */ LOCAL,
-			       /* option_anchor_outputs */ true);
+			       /* option_anchor_outputs */ true,
+			       /* option_anchors_zero_fee_htlc_tx */ true);
 }
 
 size_t settle_tx_num_untrimmed(const struct htlc **htlcs,
@@ -92,8 +93,7 @@ static void add_eltoo_htlc_out(struct bitcoin_tx *tx,
 
     bipmusig_finalize_keys(&taproot_pubkey, &keyagg_cache, funding_pubkey_ptrs, /* n_pubkeys */ 2,
            &tap_merkle_root, tap_tweak_out, NULL);
-	printf("HTLC tweaked pubkey: %s\n", type_to_string(tmpctx, struct pubkey,
-                    &taproot_pubkey));
+	printf("HTLC tweaked pubkey: %s\n", fmt_pubkey(tmpctx, &taproot_pubkey));
     taproot_script = scriptpubkey_p2tr(tx, &taproot_pubkey);
 
 	amount = amount_msat_to_sat_round_down(htlc->amount);

@@ -182,7 +182,11 @@ static char *point32_to_hexstr(const tal_t *ctx, const struct point32 *point32)
 					 &point32->pubkey);
 	return tal_hexstr(ctx, output, sizeof(output));
 }
-REGISTER_TYPE_TO_STRING(point32, point32_to_hexstr);
+
+char *fmt_point32(const tal_t *ctx, const struct point32 *point32)
+{
+	return point32_to_hexstr(ctx, point32);
+}
 
 static char *nonce_to_hexstr(const tal_t *ctx, const struct nonce *nonce)
 {
@@ -194,4 +198,8 @@ static char *nonce_to_hexstr(const tal_t *ctx, const struct nonce *nonce)
 
     return tal_hexstr(ctx, nonce_output, sizeof(nonce_output));
 }
-REGISTER_TYPE_TO_STRING(nonce, nonce_to_hexstr);
+
+char *fmt_nonce(const tal_t *ctx, const struct nonce *nonce)
+{
+	return nonce_to_hexstr(ctx, nonce);
+}

@@ -225,7 +225,8 @@ static struct wally_tx_input *wally_tx_input_from_outpoint_sequence(const struct
 void bitcoin_tx_set_version(struct bitcoin_tx *tx, u32 version)
 {
 	tx->wtx->version = version;
-	tx->psbt->tx->version = version;
+	/* PSBTv2 doesn't have psbt->tx; use the proper API */
+	wally_psbt_set_tx_version(tx->psbt, version);
 }
 
 int bitcoin_tx_add_unbound_input(struct bitcoin_tx *tx,
@@ -235,27 +236,31 @@ int bitcoin_tx_add_unbound_input(struct bitcoin_tx *tx,
 {
 	int wally_err;
 	int input_num = tx->wtx->num_inputs;
+	struct wally_tx_input *tx_input;
     /* PSBTs insist that a utxo is "real", insert garbage so we have value later */
     struct bitcoin_outpoint fake_outpoint;
-    u8 *fake_script_pubkey = tal_arr(tx, u8, 1);
+    u8 *script_pubkey;
 
     memset(fake_outpoint.txid.shad.sha.u.u8, 0x00, sizeof(fake_outpoint.txid.shad.sha.u.u8));
     fake_outpoint.n = 0;
 
-    /* FIXME Put in PSBT */
+    /* Generate P2TR scriptPubkey from inner_pubkey for taproot signing */
     assert(inner_pubkey);
+    script_pubkey = scriptpubkey_p2tr(tx, inner_pubkey);
 
 	psbt_append_input(tx->psbt, &fake_outpoint,
 			  sequence, /* scriptSig */ NULL,
 			  /* input_wscript */ NULL, /* redeemScript */ NULL);
 
 	psbt_input_set_wit_utxo(tx->psbt, input_num,
-				fake_script_pubkey, amount);
+				script_pubkey, amount);
 
 	tal_wally_start();
-	wally_err = wally_tx_add_input(tx->wtx,
-				       &tx->psbt->tx->inputs[input_num]);
+	/* PSBTv2 doesn't have psbt->tx; create the input directly */
+	tx_input = wally_tx_input_from_outpoint_sequence(&fake_outpoint, sequence);
+	wally_err = wally_tx_add_input(tx->wtx, tx_input);
 	assert(wally_err == WALLY_OK);
+	wally_tx_input_free(tx_input);
 
 	tal_wally_end(tx->wtx);
 

@@ -3,8 +3,10 @@
 #include <bitcoin/privkey.h>
 #include <bitcoin/psbt.h>
 #include <bitcoin/pubkey.h>
+#include <bitcoin/script.h>
 #include <bitcoin/signature.h>
 #include <bitcoin/tx.h>
+#include <wally_map.h>
 #include <ccan/mem/mem.h>
 #include <common/utils.h>
 #include <secp256k1_schnorrsig.h>
@@ -162,39 +164,34 @@ void bipmusig_inner_pubkey(struct pubkey *inner_pubkey,
            const struct pubkey * const* pubkeys,
            size_t n_pubkeys)
 {
-    int i, ok;
+    size_t i;
+    int ok;
     assert(n_pubkeys <= 100);
 
-    /* Sorting moves pubkeys themselves, we copy and discard after */
-    secp256k1_xonly_pubkey x_keys[100];
-    const secp256k1_xonly_pubkey *x_keys_ptr[100];
+    /* New MuSig2 API works with regular pubkeys, not xonly.
+     * Copy pubkeys for sorting (sorting modifies the array) */
+    const secp256k1_pubkey *pk_ptrs[100];
 
-    for (i=0; i < n_pubkeys; ++i) {
-        ok = secp256k1_xonly_pubkey_from_pubkey(secp256k1_ctx, &x_keys[i], /* pk_parity */ NULL,
-            &(pubkeys[i]->pubkey));
-        assert(ok);
-        x_keys_ptr[i] = &x_keys[i];
+    for (i = 0; i < n_pubkeys; ++i) {
+        pk_ptrs[i] = &pubkeys[i]->pubkey;
     }
 
-    ok = secp256k1_xonly_sort(secp256k1_ctx,
-        x_keys_ptr,
+    ok = secp256k1_pubkey_sort(secp256k1_ctx,
+        pk_ptrs,
         n_pubkeys);
-
     assert(ok);
 
     ok = secp256k1_musig_pubkey_agg(secp256k1_ctx,
         NULL /* scratch */,
         NULL /* agg_pk */,
         keyagg_cache,
-        x_keys_ptr,
-        n_pubkeys); 
-
+        pk_ptrs,
+        n_pubkeys);
     assert(ok);
 
     ok = secp256k1_musig_pubkey_get(secp256k1_ctx,
         &inner_pubkey->pubkey,
         keyagg_cache);
-
     assert(ok);
 }
 
@@ -206,35 +203,30 @@ void bipmusig_finalize_keys(struct pubkey *agg_pk,
            unsigned char *tap_tweak_out,
 		   struct pubkey *inner_pubkey)
 {
-    int i, ok;
+    size_t i;
+    int ok;
     unsigned char taptweak_preimage[64];
     secp256k1_xonly_pubkey agg_x_key;
     assert(n_pubkeys <= 100);
 
-    /* Sorting moves pubkeys themselves, we copy and discard after */
-    secp256k1_xonly_pubkey x_keys[100];
-    const secp256k1_xonly_pubkey *x_keys_ptr[100];
+    /* New MuSig2 API works with regular pubkeys, not xonly */
+    const secp256k1_pubkey *pk_ptrs[100];
 
-    for (i=0; i < n_pubkeys; ++i) {
-        ok = secp256k1_xonly_pubkey_from_pubkey(secp256k1_ctx, &x_keys[i], /* pk_parity */ NULL,
-            &(pubkeys[i]->pubkey));
-        assert(ok);
-        x_keys_ptr[i] = &x_keys[i];
+    for (i = 0; i < n_pubkeys; ++i) {
+        pk_ptrs[i] = &pubkeys[i]->pubkey;
     }
 
-    ok = secp256k1_xonly_sort(secp256k1_ctx,
-        x_keys_ptr,
+    ok = secp256k1_pubkey_sort(secp256k1_ctx,
+        pk_ptrs,
         n_pubkeys);
-
     assert(ok);
 
     ok = secp256k1_musig_pubkey_agg(secp256k1_ctx,
         NULL /* scratch */,
         &agg_x_key,
         keyagg_cache,
-        x_keys_ptr,
-        n_pubkeys); 
-
+        pk_ptrs,
+        n_pubkeys);
     assert(ok);
 
 	if (inner_pubkey) {
@@ -251,14 +243,14 @@ void bipmusig_finalize_keys(struct pubkey *agg_pk,
 
     if (!tap_merkle_root) {
         /* No-tapscript recommended commitment: Q = P + int(hashTapTweak(bytes(P)))G */
-        ok = wally_tagged_hash(taptweak_preimage, 32, "TapTweak", tap_tweak_out);
+        ok = wally_bip340_tagged_hash(taptweak_preimage, 32, "TapTweak", tap_tweak_out, 32);
         assert(ok == WALLY_OK);
         ok = secp256k1_musig_pubkey_xonly_tweak_add(secp256k1_ctx, &(agg_pk->pubkey), keyagg_cache, tap_tweak_out);
         assert(ok);
     } else {
         /* Otherwise: Q = P + int(hashTapTweak(bytes(P)||tap_merkle_root))G */
         memcpy(taptweak_preimage + 32, tap_merkle_root->u.u8, sizeof(tap_merkle_root->u.u8));
-        ok = wally_tagged_hash(taptweak_preimage, sizeof(taptweak_preimage), "TapTweak", tap_tweak_out);
+        ok = wally_bip340_tagged_hash(taptweak_preimage, sizeof(taptweak_preimage), "TapTweak", tap_tweak_out, 32);
         assert(ok == WALLY_OK);
         ok = secp256k1_musig_pubkey_xonly_tweak_add(secp256k1_ctx, &(agg_pk->pubkey), keyagg_cache, tap_tweak_out);
         assert(ok);
@@ -268,6 +260,7 @@ void bipmusig_finalize_keys(struct pubkey *agg_pk,
 void bipmusig_gen_nonce(secp256k1_musig_secnonce *secnonce,
            secp256k1_musig_pubnonce *pubnonce,
            const struct privkey *privkey,
+           const struct pubkey *pubkey,
            secp256k1_musig_keyagg_cache *keyagg_cache,
            const unsigned char *msg32)
 {
@@ -278,7 +271,10 @@ void bipmusig_gen_nonce(secp256k1_musig_secnonce *secnonce,
 
     randombytes_buf(session_id, sizeof(session_id));
 
-    ok = secp256k1_musig_nonce_gen(secp256k1_ctx, secnonce, pubnonce, session_id, privkey->secret.data, msg32, keyagg_cache, NULL /* extra_input32 */);
+    ok = secp256k1_musig_nonce_gen(secp256k1_ctx, secnonce, pubnonce, session_id,
+                                   privkey ? privkey->secret.data : NULL,
+                                   &pubkey->pubkey, msg32, keyagg_cache,
+                                   NULL /* extra_input32 */);
 
     assert(ok);
 }
@@ -392,31 +388,36 @@ void bitcoin_tx_taproot_hash_for_sig(const struct bitcoin_tx *tx,
                  u8 *annex,
 			     struct sha256_double *dest)
 {
-	int ret, i;
-
-    /* Preparing args for taproot*/
-    size_t input_count = tx->wtx->num_inputs;
-    const unsigned char *input_spks[input_count];
-    size_t input_spk_lens[input_count];
+	int ret;
+	size_t i;
+	struct wally_map *scripts = NULL;
+	size_t input_count = tx->wtx->num_inputs;
 	u64 input_val_sats[input_count];
-
-    for (i=0; i < input_count; ++i) {
-        input_spks[i] = psbt_input_get_scriptpubkey(tx->psbt, i);
-        input_spk_lens[i] = tal_bytelen(input_spks[i]); /* FIXME ??? tal_bytelen? */
-        input_val_sats[i] = psbt_input_get_amount(tx->psbt, i).satoshis;
-    }
+	uint32_t key_version = (sighash_type & SIGHASH_ANYPREVOUTANYSCRIPT) == SIGHASH_ANYPREVOUTANYSCRIPT ? 0x01 : 0x00;
 
 	/* Wally can allocate here, iff tx doesn't fit on stack */
 	tal_wally_start();
-    ret = wally_tx_get_btc_taproot_signature_hash(
-        tx->wtx, sighash_type, input_index, input_spks, input_spk_lens,
-        input_val_sats, tapleaf_script, tal_bytelen(tapleaf_script), (sighash_type & SIGHASH_ANYPREVOUTANYSCRIPT) == SIGHASH_ANYPREVOUTANYSCRIPT ? 0x01 : 0x00 /* key_version */,
-        0xFFFFFFFF /* codesep_position */, annex, tal_count(annex), 0 /* flags */, dest->sha.u.u8,
-		    sizeof(*dest));
 
-    assert(ret == WALLY_OK);
+	/* Create map for prevout scriptpubkeys */
+	ret = wally_map_init_alloc(input_count, NULL, &scripts);
+	assert(ret == WALLY_OK);
+
+	for (i = 0; i < input_count; ++i) {
+		const u8 *spk = psbt_input_get_scriptpubkey(tx->psbt, i);
+		ret = wally_map_add_integer(scripts, i, spk, tal_bytelen(spk));
+		assert(ret == WALLY_OK);
+		input_val_sats[i] = psbt_input_get_amount(tx->psbt, i).satoshis;
+	}
+
+	ret = wally_tx_get_btc_taproot_signature_hash(
+		tx->wtx, input_index, scripts, input_val_sats, input_count,
+		tapleaf_script, tal_bytelen(tapleaf_script), key_version,
+		0xFFFFFFFF /* codesep_position */, annex, annex ? tal_count(annex) : 0,
+		sighash_type, 0 /* flags */, dest->sha.u.u8, sizeof(*dest));
+	assert(ret == WALLY_OK);
+
+	wally_map_free(scripts);
 	tal_wally_end(tx->wtx);
-
 }
 
 void sign_tx_input(const struct bitcoin_tx *tx,
@@ -726,8 +727,6 @@ char *fmt_partial_sig(const tal_t *ctx, const struct partial_sig *psig)
 	return tal_hexstr(ctx, psig->p_sig.data, sizeof(psig->p_sig.data));
 }
 
-REGISTER_TYPE_TO_HEXSTR(partial_sig);
-
 void towire_musig_session(u8 **pptr, const struct musig_session *session)
 {
     /* No proper serialization/parsing supplied, we're just copying bytes */
@@ -739,6 +738,49 @@ void fromwire_musig_session(const u8 **cursor, size_t *max,
     /* No proper serialization/parsing supplied, we're just copying bytes */
     if (!fromwire(cursor, max, session->session.data, 133))
         return;
+}
+
+void towire_musig_keyagg_cache(u8 **pptr, const struct musig_keyagg_cache *cache)
+{
+    /* No proper serialization/parsing supplied, we're just copying bytes */
+    towire_u8_array(pptr, cache->cache.data, 197);
+}
+
+void fromwire_musig_keyagg_cache(const u8 **cursor, size_t *max,
+            struct musig_keyagg_cache *cache)
+{
+    /* No proper serialization/parsing supplied, we're just copying bytes */
+    if (!fromwire(cursor, max, cache->cache.data, 197))
+        return;
+}
+
+char *fmt_musig_session(const tal_t *ctx, const struct musig_session *session)
+{
+    return tal_hexstr(ctx, session->session.data, sizeof(session->session.data));
+}
+
+bool bipmusig_partial_sig_verify(const struct partial_sig *p_sig,
+                                const struct nonce *signer_nonce,
+                                const struct pubkey *signer_pk,
+                                const struct musig_keyagg_cache *keyagg_cache,
+                                struct musig_session *session)
+{
+    secp256k1_musig_pubnonce pubnonce;
+
+    /* Convert our nonce to secp256k1 format */
+    if (!secp256k1_musig_pubnonce_parse(secp256k1_ctx, &pubnonce,
+                                        signer_nonce->nonce.data))
+        return false;
+
+    /* signer_pk->pubkey is already a secp256k1_pubkey, no parsing needed */
+
+    /* Verify the partial signature */
+    return secp256k1_musig_partial_sig_verify(secp256k1_ctx,
+                                              &p_sig->p_sig,
+                                              &pubnonce,
+                                              &signer_pk->pubkey,
+                                              &keyagg_cache->cache,
+                                              &session->session);
 }
 
 char *fmt_bip340sig(const tal_t *ctx, const struct bip340sig *bip340sig)

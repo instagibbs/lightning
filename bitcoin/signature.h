@@ -165,12 +165,14 @@ void bipmusig_finalize_keys(struct pubkey *agg_pk,
  * @secnonce: secret nonce to be generated. MUST NEVER BE MANUALLY COPIED OR PERSISTED!!!
  * @pubnonce: public nonce to be generated
  * @privkey: privkey for this signing session (can be NULL)
+ * @pubkey: pubkey corresponding to privkey (REQUIRED)
  * @keyagg_cache: aggregated key cache (can be NULL)
  * @msg32: Optional 32 byte message for misuse resistance (can be NULL)
  */
 void bipmusig_gen_nonce(secp256k1_musig_secnonce *secnonce,
            secp256k1_musig_pubnonce *pubnonce,
            const struct privkey *privkey,
+           const struct pubkey *pubkey,
            secp256k1_musig_keyagg_cache *keyagg_cache,
            const unsigned char *msg32);
 
@@ -257,6 +259,11 @@ bool check_signed_hash(const struct sha256_double *hash,
 bool check_signed_bip340_hash(const struct sha256_double *hash,
                const struct bip340sig *signature,
 		       const struct point32 *key);
+
+/* Simple Schnorr signature check using sha256 hash */
+bool check_schnorr_sig(const struct sha256 *hash,
+		       const secp256k1_pubkey *pubkey,
+		       const struct bip340sig *sig);
 
 /**
  * sign_tx_input - produce a bitcoin signature for a transaction input
@@ -357,8 +364,11 @@ void fromwire_musig_keyagg_cache(const u8 **cursor, size_t *max,
             struct musig_keyagg_cache *cache);
 
 /* Get a hex string sig */
-char *fmt_signature(const tal_t *ctx, const secp256k1_ecdsa_signature *sig);
+char *fmt_secp256k1_ecdsa_signature(const tal_t *ctx,
+				    const secp256k1_ecdsa_signature *sig);
 char *fmt_bip340sig(const tal_t *ctx, const struct bip340sig *bip340sig);
+char *fmt_bitcoin_signature(const tal_t *ctx,
+			    const struct bitcoin_signature *sig);
 char *fmt_partial_sig(const tal_t *ctx, const struct partial_sig *psig);
 char *fmt_musig_session(const tal_t *ctx, const struct musig_session *session);
 

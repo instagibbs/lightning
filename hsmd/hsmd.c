@@ -691,6 +691,64 @@ void hsmd_status_failed(enum status_failreason reason, const char *fmt, ...)
 	status_send_fatal(take(towire_status_fail(NULL, reason, str)));
 }
 
+/* BIP86 key derivation functions.
+ * BIP86 uses path m/86'/0'/0'/0/index for mainnet taproot keys
+ * We derive the base key (m/86'/0'/0') first, then derive child keys from it.
+ */
+void derive_bip86_base_key(struct ext_key *bip86_base)
+{
+	struct ext_key master_key;
+	u32 base_path[3];
+
+	/* Derivation path: m/86'/0'/0' */
+	base_path[0] = 86 | BIP32_INITIAL_HARDENED_CHILD;  /* 86' */
+	base_path[1] = BIP32_INITIAL_HARDENED_CHILD;       /* 0' */
+	base_path[2] = BIP32_INITIAL_HARDENED_CHILD;       /* 0' */
+
+	/* Create master key from seed (BIP32_VER_MAIN_PRIVATE for mainnet) */
+	if (bip32_key_from_seed(hsm_secret->secret_data,
+				tal_bytelen(hsm_secret->secret_data),
+				BIP32_VER_MAIN_PRIVATE, 0, &master_key) != WALLY_OK) {
+		status_failed(STATUS_FAIL_INTERNAL_ERROR,
+			      "Failed to create master key from BIP32 seed");
+	}
+
+	/* Derive the BIP86 base key */
+	if (bip32_key_from_parent_path(&master_key, base_path, 3,
+				       BIP32_FLAG_KEY_PRIVATE, bip86_base) != WALLY_OK) {
+		status_failed(STATUS_FAIL_INTERNAL_ERROR,
+			      "Failed to derive BIP86 base key");
+	}
+}
+
+void bip86_key(struct privkey *privkey, struct pubkey *pubkey, u32 index)
+{
+	struct ext_key bip86_base, child_key;
+	u32 child_path[2];
+
+	/* Get the BIP86 base key (m/86'/0'/0') */
+	derive_bip86_base_key(&bip86_base);
+
+	/* Derive 0/index (unhardened) */
+	child_path[0] = 0;       /* 0 (external chain) */
+	child_path[1] = index;   /* address index */
+
+	if (bip32_key_from_parent_path(&bip86_base, child_path, 2,
+				       BIP32_FLAG_KEY_PRIVATE, &child_key) != WALLY_OK) {
+		status_failed(STATUS_FAIL_INTERNAL_ERROR,
+			      "Failed to derive BIP86 child key at index %u", index);
+	}
+
+	/* Extract private key */
+	memcpy(privkey->secret.data, child_key.priv_key + 1, 32);
+
+	/* Derive public key from private key */
+	if (!pubkey_from_privkey(privkey, pubkey)) {
+		status_failed(STATUS_FAIL_INTERNAL_ERROR,
+			      "Failed to derive pubkey from BIP86 privkey at index %u", index);
+	}
+}
+
 /* Handle BIP86 pubkey check request */
 static struct io_plan *handle_check_bip86_pubkey(struct io_conn *conn,
 						 struct client *c,

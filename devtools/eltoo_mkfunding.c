@@ -13,7 +13,6 @@
 #include <common/derive_basepoints.h>
 #include <common/initial_commit_tx.h>
 #include <common/status.h>
-#include <common/type_to_string.h>
 #include <common/utxo.h>
 #include <stdio.h>
 
@@ -42,7 +41,7 @@ static struct bitcoin_tx *tx_spending_utxo(const tal_t *ctx,
 	struct bitcoin_tx *tx = bitcoin_tx(ctx, chainparams, 1, num_output,
 					   nlocktime);
 
-	assert(!utxo->is_p2sh);
+	assert(utxo->utxotype == UTXO_P2WPKH);
 	bitcoin_tx_add_input(tx, &utxo->outpoint,
 			     nsequence, NULL, utxo->amount,
 			     utxo->scriptPubkey, NULL, NULL, NULL);
@@ -113,7 +112,7 @@ int main(int argc, char *argv[])
 	if (argc != 1 + 7)
 		errx(1, "Usage: mkfunding <input-txid> <input-txout> <input-amount> <feerate-per-kw> <input-privkey> <local-funding-privkey> <remote-funding-privkey>");
 
-	input.is_p2sh = false;
+	input.utxotype = UTXO_P2WPKH;
 	input.close_info = NULL;
 
 	argnum = 1;
@@ -158,8 +157,8 @@ int main(int argc, char *argv[])
 	fee = amount_tx_fee(feerate_per_kw, weight);
 	if (!amount_sat_sub(&funding_amount, input.amount, fee))
 		errx(1, "Input %s can't afford fee %s",
-		     type_to_string(NULL, struct amount_sat, &input.amount),
-		     type_to_string(NULL, struct amount_sat, &fee));
+		     fmt_amount_sat(NULL, input.amount),
+		     fmt_amount_sat(NULL, fee));
 
 	/* No change output, so we don't need a bip32 base. */
 	tx = funding_tx_eltoo(NULL, &input, funding_amount,
@@ -179,11 +178,11 @@ int main(int argc, char *argv[])
 		printf("\t%s\n", tal_hex(NULL, witnesses[i]));
 	printf("# ]\n");
  	printf("# funding amount: %s\n",
-	       type_to_string(NULL, struct amount_sat, &funding_amount));
+	       fmt_amount_sat(NULL, funding_amount));
 
 	bitcoin_txid(tx, &txid);
  	printf("# funding txid: %s\n",
-	       type_to_string(NULL, struct bitcoin_txid, &txid));
+	       fmt_bitcoin_txid(NULL, &txid));
 
 	printf("tx: %s\n", tal_hex(NULL, linearize_tx(NULL, tx)));
 

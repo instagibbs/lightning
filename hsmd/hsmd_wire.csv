@@ -603,12 +603,12 @@ msgtype,hsmd_migrate_nonce_reply,197
 
 
 # Non-MuSig signature stuff for eltoo
-msgtype,hsmd_sign_eltoo_htlc_timeout_tx,113
+msgtype,hsmd_sign_eltoo_htlc_timeout_tx,213
 msgdata,hsmd_sign_eltoo_htlc_timeout_tx,tx,bitcoin_tx,
 msgdata,hsmd_sign_eltoo_htlc_timeout_tx,tapscript_len,u16,
 msgdata,hsmd_sign_eltoo_htlc_timeout_tx,tapscript,u8,tapscript_len
 
-msgtype,hsmd_sign_eltoo_htlc_success_tx,114
+msgtype,hsmd_sign_eltoo_htlc_success_tx,214
 msgdata,hsmd_sign_eltoo_htlc_success_tx,tx,bitcoin_tx,
 msgdata,hsmd_sign_eltoo_htlc_success_tx,tapscript_len,u16,
 msgdata,hsmd_sign_eltoo_htlc_success_tx,tapscript,u8,tapscript_len

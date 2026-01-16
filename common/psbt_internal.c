@@ -7,6 +7,9 @@
 #include <common/utils.h>
 #include <wire/peer_wire.h>
 
+/* PSBT field type for redeem script (from BIP 174) */
+#define PSBT_IN_REDEEM_SCRIPT 0x04
+
 
 static bool next_size(const u8 **cursor, size_t *max, size_t *size)
 {
@@ -90,7 +93,8 @@ void psbt_finalize_input(const tal_t *ctx,
 			 struct wally_psbt_input *in,
 			 const struct witness *witness)
 {
-	const struct wally_map_item *redeem_script;
+	const struct wally_map_item *redeem_script_item;
+
 	psbt_input_set_final_witness_stack(ctx, in, witness);
 
 	/* There's this horrible edgecase where we set the final_witnesses
@@ -100,17 +104,17 @@ void psbt_finalize_input(const tal_t *ctx,
 	 * on these just .. ignores it!? Murder. Anyway, here we do a final
 	 * scriptsig check -- if there's a redeemscript field still around we
 	 * just go ahead and mush it into the final_scriptsig field. */
-	redeem_script = wally_map_get_integer(&in->psbt_fields, /* PSBT_IN_REDEEM_SCRIPT */ 0x04);
-	if (redeem_script) {
+	redeem_script_item = wally_map_get_integer(&in->psbt_fields, PSBT_IN_REDEEM_SCRIPT);
+	if (redeem_script_item && redeem_script_item->value_len > 0) {
 		u8 *redeemscript = tal_dup_arr(NULL, u8,
-					       redeem_script->value,
-					       redeem_script->value_len, 0);
+					       redeem_script_item->value,
+					       redeem_script_item->value_len, 0);
 		u8 *final_scriptsig =
 			bitcoin_scriptsig_redeem(ctx,
 						 take(redeemscript));
 		tal_wally_start();
 		wally_psbt_input_set_final_scriptsig(in, final_scriptsig, tal_bytelen(final_scriptsig));
-		wally_psbt_input_set_redeem_script(in, tal_arr(in, u8, 0), 0);
+		wally_psbt_input_set_redeem_script(in, NULL, 0);
 		tal_wally_end(ctx);
 	}
 }

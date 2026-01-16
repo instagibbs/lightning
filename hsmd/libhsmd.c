@@ -1,41 +1,58 @@
 #include "config.h"
+#include <bitcoin/privkey.h>
 #include <bitcoin/script.h>
+#include <ccan/array_size/array_size.h>
 #include <ccan/crypto/hkdf_sha256/hkdf_sha256.h>
 #include <ccan/crypto/siphash24/siphash24.h>
 #include <ccan/htable/htable_type.h>
+#include <ccan/mem/mem.h>
 #include <ccan/tal/str/str.h>
+#include <common/bolt12_id.h>
 #include <common/bolt12_merkle.h>
 #include <common/hash_u5.h>
+#include <common/hsm_secret.h>
 #include <common/key_derive.h>
 #include <common/lease_rates.h>
 #include <common/memleak.h>
 #include <common/pseudorand.h>
-#include <common/type_to_string.h>
+#include <common/status.h>
+#include <common/utils.h>
+
 #include <common/update_tx.h>
-#include <hsmd/capabilities.h>
+#include <hsmd/hsm_utxo.h>
+#include <hsmd/permissions.h>
 #include <hsmd/libhsmd.h>
 #include <inttypes.h>
 #include <secp256k1_ecdh.h>
 #include <secp256k1_musig.h>
 #include <secp256k1_schnorrsig.h>
 #include <sodium/utils.h>
+#include <stddef.h>
+#include <wally_bip32.h>
+#include <wally_bip39.h>
 #include <wally_psbt.h>
 
 #include <stdio.h>
 
-#if DEVELOPER
+/* The negotiated protocol version ends up in here. */
+u64 hsmd_mutual_version;
+
 /* If they specify --dev-force-privkey it ends up in here. */
 struct privkey *dev_force_privkey;
 /* If they specify --dev-force-bip32-seed it ends up in here. */
 struct secret *dev_force_bip32_seed;
-#endif
+
+/* Do we fail all preapprove requests? */
+bool dev_fail_preapprove = false;
+bool dev_no_preapprove_check = false;
+bool dev_warn_on_overgrind = false;
 
 struct musig_state {
     struct channel_id channel_id;
     secp256k1_musig_secnonce sec_nonce;
 };
 
-size_t channel_id_key(const struct channel_id *id)
+static size_t channel_id_key(const struct channel_id *id)
 {   
     struct siphash24_ctx ctx;
     siphash24_init(&ctx, siphash_seed());
@@ -55,20 +72,25 @@ static inline bool musig_state_eq(const struct musig_state *state, const struct 
     return channel_id_eq(&state->channel_id, id);
 } 
 
-HTABLE_DEFINE_TYPE(struct musig_state, keyof_musig_state, channel_id_key, musig_state_eq,
+HTABLE_DEFINE_NODUPS_TYPE(struct musig_state, keyof_musig_state, channel_id_key, musig_state_eq,
            musig_state_map);
 
-/*~ Nobody will ever find it here!  hsm_secret is our root secret, the bip32
- * tree and bolt12 payer_id keys are derived from that, and cached here. */
+/*~ Nobody will ever find it here!  bip32_seed is our root secret, the bip32
+ * tree, bolt12 payer_id keys and derived_secret are derived from that, and
+ * cached here. */
 struct {
-	struct secret hsm_secret;
+	u8 *bip32_seed;           /* Variable length: 32 bytes (legacy) or 64 bytes (mnemonic) */
 	struct ext_key bip32;
-	secp256k1_keypair bolt12;
-    struct musig_state_map musig_map;
+	struct secret bolt12;
+	struct secret derived_secret;
+	struct musig_state_map musig_map;
 } secretstuff;
 
 /* Have we initialized the secretstuff? */
 bool initialized = false;
+
+/* BIP32 key version for network compatibility */
+static struct bip32_key_version network_bip32_key_version;
 
 struct hsmd_client *hsmd_client_new_main(const tal_t *ctx, u64 capabilities,
 					 void *extra)
@@ -113,30 +135,40 @@ bool hsmd_check_client_capabilities(struct hsmd_client *client,
 	 */
 	switch (t) {
 	case WIRE_HSMD_ECDH_REQ:
-		return (client->capabilities & HSM_CAP_ECDH) != 0;
+		return (client->capabilities & HSM_PERM_ECDH) != 0;
 
 	case WIRE_HSMD_CANNOUNCEMENT_SIG_REQ:
 	case WIRE_HSMD_CUPDATE_SIG_REQ:
 	case WIRE_HSMD_NODE_ANNOUNCEMENT_SIG_REQ:
-		return (client->capabilities & HSM_CAP_SIGN_GOSSIP) != 0;
+		return (client->capabilities & HSM_PERM_SIGN_GOSSIP) != 0;
 
 	case WIRE_HSMD_SIGN_DELAYED_PAYMENT_TO_US:
 	case WIRE_HSMD_SIGN_REMOTE_HTLC_TO_US:
 	case WIRE_HSMD_SIGN_PENALTY_TO_US:
 	case WIRE_HSMD_SIGN_LOCAL_HTLC_TX:
+	case WIRE_HSMD_SIGN_ANY_DELAYED_PAYMENT_TO_US:
+	case WIRE_HSMD_SIGN_ANY_REMOTE_HTLC_TO_US:
+	case WIRE_HSMD_SIGN_ANY_PENALTY_TO_US:
+	case WIRE_HSMD_SIGN_ANY_LOCAL_HTLC_TX:
+	case WIRE_HSMD_SIGN_HTLC_TX_MINGLE:
+	case WIRE_HSMD_SIGN_ANCHORSPEND:
     case WIRE_HSMD_SIGN_ELTOO_HTLC_TIMEOUT_TX:
     case WIRE_HSMD_SIGN_ELTOO_HTLC_SUCCESS_TX:
-		return (client->capabilities & HSM_CAP_SIGN_ONCHAIN_TX) != 0;
+		return (client->capabilities & HSM_PERM_SIGN_ONCHAIN_TX) != 0;
 
 	case WIRE_HSMD_GET_PER_COMMITMENT_POINT:
 	case WIRE_HSMD_CHECK_FUTURE_SECRET:
-	case WIRE_HSMD_READY_CHANNEL:
-		return (client->capabilities & HSM_CAP_COMMITMENT_POINT) != 0;
+	case WIRE_HSMD_SETUP_CHANNEL:
+	case WIRE_HSMD_CHECK_OUTPOINT:
+	case WIRE_HSMD_LOCK_OUTPOINT:
+	case WIRE_HSMD_FORGET_CHANNEL:
+		return (client->capabilities & HSM_PERM_COMMITMENT_POINT) != 0;
 
 	case WIRE_HSMD_SIGN_REMOTE_COMMITMENT_TX:
 	case WIRE_HSMD_SIGN_REMOTE_HTLC_TX:
 	case WIRE_HSMD_VALIDATE_COMMITMENT_TX:
 	case WIRE_HSMD_VALIDATE_REVOCATION:
+	case WIRE_HSMD_REVOKE_COMMITMENT_TX:
     case WIRE_HSMD_GEN_NONCE:
     case WIRE_HSMD_REGEN_NONCE:
     case WIRE_HSMD_MIGRATE_NONCE:
@@ -144,15 +176,16 @@ bool hsmd_check_client_capabilities(struct hsmd_client *client,
     case WIRE_HSMD_COMBINE_PSIG:
     case WIRE_HSMD_READY_ELTOO_CHANNEL:
     case WIRE_HSMD_VALIDATE_UPDATE_TX_PSIG: /* FIXME unused for now ...  */
-		return (client->capabilities & HSM_CAP_SIGN_REMOTE_TX) != 0;
+		return (client->capabilities & HSM_PERM_SIGN_REMOTE_TX) != 0;
 
 	case WIRE_HSMD_SIGN_MUTUAL_CLOSE_TX:
-		return (client->capabilities & HSM_CAP_SIGN_CLOSING_TX) != 0;
+		return (client->capabilities & HSM_PERM_SIGN_CLOSING_TX) != 0;
 
 	case WIRE_HSMD_SIGN_OPTION_WILL_FUND_OFFER:
-		return (client->capabilities & HSM_CAP_SIGN_WILL_FUND_OFFER) != 0;
+		return (client->capabilities & HSM_PERM_SIGN_WILL_FUND_OFFER) != 0;
 
 	case WIRE_HSMD_INIT:
+	case WIRE_HSMD_DEV_PREINIT:
 	case WIRE_HSMD_NEW_CHANNEL:
 	case WIRE_HSMD_CLIENT_HSMFD:
 	case WIRE_HSMD_SIGN_WITHDRAWAL:
@@ -161,8 +194,19 @@ bool hsmd_check_client_capabilities(struct hsmd_client *client,
 	case WIRE_HSMD_GET_CHANNEL_BASEPOINTS:
 	case WIRE_HSMD_DEV_MEMLEAK:
 	case WIRE_HSMD_SIGN_MESSAGE:
+	case WIRE_HSMD_BIP137_SIGN_MESSAGE:
 	case WIRE_HSMD_GET_OUTPUT_SCRIPTPUBKEY:
 	case WIRE_HSMD_SIGN_BOLT12:
+	case WIRE_HSMD_SIGN_BOLT12_2:
+	case WIRE_HSMD_DERIVE_SECRET:
+	case WIRE_HSMD_CHECK_PUBKEY:
+	case WIRE_HSMD_CHECK_BIP86_PUBKEY:
+	case WIRE_HSMD_PREAPPROVE_INVOICE:
+	case WIRE_HSMD_PREAPPROVE_KEYSEND:
+	case WIRE_HSMD_PREAPPROVE_INVOICE_CHECK:
+	case WIRE_HSMD_PREAPPROVE_KEYSEND_CHECK:
+	case WIRE_HSMD_SIGN_SPLICE_TX:
+	case WIRE_HSMD_SIGN_ANY_CANNOUNCEMENT_REQ:
 		return (client->capabilities & HSM_PERM_MASTER) != 0;
 
 	/*~ These are messages sent by the HSM so we should never receive them. */
@@ -173,15 +217,17 @@ bool hsmd_check_client_capabilities(struct hsmd_client *client,
 	case WIRE_HSMD_CUPDATE_SIG_REPLY:
 	case WIRE_HSMD_CLIENT_HSMFD_REPLY:
 	case WIRE_HSMD_NEW_CHANNEL_REPLY:
-	case WIRE_HSMD_READY_CHANNEL_REPLY:
+	case WIRE_HSMD_SETUP_CHANNEL_REPLY:
 	case WIRE_HSMD_NODE_ANNOUNCEMENT_SIG_REPLY:
 	case WIRE_HSMD_SIGN_WITHDRAWAL_REPLY:
 	case WIRE_HSMD_SIGN_INVOICE_REPLY:
-	case WIRE_HSMD_INIT_REPLY:
+	case WIRE_HSMD_INIT_REPLY_V4:
+	case WIRE_HSMD_INIT_REPLY_FAILURE:
 	case WIRE_HSMSTATUS_CLIENT_BAD_REQUEST:
 	case WIRE_HSMD_SIGN_COMMITMENT_TX_REPLY:
 	case WIRE_HSMD_VALIDATE_COMMITMENT_TX_REPLY:
 	case WIRE_HSMD_VALIDATE_REVOCATION_REPLY:
+	case WIRE_HSMD_REVOKE_COMMITMENT_TX_REPLY:
 	case WIRE_HSMD_SIGN_TX_REPLY:
 	case WIRE_HSMD_SIGN_OPTION_WILL_FUND_OFFER_REPLY:
 	case WIRE_HSMD_GET_PER_COMMITMENT_POINT_REPLY:
@@ -189,8 +235,23 @@ bool hsmd_check_client_capabilities(struct hsmd_client *client,
 	case WIRE_HSMD_GET_CHANNEL_BASEPOINTS_REPLY:
 	case WIRE_HSMD_DEV_MEMLEAK_REPLY:
 	case WIRE_HSMD_SIGN_MESSAGE_REPLY:
+	case WIRE_HSMD_BIP137_SIGN_MESSAGE_REPLY:
 	case WIRE_HSMD_GET_OUTPUT_SCRIPTPUBKEY_REPLY:
 	case WIRE_HSMD_SIGN_BOLT12_REPLY:
+	case WIRE_HSMD_SIGN_BOLT12_2_REPLY:
+	case WIRE_HSMD_DERIVE_SECRET_REPLY:
+	case WIRE_HSMD_CHECK_PUBKEY_REPLY:
+	case WIRE_HSMD_CHECK_BIP86_PUBKEY_REPLY:
+	case WIRE_HSMD_PREAPPROVE_INVOICE_REPLY:
+	case WIRE_HSMD_PREAPPROVE_KEYSEND_REPLY:
+	case WIRE_HSMD_PREAPPROVE_INVOICE_CHECK_REPLY:
+	case WIRE_HSMD_PREAPPROVE_KEYSEND_CHECK_REPLY:
+	case WIRE_HSMD_CHECK_OUTPOINT_REPLY:
+	case WIRE_HSMD_LOCK_OUTPOINT_REPLY:
+	case WIRE_HSMD_FORGET_CHANNEL_REPLY:
+	case WIRE_HSMD_SIGN_ANCHORSPEND_REPLY:
+	case WIRE_HSMD_SIGN_ANY_CANNOUNCEMENT_REPLY:
+	case WIRE_HSMD_SIGN_HTLC_TX_MINGLE_REPLY:
     case WIRE_HSMD_READY_ELTOO_CHANNEL_REPLY:
     case WIRE_HSMD_PSIGN_UPDATE_TX_REPLY:
     case WIRE_HSMD_COMBINE_PSIG_REPLY:
@@ -252,14 +313,14 @@ static void node_key(struct privkey *node_privkey, struct pubkey *node_id)
 		 * leaks somehow, the other keys are not compromised. */
 		hkdf_sha256(node_privkey, sizeof(*node_privkey),
 			    &salt, sizeof(salt),
-			    &secretstuff.hsm_secret,
-			    sizeof(secretstuff.hsm_secret),
+			    secretstuff.bip32_seed,
+			    tal_bytelen(secretstuff.bip32_seed),
 			    "nodeid", 6);
 		salt++;
 	} while (!secp256k1_ec_pubkey_create(secp256k1_ctx, &node_id->pubkey,
 					     node_privkey->secret.data));
 
-#if DEVELOPER
+#ifdef DEVELOPER
 	/* In DEVELOPER mode, we can override with --dev-force-privkey */
 	if (dev_force_privkey) {
 		*node_privkey = *dev_force_privkey;
@@ -301,7 +362,7 @@ static void node_schnorrkey(secp256k1_keypair *node_keypair,
 static void hsm_channel_secret_base(struct secret *channel_seed_base)
 {
 	hkdf_sha256(channel_seed_base, sizeof(struct secret), NULL, 0,
-		    &secretstuff.hsm_secret, sizeof(secretstuff.hsm_secret),
+		    secretstuff.bip32_seed, 32,  /* Use first 32 bytes */
 		    /*~ Initially, we didn't support multiple channels per
 		     * peer at all: a channel had to be completely forgotten
 		     * before another could exist.  That was slightly relaxed,
@@ -382,7 +443,7 @@ static u8 *handle_ready_channel(struct hsmd_client *c, const u8 *msg_in)
 	struct amount_msat value_msat;
 	struct channel_type *channel_type;
 
-	if (!fromwire_hsmd_ready_channel(tmpctx, msg_in, &is_outbound,
+	if (!fromwire_hsmd_setup_channel(tmpctx, msg_in, &is_outbound,
 					&channel_value, &push_value, &funding_txid,
 					&funding_txout, &local_to_self_delay,
 					&local_shutdown_script,
@@ -404,7 +465,7 @@ static u8 *handle_ready_channel(struct hsmd_client *c, const u8 *msg_in)
 	assert(local_to_self_delay > 0);
 	assert(remote_to_self_delay > 0);
 
-	return towire_hsmd_ready_channel_reply(NULL);
+	return towire_hsmd_setup_channel_reply(NULL);
 }
 
 /* ~This stub implementation is overriden by fully validating signers
@@ -519,7 +580,7 @@ static void bitcoin_key(struct privkey *privkey, struct pubkey *pubkey,
 
 /* This gets the bitcoin private key needed to spend from our wallet */
 static void hsm_key_for_utxo(struct privkey *privkey, struct pubkey *pubkey,
-			     const struct utxo *utxo)
+			     const struct hsm_utxo *utxo)
 {
 	if (utxo->close_info != NULL) {
 		/* This is a their_unilateral_close/to-us output, so
@@ -528,7 +589,7 @@ static void hsm_key_for_utxo(struct privkey *privkey, struct pubkey *pubkey,
 		hsm_unilateral_close_privkey(privkey, utxo->close_info);
 		pubkey_from_privkey(privkey, pubkey);
 		hsmd_status_debug("Derived public key %s from unilateral close",
-			     type_to_string(tmpctx, struct pubkey, pubkey));
+			     fmt_pubkey(tmpctx, pubkey));
 	} else {
 		/* Simple case: just get derive via HD-derivation */
 		bitcoin_key(privkey, pubkey, utxo->keyindex);
@@ -537,15 +598,15 @@ static void hsm_key_for_utxo(struct privkey *privkey, struct pubkey *pubkey,
 
 /* Find our inputs by the pubkey associated with the inputs, and
  * add a partial sig for each */
-static void sign_our_inputs(struct utxo **utxos, struct wally_psbt *psbt)
+static void sign_our_inputs(struct hsm_utxo **utxos, struct wally_psbt *psbt)
 {
 	for (size_t i = 0; i < tal_count(utxos); i++) {
-		struct utxo *utxo = utxos[i];
+		struct hsm_utxo *utxo = utxos[i];
 		for (size_t j = 0; j < psbt->num_inputs; j++) {
 			struct privkey privkey;
 			struct pubkey pubkey;
 
-			if (!wally_tx_input_spends(&psbt->tx->inputs[j],
+			if (!wally_psbt_input_spends(&psbt->inputs[j],
 						   &utxo->outpoint))
 				continue;
 
@@ -560,12 +621,14 @@ static void sign_our_inputs(struct utxo **utxos, struct wally_psbt *psbt)
 			 * requires the HSM to find the pubkey, and we
 			 * skip doing that until now as a bit of a reduction
 			 * of complexity in the calling code */
-			psbt_input_add_pubkey(psbt, j, &pubkey);
+			const size_t script_len = tal_bytelen(utxo->scriptPubkey);
+			psbt_input_add_pubkey(psbt, j, &pubkey,
+					      is_p2tr(utxo->scriptPubkey, script_len, NULL));
 
 			/* It's actually a P2WSH in this case. */
-			if (utxo->close_info && utxo->close_info->option_anchor_outputs) {
+			if (utxo->close_info && utxo->close_info->option_anchors) {
 				const u8 *wscript
-					= anchor_to_remote_redeem(tmpctx,
+					= bitcoin_wscript_to_remote_anchored(tmpctx,
 								  &pubkey,
 								  utxo->close_info->csv);
 				psbt_input_set_witscript(psbt, j, wscript);
@@ -580,10 +643,8 @@ static void sign_our_inputs(struct utxo **utxos, struct wally_psbt *psbt)
 				hsmd_status_broken(
 				    "Received wally_err attempting to "
 				    "sign utxo with key %s. PSBT: %s",
-				    type_to_string(tmpctx, struct pubkey,
-						   &pubkey),
-				    type_to_string(tmpctx, struct wally_psbt,
-						   psbt));
+				    fmt_pubkey(tmpctx, &pubkey),
+				    fmt_wally_psbt(tmpctx, psbt));
 			tal_wally_end(psbt);
 		}
 	}
@@ -687,6 +748,21 @@ static u8 *handle_sign_option_will_fund_offer(struct hsmd_client *c,
 	return towire_hsmd_sign_option_will_fund_offer_reply(NULL, &sig);
 }
 
+static void payer_key_tweak(const struct pubkey *bolt12,
+			    const u8 *publictweak, size_t publictweaklen,
+			    struct sha256 *tweak)
+{
+	u8 rawkey[PUBKEY_CMPR_LEN];
+	struct sha256_ctx sha;
+
+	pubkey_to_der(rawkey, bolt12);
+
+	sha256_init(&sha);
+	sha256_update(&sha, rawkey, sizeof(rawkey));
+	sha256_update(&sha, publictweak, publictweaklen);
+	sha256_done(&sha, tweak);
+}
+
 /*~ lightningd asks us to sign a bolt12 (e.g. offer). */
 static u8 *handle_sign_bolt12(struct hsmd_client *c, const u8 *msg_in)
 {
@@ -707,26 +783,29 @@ static u8 *handle_sign_bolt12(struct hsmd_client *c, const u8 *msg_in)
 		node_schnorrkey(&kp, NULL);
 	} else {
 		/* If we're tweaking key, we use bolt12 key */
-		struct point32 bolt12;
+		struct privkey tweakedkey;
+		struct pubkey bolt12;
 		struct sha256 tweak;
 
-		if (secp256k1_keypair_xonly_pub(secp256k1_ctx,
-						&bolt12.pubkey, NULL,
-						&secretstuff.bolt12) != 1)
-			hsmd_status_failed(
-			    STATUS_FAIL_INTERNAL_ERROR,
-			    "Could not derive bolt12 public key.");
+		if (secp256k1_ec_pubkey_create(secp256k1_ctx, &bolt12.pubkey,
+					       secretstuff.bolt12.data) != 1)
+			hsmd_status_failed(STATUS_FAIL_INTERNAL_ERROR,
+					   "Could derive bolt12 public key.");
+
 		payer_key_tweak(&bolt12, publictweak, tal_bytelen(publictweak),
 				&tweak);
 
-		kp = secretstuff.bolt12;
+		tweakedkey.secret = secretstuff.bolt12;
+		if (secp256k1_ec_seckey_tweak_add(secp256k1_ctx,
+						  tweakedkey.secret.data,
+						  tweak.u.u8) != 1)
+			hsmd_status_failed(STATUS_FAIL_INTERNAL_ERROR,
+					   "Could tweak bolt12 key.");
 
-		if (secp256k1_keypair_xonly_tweak_add(secp256k1_ctx,
-						      &kp,
-						      tweak.u.u8) != 1) {
-			return hsmd_status_bad_request_fmt(
-			    c, msg_in, "Failed to get tweak key");
-		}
+		if (secp256k1_keypair_create(secp256k1_ctx, &kp,
+					     tweakedkey.secret.data) != 1)
+			hsmd_status_failed(STATUS_FAIL_INTERNAL_ERROR,
+					   "Failed to derive bolt12 keypair");
 	}
 
 	if (!secp256k1_schnorrsig_sign32(secp256k1_ctx, sig.u8,
@@ -847,13 +926,15 @@ static u8 *handle_gen_nonce(struct hsmd_client *c,
 
     /* Generate privkey for additional nonce entropy */
 	get_channel_seed(&c->id, c->dbid, &channel_seed);
+	struct pubkey local_funding_pubkey;
 	derive_basepoints(&channel_seed,
-			  NULL, NULL, &secrets, NULL);
+			  &local_funding_pubkey, NULL, &secrets, NULL);
 
     /* Fill and return own next_nonce */
     bipmusig_gen_nonce(&new_musig_state->sec_nonce,
            &local_pub_nonce.nonce,
            &secrets.funding_privkey,
+           &local_funding_pubkey,
            NULL /* keyagg_cache */,
            NULL /* msg32 */);
 
@@ -1104,7 +1185,7 @@ static u8 *handle_channel_update_sig(struct hsmd_client *c, const u8 *msg_in)
 	if (!fromwire_hsmd_cupdate_sig_req(tmpctx, msg_in, &cu))
 		return hsmd_status_malformed_request(c, msg_in);
 
-	if (!fromwire_channel_update_option_channel_htlc_max(cu, &sig,
+	if (!fromwire_channel_update(cu, &sig,
 			&chain_hash, &scid, &timestamp, &message_flags,
 			&channel_flags, &cltv_expiry_delta,
 			&htlc_minimum, &fee_base_msat,
@@ -1121,8 +1202,8 @@ static u8 *handle_channel_update_sig(struct hsmd_client *c, const u8 *msg_in)
 
 	sign_hash(&node_pkey, &hash, &sig);
 
-	cu = towire_channel_update_option_channel_htlc_max(tmpctx, &sig, &chain_hash,
-				   &scid, timestamp, message_flags, channel_flags,
+	cu = towire_channel_update(tmpctx, &sig, &chain_hash,
+				   scid, timestamp, message_flags, channel_flags,
 				   cltv_expiry_delta, htlc_minimum,
 				   fee_base_msat, fee_proportional_mill,
 				   htlc_maximum);
@@ -1173,7 +1254,7 @@ static u8 *handle_get_per_commitment_point(struct hsmd_client *c, const u8 *msg_
  * we can do more to check the previous case is valid. */
 static u8 *handle_sign_withdrawal_tx(struct hsmd_client *c, const u8 *msg_in)
 {
-	struct utxo **utxos;
+	struct hsm_utxo **utxos;
 	struct wally_psbt *psbt;
 
 	if (!fromwire_hsmd_sign_withdrawal(tmpctx, msg_in,
@@ -1233,11 +1314,11 @@ static u8 *handle_sign_local_htlc_tx(struct hsmd_client *c, const u8 *msg_in)
 	struct bitcoin_signature sig;
 	struct privkey htlc_privkey;
 	struct pubkey htlc_pubkey;
-	bool option_anchor_outputs;
+	bool option_anchors;
 
 	if (!fromwire_hsmd_sign_local_htlc_tx(tmpctx, msg_in,
 					     &commit_num, &tx, &wscript,
-					     &option_anchor_outputs))
+					     &option_anchors))
 		return hsmd_status_malformed_request(c, msg_in);
 
 	tx->chainparams = c->chainparams;
@@ -1281,7 +1362,7 @@ static u8 *handle_sign_local_htlc_tx(struct hsmd_client *c, const u8 *msg_in)
 	 *   `SIGHASH_SINGLE|SIGHASH_ANYONECANPAY` is used as described in [BOLT #5]
 	 */
 	sign_tx_input(tx, 0, NULL, wscript, &htlc_privkey, &htlc_pubkey,
-		      option_anchor_outputs
+		      option_anchors
 		      ? (SIGHASH_SINGLE|SIGHASH_ANYONECANPAY)
 		      : SIGHASH_ALL,
 		      &sig);
@@ -1302,12 +1383,12 @@ static u8 *handle_sign_remote_htlc_tx(struct hsmd_client *c, const u8 *msg_in)
 	u8 *wscript;
 	struct privkey htlc_privkey;
 	struct pubkey htlc_pubkey;
-	bool option_anchor_outputs;
+	bool option_anchors;
 
 	if (!fromwire_hsmd_sign_remote_htlc_tx(tmpctx, msg_in,
 					      &tx, &wscript,
 					      &remote_per_commit_point,
-					      &option_anchor_outputs))
+					      &option_anchors))
 		return hsmd_status_malformed_request(c, msg_in);
 
 	tx->chainparams = c->chainparams;
@@ -1334,7 +1415,7 @@ static u8 *handle_sign_remote_htlc_tx(struct hsmd_client *c, const u8 *msg_in)
 	 *   `SIGHASH_SINGLE|SIGHASH_ANYONECANPAY` is used as described in [BOLT #5]
 	 */
 	sign_tx_input(tx, 0, NULL, wscript, &htlc_privkey, &htlc_pubkey,
-		      option_anchor_outputs
+		      option_anchors
 		      ? (SIGHASH_SINGLE|SIGHASH_ANYONECANPAY)
 		      : SIGHASH_ALL, &sig);
 
@@ -1360,7 +1441,7 @@ static u8 *handle_sign_remote_commitment_tx(struct hsmd_client *c, const u8 *msg
 	struct pubkey remote_per_commit;
 	bool option_static_remotekey;
 	u64 commit_num;
-	struct simple_htlc **htlc;
+	struct hsm_htlc *htlc;
 	u32 feerate;
 
 	if (!fromwire_hsmd_sign_remote_commitment_tx(tmpctx, msg_in,
@@ -1582,6 +1663,7 @@ static u8 *handle_psign_update_tx(struct hsmd_client *c, const u8 *msg_in)
     bipmusig_gen_nonce(&musig_state_lookup->sec_nonce,
            &local_nonce.nonce,
            &secrets.funding_privkey,
+           &local_funding_pubkey,
            &cache.cache,
            hash_out.sha.u.u8);
 
@@ -1603,8 +1685,9 @@ static u8 *handle_regen_nonce(struct hsmd_client *c, const u8 *msg_in)
 		return hsmd_status_malformed_request(c, msg_in);
 
 	get_channel_seed(&c->id, c->dbid, &channel_seed);
+	struct pubkey local_funding_pubkey;
 	derive_basepoints(&channel_seed,
-			  NULL, NULL, &secrets, NULL);
+			  &local_funding_pubkey, NULL, &secrets, NULL);
 
     musig_state_lookup = musig_state_map_get(&secretstuff.musig_map, &channel_id);
     if (!musig_state_lookup) {
@@ -1615,6 +1698,7 @@ static u8 *handle_regen_nonce(struct hsmd_client *c, const u8 *msg_in)
     bipmusig_gen_nonce(&musig_state_lookup->sec_nonce,
            &fresh_nonce.nonce,
            &secrets.funding_privkey,
+           &local_funding_pubkey,
            NULL /* keyagg_cache */,
            channel_id.id /* doesn't hurt; not strictly needed */);
 
@@ -1682,7 +1766,7 @@ static u8 *handle_sign_commitment_tx(struct hsmd_client *c, const u8 *msg_in)
 static u8 *handle_validate_commitment_tx(struct hsmd_client *c, const u8 *msg_in)
 {
 	struct bitcoin_tx *tx;
-	struct simple_htlc **htlc;
+	struct hsm_htlc *htlc;
 	u64 commit_num;
 	u32 feerate;
 	struct bitcoin_signature sig;
@@ -1800,11 +1884,11 @@ static u8 *handle_sign_remote_htlc_to_us(struct hsmd_client *c,
 	struct pubkey remote_per_commitment_point;
 	struct privkey privkey;
 	u8 *wscript;
-	bool option_anchor_outputs;
+	bool option_anchors;
 
 	if (!fromwire_hsmd_sign_remote_htlc_to_us(
 		tmpctx, msg_in, &remote_per_commitment_point, &tx, &wscript,
-		&option_anchor_outputs))
+		&option_anchors))
 		return hsmd_status_malformed_request(c, msg_in);
 
 	tx->chainparams = c->chainparams;
@@ -1830,7 +1914,7 @@ static u8 *handle_sign_remote_htlc_to_us(struct hsmd_client *c,
 	 */
 	return handle_sign_to_us_tx(
 	    c, msg_in, tx, &privkey, wscript,
-	    option_anchor_outputs ? (SIGHASH_SINGLE | SIGHASH_ANYONECANPAY)
+	    option_anchors ? (SIGHASH_SINGLE | SIGHASH_ANYONECANPAY)
 				  : SIGHASH_ALL);
 }
 
@@ -1925,7 +2009,7 @@ u8 *hsmd_handle_client_message(const tal_t *ctx, struct hsmd_client *client,
 
 	case WIRE_HSMD_NEW_CHANNEL:
 		return handle_new_channel(client, msg);
-	case WIRE_HSMD_READY_CHANNEL:
+	case WIRE_HSMD_SETUP_CHANNEL:
 		return handle_ready_channel(client, msg);
 	case WIRE_HSMD_GET_OUTPUT_SCRIPTPUBKEY:
 		return handle_get_output_scriptpubkey(client, msg);
@@ -1994,21 +2078,26 @@ u8 *hsmd_handle_client_message(const tal_t *ctx, struct hsmd_client *client,
     case WIRE_HSMD_REGEN_NONCE:
         return handle_regen_nonce(client, msg);
     /* Eltoo stuff ends */
+	/* Not implemented or reply messages */
 	case WIRE_HSMD_DEV_MEMLEAK:
+	case WIRE_HSMD_DEV_PREINIT:
 	case WIRE_HSMD_ECDH_RESP:
 	case WIRE_HSMD_CANNOUNCEMENT_SIG_REPLY:
 	case WIRE_HSMD_CUPDATE_SIG_REPLY:
 	case WIRE_HSMD_CLIENT_HSMFD_REPLY:
 	case WIRE_HSMD_NEW_CHANNEL_REPLY:
-	case WIRE_HSMD_READY_CHANNEL_REPLY:
+	case WIRE_HSMD_SETUP_CHANNEL_REPLY:
 	case WIRE_HSMD_NODE_ANNOUNCEMENT_SIG_REPLY:
 	case WIRE_HSMD_SIGN_WITHDRAWAL_REPLY:
 	case WIRE_HSMD_SIGN_INVOICE_REPLY:
-	case WIRE_HSMD_INIT_REPLY:
+	case WIRE_HSMD_INIT_REPLY_V4:
+	case WIRE_HSMD_INIT_REPLY_FAILURE:
 	case WIRE_HSMSTATUS_CLIENT_BAD_REQUEST:
 	case WIRE_HSMD_SIGN_COMMITMENT_TX_REPLY:
 	case WIRE_HSMD_VALIDATE_COMMITMENT_TX_REPLY:
 	case WIRE_HSMD_VALIDATE_REVOCATION_REPLY:
+	case WIRE_HSMD_REVOKE_COMMITMENT_TX:
+	case WIRE_HSMD_REVOKE_COMMITMENT_TX_REPLY:
 	case WIRE_HSMD_SIGN_TX_REPLY:
 	case WIRE_HSMD_SIGN_OPTION_WILL_FUND_OFFER_REPLY:
 	case WIRE_HSMD_GET_PER_COMMITMENT_POINT_REPLY:
@@ -2016,8 +2105,43 @@ u8 *hsmd_handle_client_message(const tal_t *ctx, struct hsmd_client *client,
 	case WIRE_HSMD_GET_CHANNEL_BASEPOINTS_REPLY:
 	case WIRE_HSMD_DEV_MEMLEAK_REPLY:
 	case WIRE_HSMD_SIGN_MESSAGE_REPLY:
+	case WIRE_HSMD_BIP137_SIGN_MESSAGE:
+	case WIRE_HSMD_BIP137_SIGN_MESSAGE_REPLY:
 	case WIRE_HSMD_GET_OUTPUT_SCRIPTPUBKEY_REPLY:
 	case WIRE_HSMD_SIGN_BOLT12_REPLY:
+	case WIRE_HSMD_SIGN_BOLT12_2:
+	case WIRE_HSMD_SIGN_BOLT12_2_REPLY:
+	case WIRE_HSMD_DERIVE_SECRET:
+	case WIRE_HSMD_DERIVE_SECRET_REPLY:
+	case WIRE_HSMD_CHECK_PUBKEY:
+	case WIRE_HSMD_CHECK_PUBKEY_REPLY:
+	case WIRE_HSMD_CHECK_BIP86_PUBKEY:
+	case WIRE_HSMD_CHECK_BIP86_PUBKEY_REPLY:
+	case WIRE_HSMD_PREAPPROVE_INVOICE:
+	case WIRE_HSMD_PREAPPROVE_INVOICE_REPLY:
+	case WIRE_HSMD_PREAPPROVE_KEYSEND:
+	case WIRE_HSMD_PREAPPROVE_KEYSEND_REPLY:
+	case WIRE_HSMD_PREAPPROVE_INVOICE_CHECK:
+	case WIRE_HSMD_PREAPPROVE_INVOICE_CHECK_REPLY:
+	case WIRE_HSMD_PREAPPROVE_KEYSEND_CHECK:
+	case WIRE_HSMD_PREAPPROVE_KEYSEND_CHECK_REPLY:
+	case WIRE_HSMD_CHECK_OUTPOINT:
+	case WIRE_HSMD_CHECK_OUTPOINT_REPLY:
+	case WIRE_HSMD_LOCK_OUTPOINT:
+	case WIRE_HSMD_LOCK_OUTPOINT_REPLY:
+	case WIRE_HSMD_FORGET_CHANNEL:
+	case WIRE_HSMD_FORGET_CHANNEL_REPLY:
+	case WIRE_HSMD_SIGN_SPLICE_TX:
+	case WIRE_HSMD_SIGN_ANCHORSPEND:
+	case WIRE_HSMD_SIGN_ANCHORSPEND_REPLY:
+	case WIRE_HSMD_SIGN_ANY_CANNOUNCEMENT_REQ:
+	case WIRE_HSMD_SIGN_ANY_CANNOUNCEMENT_REPLY:
+	case WIRE_HSMD_SIGN_ANY_DELAYED_PAYMENT_TO_US:
+	case WIRE_HSMD_SIGN_ANY_REMOTE_HTLC_TO_US:
+	case WIRE_HSMD_SIGN_ANY_PENALTY_TO_US:
+	case WIRE_HSMD_SIGN_ANY_LOCAL_HTLC_TX:
+	case WIRE_HSMD_SIGN_HTLC_TX_MINGLE:
+	case WIRE_HSMD_SIGN_HTLC_TX_MINGLE_REPLY:
     case WIRE_HSMD_READY_ELTOO_CHANNEL_REPLY:
     case WIRE_HSMD_PSIGN_UPDATE_TX_REPLY:
     case WIRE_HSMD_COMBINE_PSIG_REPLY:
@@ -2031,21 +2155,34 @@ u8 *hsmd_handle_client_message(const tal_t *ctx, struct hsmd_client *client,
 	return hsmd_status_bad_request(client, msg, "Unknown request");
 }
 
-u8 *hsmd_init(struct secret hsm_secret,
-	      struct bip32_key_version bip32_key_version)
+u8 *hsmd_init(const u8 *secret_data, size_t secret_len, const u64 hsmd_version,
+	      struct bip32_key_version bip32_key_version, u8 hsm_secret_type)
 {
 	u8 bip32_seed[BIP32_ENTROPY_LEN_256];
-	struct pubkey key;
-	struct point32 bolt12;
+	struct pubkey key, bolt12;
 	u32 salt = 0;
 	struct ext_key master_extkey, child_extkey;
 	struct node_id node_id;
-	struct secret onion_reply_secret;
+	static const u32 capabilities[] = {
+		WIRE_HSMD_CHECK_PUBKEY,
+		WIRE_HSMD_SIGN_ANY_DELAYED_PAYMENT_TO_US,
+		WIRE_HSMD_SIGN_ANCHORSPEND,
+		WIRE_HSMD_SIGN_HTLC_TX_MINGLE,
+		WIRE_HSMD_SIGN_SPLICE_TX,
+		WIRE_HSMD_CHECK_OUTPOINT,
+		WIRE_HSMD_FORGET_CHANNEL,
+		WIRE_HSMD_REVOKE_COMMITMENT_TX,
+		WIRE_HSMD_SIGN_BOLT12_2,
+		WIRE_HSMD_BIP137_SIGN_MESSAGE,
+	};
+	u32 *caps;
 
-	/*~ Don't swap this. */
-	sodium_mlock(secretstuff.hsm_secret.data,
-		     sizeof(secretstuff.hsm_secret.data));
-	memcpy(secretstuff.hsm_secret.data, hsm_secret.data, sizeof(hsm_secret.data));
+	/*~ Store the BIP32 key version for network compatibility */
+	network_bip32_key_version = bip32_key_version;
+
+	/*~ Store the secret (32 or 64 bytes) - use NULL context for persistence */
+	secretstuff.bip32_seed = notleak(tal_dup_arr(NULL, u8, secret_data, secret_len, 0));
+	mlock_tal_memory(secretstuff.bip32_seed);
 
 	assert(bip32_key_version.bip32_pubkey_version == BIP32_VER_MAIN_PUBLIC
 			|| bip32_key_version.bip32_pubkey_version == BIP32_VER_TEST_PUBLIC);
@@ -2055,21 +2192,19 @@ u8 *hsmd_init(struct secret hsm_secret,
 
 	/* Fill in the BIP32 tree for bitcoin addresses. */
 	/* In libwally-core, the version BIP32_VER_TEST_PRIVATE is for testnet/regtest,
-	 * and BIP32_VER_MAIN_PRIVATE is for mainnet. For litecoin, we also set it like
-	 * bitcoin else.*/
+	 * and BIP32_VER_MAIN_PRIVATE is for mainnet. */
 	do {
 		hkdf_sha256(bip32_seed, sizeof(bip32_seed),
 			    &salt, sizeof(salt),
-			    &secretstuff.hsm_secret,
-			    sizeof(secretstuff.hsm_secret),
+			    secretstuff.bip32_seed,
+			    tal_bytelen(secretstuff.bip32_seed),
 			    "bip32 seed", strlen("bip32 seed"));
 		salt++;
 	} while (bip32_key_from_seed(bip32_seed, sizeof(bip32_seed),
 				     bip32_key_version.bip32_privkey_version,
 				     0, &master_extkey) != WALLY_OK);
 
-#if DEVELOPER
-	/* In DEVELOPER mode, we can override with --dev-force-bip32-seed */
+	/* In --developer mode, we can override with --dev-force-bip32-seed */
 	if (dev_force_bip32_seed) {
 		if (bip32_key_from_seed(dev_force_bip32_seed->data,
 					sizeof(dev_force_bip32_seed->data),
@@ -2078,7 +2213,6 @@ u8 *hsmd_init(struct secret hsm_secret,
 			hsmd_status_failed(STATUS_FAIL_INTERNAL_ERROR,
 					   "Can't derive bip32 master key");
 	}
-#endif /* DEVELOPER */
 
 	/* BIP 32:
 	 *
@@ -2141,13 +2275,11 @@ u8 *hsmd_init(struct secret hsm_secret,
 
 	/* libwally says: The private key with prefix byte 0; remove it
 	 * for libsecp256k1. */
-	if (secp256k1_keypair_create(secp256k1_ctx, &secretstuff.bolt12,
-				     child_extkey.priv_key+1) != 1)
-		hsmd_status_failed(STATUS_FAIL_INTERNAL_ERROR,
-				   "Can't derive bolt12 keypair");
+	memcpy(&secretstuff.bolt12, child_extkey.priv_key+1,
+	       sizeof(secretstuff.bolt12));
 
-    /* Finally, initialize a hash table for music state, one entry per channel */
-    musig_state_map_init(&secretstuff.musig_map);
+	/* Initialize a hash table for musig state, one entry per channel */
+	musig_state_map_init(&secretstuff.musig_map);
 
 	/* Now we can consider ourselves initialized, and we won't get
 	 * upset if we get a non-init message. */
@@ -2158,23 +2290,37 @@ u8 *hsmd_init(struct secret hsm_secret,
 	node_id_from_pubkey(&node_id, &key);
 
 	/* We also give it the base key for bolt12 payerids */
-	if (secp256k1_keypair_xonly_pub(secp256k1_ctx, &bolt12.pubkey, NULL,
-					&secretstuff.bolt12) != 1)
+	if (secp256k1_ec_pubkey_create(secp256k1_ctx, &bolt12.pubkey,
+				       secretstuff.bolt12.data) != 1)
 		hsmd_status_failed(STATUS_FAIL_INTERNAL_ERROR,
 				   "Could derive bolt12 public key.");
 
-	/*~ We derive a secret for onion_message's self_id so we can tell
-	 * if it used a path we created (i.e. do not leak our public id!) */
-	hkdf_sha256(&onion_reply_secret, sizeof(onion_reply_secret),
-		    NULL, 0,
-		    &secretstuff.hsm_secret,
-		    sizeof(secretstuff.hsm_secret),
-		    "onion reply secret", strlen("onion reply secret"));
+	/* We derive the derived_secret key for generating pseudorandom keys
+	 * by taking input string from the makesecret RPC */
+	hkdf_sha256(&secretstuff.derived_secret, sizeof(struct secret), NULL, 0,
+		    secretstuff.bip32_seed, tal_bytelen(secretstuff.bip32_seed),
+		    "derived secrets", strlen("derived secrets"));
+
+	/* Capabilities arg needs to be a tal array */
+	caps =
+	    tal_dup_arr(tmpctx, u32, capabilities, ARRAY_SIZE(capabilities), 0);
+	if (!dev_no_preapprove_check) {
+		tal_arr_expand(&caps, WIRE_HSMD_PREAPPROVE_INVOICE_CHECK);
+		tal_arr_expand(&caps, WIRE_HSMD_PREAPPROVE_KEYSEND_CHECK);
+	}
 
 	/*~ Note: marshalling a bip32 tree only marshals the public side,
 	 * not the secrets!  So we're not actually handing them out here!
+	 *
+	 * And version is 4: we offer limited compatibility (or at least,
+	 * incompatibility detection) with alternate implementations.
 	 */
-	return take(towire_hsmd_init_reply(
-	    NULL, &node_id, &secretstuff.bip32,
-	    &bolt12, &onion_reply_secret));
+	/* Create TLV with HSM secret type */
+	struct tlv_hsmd_init_reply_v4_tlvs *tlvs = tlv_hsmd_init_reply_v4_tlvs_new(tmpctx);
+	tlvs->hsm_secret_type = tal_dup(tlvs, u8, &hsm_secret_type);
+
+	return take(towire_hsmd_init_reply_v4(
+		    NULL, hsmd_version, caps,
+		    &node_id, &secretstuff.bip32,
+		    &bolt12, tlvs));
 }

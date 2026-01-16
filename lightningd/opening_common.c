@@ -178,8 +178,8 @@ void eltoo_channel_config(struct lightningd *ld,
 		    u32 *max_shared_delay,
 		    struct amount_msat *min_effective_htlc_capacity)
 {
-	/* FIXME: depend on feerate. */
-	*max_shared_delay = ld->config.locktime_max;
+	/* FIXME: depend on feerate. For now use locktime_blocks */
+	*max_shared_delay = ld->config.locktime_blocks;
 
 	/* Take minimal effective capacity from config min_capacity_sat */
 	if (!amount_sat_to_msat(min_effective_htlc_capacity,

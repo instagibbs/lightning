@@ -1,6 +1,8 @@
 #include "config.h"
 #include <bitcoin/psbt.h>
 #include <bitcoin/script.h>
+#include <bitcoin/tx.h>
+#include <inttypes.h>
 #include <ccan/array_size/array_size.h>
 #include <channeld/commit_tx.h>
 #include <channeld/eltoo_full_channel.h>
@@ -16,13 +18,12 @@
 #include <common/keyset.h>
 #include <common/memleak.h>
 #include <common/status.h>
-#include <common/type_to_string.h>
 #include <common/update_tx.h>
 #include <stdio.h>
   /* Needs to be at end, since it doesn't include its own hdrs */
   #include "full_channel_error_names_gen.h"
 
-#if DEVELOPER
+#ifdef DEVELOPER
 static void memleak_help_htlcmap(struct htable *memtable,
 				 struct htlc_map *htlcs)
 {
@@ -121,7 +122,9 @@ struct channel *new_full_eltoo_channel(const tal_t *ctx,
 	if (channel) {
 		channel->htlcs = tal(channel, struct htlc_map);
 		htlc_map_init(channel->htlcs);
+#ifdef DEVELOPER
 		memleak_add_helper(channel->htlcs, memleak_help_htlcmap);
+#endif
 		tal_add_destructor(channel->htlcs, htlc_map_clear);
 	}
 	return channel;
@@ -279,9 +282,9 @@ struct bitcoin_tx **eltoo_channel_txs(const tal_t *ctx,
     /* Set the remote/local pubkeys on the update tx psbt FIXME add
       inner pubkey when possible */
     psbt_input_add_pubkey(txs[0]->psbt, 0,
-                  &channel->eltoo_keyset.self_funding_key);
+                  &channel->eltoo_keyset.self_funding_key, /* is_taproot */ true);
     psbt_input_add_pubkey(txs[0]->psbt, 0,
-                  &channel->eltoo_keyset.other_funding_key);
+                  &channel->eltoo_keyset.other_funding_key, /* is_taproot */ true);
 
     tal_free(committed);
     return txs;
@@ -294,7 +297,8 @@ static enum channel_add_err add_htlc(struct channel *channel,
 				     u32 cltv_expiry,
 				     const struct sha256 *payment_hash,
 				     const u8 routing[TOTAL_PACKET_SIZE(ROUTING_INFO_SIZE)],
-				     const struct pubkey *blinding TAKES,
+				     const struct pubkey *path_key TAKES,
+				     struct tlv_field *extra_tlvs TAKES,
 				     struct htlc **htlcp,
 				     bool enforce_aggregate_limits,
 				     bool err_immediate_failures)
@@ -315,7 +319,8 @@ static enum channel_add_err add_htlc(struct channel *channel,
 	htlc->fail_immediate = false;
 
 	htlc->rhash = *payment_hash;
-	htlc->blinding = tal_dup_or_null(htlc, struct pubkey, blinding);
+	htlc->path_key = tal_dup_or_null(htlc, struct pubkey, path_key);
+	htlc->extra_tlvs = tal_steal(htlc, extra_tlvs);
 	htlc->failed = NULL;
 	htlc->r = NULL;
 	htlc->routing = tal_dup_arr(htlc, u8, routing, TOTAL_PACKET_SIZE(ROUTING_INFO_SIZE), 0);
@@ -467,7 +472,8 @@ enum channel_add_err eltoo_channel_add_htlc(struct channel *channel,
 				      u32 cltv_expiry,
 				      const struct sha256 *payment_hash,
 				      const u8 routing[TOTAL_PACKET_SIZE(ROUTING_INFO_SIZE)],
-				      const struct pubkey *blinding TAKES,
+				      const struct pubkey *path_key TAKES,
+				      struct tlv_field *extra_tlvs TAKES,
 				      struct htlc **htlcp,
 				      bool err_immediate_failures)
 {
@@ -487,7 +493,7 @@ enum channel_add_err eltoo_channel_add_htlc(struct channel *channel,
 		status_broken("Peer sent out-of-order HTLC ids (is that you, old c-lightning node?)");
 
 	return add_htlc(channel, state, id, amount, cltv_expiry,
-			payment_hash, routing, blinding,
+			payment_hash, routing, path_key, extra_tlvs,
 			htlcp, true, err_immediate_failures);
 }
 
@@ -695,8 +701,8 @@ static int change_htlcs(struct channel *channel,
 				      "%s: %s balance underflow: %s -> %"PRId64,
 				      side_to_str(LOCAL),
 				      side_to_str(i),
-				      type_to_string(tmpctx, struct amount_msat,
-						     &channel->view[LOCAL].owed[i]),
+				      fmt_amount_msat(tmpctx,
+						     channel->view[LOCAL].owed[i]),
 				      owed[i].msat);
 		}
 	}
@@ -875,11 +881,9 @@ bool channel_force_htlcs(struct channel *channel,
 			     " payment_hash=%s %s",
 			     i, tal_count(htlcs),
 			     htlcs[i]->id,
-			     type_to_string(tmpctx, struct amount_msat,
-					    &htlcs[i]->amount),
+			     fmt_amount_msat(tmpctx, htlcs[i]->amount),
 			     htlcs[i]->cltv_expiry,
-			     type_to_string(tmpctx, struct sha256,
-					    &htlcs[i]->payment_hash),
+			     fmt_sha256(tmpctx, &htlcs[i]->payment_hash),
 			     htlcs[i]->payment_preimage ? "(have preimage)"
 			     : htlcs[i]->failed ? "(failed)" : "");
 
@@ -888,7 +892,8 @@ bool channel_force_htlcs(struct channel *channel,
 			     htlcs[i]->cltv_expiry,
 			     &htlcs[i]->payment_hash,
 			     htlcs[i]->onion_routing_packet,
-			     htlcs[i]->blinding,
+			     htlcs[i]->path_key,
+			     htlcs[i]->extra_tlvs,
 			     &htlc, false, false);
 		if (e != CHANNEL_ERR_ADD_OK) {
 			status_broken("%s HTLC %"PRIu64" failed error %u",

@@ -1586,10 +1586,10 @@ static void handle_onchaind_depth(struct tracked_output ***outs, const u8 *msg)
 static void handle_onchaind_spent(struct tracked_output ***outs, const u8 *msg)
 {
 	struct tx_parts *tx_parts;
-	u32 input_num, tx_blockheight;
+	u32 input_num, tx_blockheight, locktime;
 	bool interesting;
 
-	if (!fromwire_onchaind_spent(msg, msg, &tx_parts, &input_num,
+	if (!fromwire_onchaind_spent(msg, msg, &tx_parts, &locktime, &input_num,
 				     &tx_blockheight))
 		master_badmsg(WIRE_ONCHAIND_SPENT, msg);
 

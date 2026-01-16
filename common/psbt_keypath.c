@@ -16,18 +16,18 @@ bool psbt_output_set_keypath(u32 index,
 	u32 path[1];
 	path[0] = index;
 
+	/* For taproot, use x-only pubkey (skip the prefix byte) */
 	if (is_taproot) {
-		if (wally_psbt_output_taproot_keypath_add(output,
-							  ext->pub_key + 1, sizeof(ext->pub_key) - 1,
-							  NULL, 0,
-							  fingerprint, sizeof(fingerprint),
-							  path, 1) != WALLY_OK)
+		if (wally_psbt_output_keypath_add(output,
+						       ext->pub_key + 1, sizeof(ext->pub_key) - 1,
+						       fingerprint, sizeof(fingerprint),
+						       path, 1) != WALLY_OK)
 			return false;
 	} else {
 		if (wally_psbt_output_keypath_add(output,
-						  ext->pub_key, sizeof(ext->pub_key),
-						  fingerprint, sizeof(fingerprint),
-						  path, 1) != WALLY_OK)
+						       ext->pub_key, sizeof(ext->pub_key),
+						       fingerprint, sizeof(fingerprint),
+						       path, 1) != WALLY_OK)
 			return false;
 	}
 
