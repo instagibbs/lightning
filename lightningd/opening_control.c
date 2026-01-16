@@ -1100,6 +1100,126 @@ static void eltoo_openingd_failed(struct subd *openingd, const u8 *msg,
 	tal_free(uc);
 }
 
+static void eltoo_opening_funder_finished(struct subd *openingd,
+					  const u8 *reply,
+					  const int *fds,
+					  struct funding_channel *fc)
+{
+	struct channel_info channel_info;
+	struct channel_id cid;
+	struct bitcoin_outpoint funding;
+	struct bitcoin_tx *first_update, *first_settle;
+	u32 minimum_depth;
+	struct channel *channel;
+	struct lightningd *ld = openingd->ld;
+	u8 *remote_upfront_shutdown_script;
+	struct peer_fd *peer_fd;
+	struct channel_type *type;
+	bool was_important;
+	struct pubkey remote_fundingkey, remote_settlekey;
+	struct partial_sig other_psig, self_psig;
+	struct musig_session session;
+	struct nonce their_next_nonce, our_next_nonce;
+
+	/* This is a new channel_info.their_config so set its ID to 0 */
+	channel_info.their_config.id = 0;
+
+	if (!fromwire_openingd_eltoo_funder_reply(tmpctx, reply,
+					   &channel_info.their_config,
+					   &first_update,
+					   &first_settle,
+					   &minimum_depth,
+					   &remote_fundingkey,
+					   &remote_settlekey,
+					   &other_psig,
+					   &self_psig,
+					   &session,
+					   &their_next_nonce,
+					   &our_next_nonce,
+					   &funding,
+					   &remote_upfront_shutdown_script,
+					   &type)) {
+		log_broken(fc->uc->log,
+			   "bad OPENINGD_ELTOO_FUNDER_REPLY %s",
+			   tal_hex(reply, reply));
+		was_pending(command_fail(fc->cmd, LIGHTNINGD,
+					 "bad OPENINGD_ELTOO_FUNDER_REPLY %s",
+					 tal_hex(fc->cmd, reply)));
+		goto cleanup;
+	}
+
+	first_update->chainparams = chainparams;
+	first_settle->chainparams = chainparams;
+
+	peer_fd = new_peer_fd_arr(reply, fds);
+
+	/* Saved with channel to disk */
+	derive_channel_id(&cid, &funding);
+
+	/* For eltoo, we need to store the remote funding key in channel_info.
+	 * The basepoint fields are not used for eltoo but the wallet code
+	 * requires valid pubkeys to serialize, so use remote_fundingkey as
+	 * a placeholder for all of them. */
+	channel_info.remote_fundingkey = remote_fundingkey;
+	channel_info.theirbase.revocation = remote_fundingkey;
+	channel_info.theirbase.payment = remote_fundingkey;
+	channel_info.theirbase.htlc = remote_fundingkey;
+	channel_info.theirbase.delayed_payment = remote_fundingkey;
+	channel_info.remote_per_commit = remote_fundingkey;
+	channel_info.old_remote_per_commit = remote_fundingkey;
+
+	/* Before this channel, was peer important? */
+	was_important = peer_any_channel(fc->uc->peer,
+					 channel_important_filter, NULL, NULL);
+
+	/* Steals fields from uc */
+	channel = wallet_commit_channel(ld, fc->uc,
+					&cid,
+					first_settle,  /* Use settle tx as "commit" for storage */
+					NULL,  /* No bitcoin_signature for eltoo */
+					&funding,
+					fc->funding_sats,
+					fc->push,
+					fc->channel_flags,
+					&channel_info,
+					0,  /* No feerate for eltoo initial tx */
+					fc->our_upfront_shutdown_script,
+					remote_upfront_shutdown_script,
+					type,
+					fc->funding_psbt,
+					fc->withheld);
+	if (!channel) {
+		was_pending(command_fail(fc->cmd, LIGHTNINGD,
+					 "Key generation failure"));
+		goto cleanup;
+	}
+
+	/* Store eltoo-specific data in channel struct */
+	channel->their_last_psig = other_psig;
+	channel->our_last_psig = self_psig;
+	channel->session = session;
+	channel->their_next_nonce = their_next_nonce;
+	channel->our_next_nonce = our_next_nonce;
+	channel->last_update_tx = tal_steal(channel, first_update);
+	channel->last_settle_tx = tal_steal(channel, first_settle);
+
+	/* Watch for funding confirms */
+	channel_watch_funding(ld, channel);
+
+	/* This will have made us important, if we weren't before */
+	tell_connectd_peer_importance(channel->peer, was_important);
+
+	/* If this fails, it cleans up */
+	if (!peer_start_eltoo_channeld(channel, peer_fd, NULL, false, false))
+		return;
+
+	funding_success(channel);
+
+cleanup:
+	/* Frees fc too */
+	tal_free(fc->uc);
+}
+
 static void eltoo_opening_fundee_finished(struct subd *openingd,
 					  const u8 *reply,
 					  const int *fds,
@@ -1201,8 +1321,10 @@ static void eltoo_opening_fundee_finished(struct subd *openingd,
 	channel->their_last_psig = other_psig;
 	channel->our_last_psig = self_psig;
 	channel->session = session;
-	/* TODO: Store first_update, first_settle, eltoo keys, nonces
-	 * For now, we rely on eltoo_channeld to handle these via the init message */
+	channel->their_next_nonce = their_next_nonce;
+	channel->our_next_nonce = our_next_nonce;
+	channel->last_update_tx = tal_steal(channel, first_update);
+	channel->last_settle_tx = tal_steal(channel, first_settle);
 
 	log_debug(channel->log, "Watching funding tx %s",
 		  fmt_bitcoin_txid(reply,
@@ -1286,11 +1408,7 @@ static unsigned int eltoo_openingd_msg(struct subd *openingd,
 		}
 		if (tal_count(fds) != 1)
 			return 1;
-		/* TODO: Implement eltoo funder channel creation */
-		log_broken(uc->log, "eltoo funder channel creation not yet implemented");
-		was_pending(command_fail(uc->fc->cmd, LIGHTNINGD,
-					 "eltoo funder not yet implemented"));
-		tal_free(uc);
+		eltoo_opening_funder_finished(openingd, msg, fds, uc->fc);
 		return 0;
 
 	case WIRE_OPENINGD_ELTOO_FUNDER_START_REPLY:

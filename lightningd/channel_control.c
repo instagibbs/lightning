@@ -1820,15 +1820,15 @@ bool peer_start_eltoo_channeld(struct channel *channel,
 				       &channel->their_last_psig,
 				       &channel->our_last_psig,
 				       &channel->session,
-				       NULL, /* their_committed_psig - TODO */
-				       NULL, /* our_committed_psig - TODO */
-				       NULL, /* committed_session - TODO */
-				       NULL, /* their_next_nonce - TODO */
-				       NULL, /* our_next_nonce - TODO */
-				       NULL, /* complete_update_tx - TODO */
-				       NULL, /* complete_settle_tx - TODO */
-				       NULL, /* committed_update_tx - TODO */
-				       NULL, /* committed_settle_tx - TODO */
+				       &channel->their_last_psig, /* committed = complete at open */
+				       &channel->our_last_psig,   /* committed = complete at open */
+				       &channel->session,         /* committed = complete at open */
+				       &channel->their_next_nonce,
+				       &channel->our_next_nonce,
+				       channel->last_update_tx,
+				       channel->last_settle_tx,
+				       channel->last_update_tx,   /* committed = complete at open */
+				       channel->last_settle_tx,   /* committed = complete at open */
 				       &channel->channel_info.remote_fundingkey,
 				       &channel->channel_info.theirbase.payment, /* their_settle_pubkey */
 				       channel->opener,
