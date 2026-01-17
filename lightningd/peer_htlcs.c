@@ -2164,6 +2164,11 @@ static bool peer_save_updatesig_received(struct channel *channel, u64 update_num
 
 	channel->next_index[LOCAL]++;
 
+	/* In eltoo, the update number is a shared counter between both parties.
+	 * When we receive update N, the next update from either side should be N+1.
+	 * So we also need to increment REMOTE to keep in sync. */
+	channel->next_index[REMOTE]++;
+
 	/* TODO: channel_set_last_eltoo_txs needs to be implemented
 	 * to store eltoo state properly */
 	/* channel_set_last_eltoo_txs(channel, update_tx, settle_tx, their_psig, our_psig, session, TX_CHANNEL_UNILATERAL); */
@@ -2376,6 +2381,12 @@ void peer_sending_updatesig(struct channel *channel, const u8 *msg)
 	if (!peer_save_commitsig_sent(channel, update_num))
 		return;
 
+	/* In eltoo, the update number is a shared counter between both parties.
+	 * When we send update N, the next update we receive (from either side) is N+1.
+	 * peer_save_commitsig_sent already incremented next_index[REMOTE],
+	 * so we also need to increment next_index[LOCAL] to keep in sync. */
+	channel->next_index[LOCAL]++;
+
 	/* Last was commit. FIXME do we want to reuse these fields? maybe? */
 	channel->last_was_revoke = false;
 	tal_free(channel->last_sent_commit);
@@ -2538,18 +2549,28 @@ static bool peer_sending_revocation(struct channel *channel,
 				    struct changed_htlc *changed)
 {
 	size_t i;
+	bool is_eltoo = channel_type_has(channel->type, OPT_ELTOO);
 
+	log_debug(channel->log, "peer_sending_revocation: is_eltoo=%d, added=%zu, fulfilled=%zu, failed=%zu, changed=%zu",
+		  is_eltoo, tal_count(added), tal_count(fulfilled), tal_count(failed), tal_count(changed));
+
+	/* For eltoo channels, there's no revocation exchange, so we skip
+	 * intermediate states and go straight to the final ACK_REVOCATION state.
+	 * See htlc_state.h comments and state_update_ok() special handling. */
 	for (i = 0; i < tal_count(added); i++) {
-		if (!update_in_htlc(channel, added[i]->id, SENT_ADD_REVOCATION))
+		enum htlc_state target = is_eltoo ? RCVD_ADD_ACK_REVOCATION : SENT_ADD_REVOCATION;
+		log_debug(channel->log, "peer_sending_revocation: updating added HTLC id=%"PRIu64" to state=%d", added[i]->id, target);
+		if (!update_in_htlc(channel, added[i]->id, target))
 			return false;
 	}
 	for (i = 0; i < tal_count(fulfilled); i++) {
-		if (!update_out_htlc(channel, fulfilled[i].id,
-				     SENT_REMOVE_REVOCATION))
+		enum htlc_state target = is_eltoo ? RCVD_REMOVE_ACK_REVOCATION : SENT_REMOVE_REVOCATION;
+		if (!update_out_htlc(channel, fulfilled[i].id, target))
 			return false;
 	}
 	for (i = 0; i < tal_count(failed); i++) {
-		if (!update_out_htlc(channel, failed[i]->id, SENT_REMOVE_REVOCATION))
+		enum htlc_state target = is_eltoo ? RCVD_REMOVE_ACK_REVOCATION : SENT_REMOVE_REVOCATION;
+		if (!update_out_htlc(channel, failed[i]->id, target))
 			return false;
 	}
 	for (i = 0; i < tal_count(changed); i++) {
@@ -2670,11 +2691,25 @@ void peer_got_updatesig(struct channel *channel, const u8 *msg)
 		}
 	}
 
-	/* Since we're about to send revoke, bump state again. */
-    /* FIXME do we need something like this?
+	/* Since we're about to send update_signed_ack, bump HTLC state.
+	 * This is equivalent to peer_sending_revocation for LN-penalty. */
 	if (!peer_sending_revocation(channel, added, fulfilled, failed, changed))
 		return;
-    */
+
+	/* For eltoo, the HTLCs are now in RCVD_ADD_ACK_REVOCATION state (locked in).
+	 * We need to call peer_accepted_htlc to trigger HTLC resolution (invoice matching).
+	 * This is equivalent to what peer_got_revoke does for LN-penalty.
+	 * We pass replay=true because peer_sending_revocation has already updated the state. */
+	enum onion_wire *badonions = tal_arrz(msg, enum onion_wire, tal_count(added));
+	u8 **failmsgs = tal_arrz(msg, u8 *, tal_count(added));
+	log_debug(channel->log, "peer_got_updatesig: calling peer_accepted_htlc for %zu added HTLCs", tal_count(added));
+	for (i = 0; i < tal_count(added); i++) {
+		bool res = peer_accepted_htlc(failmsgs, channel, added[i]->id, true,
+				   &badonions[i], &failmsgs[i]);
+		log_debug(channel->log, "peer_accepted_htlc for HTLC %"PRIu64" returned %s, badonion=%d, failmsg=%s",
+			  added[i]->id, res ? "true" : "false", badonions[i],
+			  failmsgs[i] ? tal_hex(tmpctx, failmsgs[i]) : "null");
+	}
 
     /* Stores fully signed transactions, and partial sigs for reestablishment! */
 	if (!peer_save_updatesig_received(channel, update_num, update_tx, settle_tx, &their_psig, &our_psig, &session))
@@ -2686,6 +2721,26 @@ void peer_got_updatesig(struct channel *channel, const u8 *msg)
 	/* Tell it we've committed, and to go ahead with ACK. */
 	msg = towire_channeld_got_updatesig_reply(msg);
 	subd_send_msg(channel->owner, take(msg));
+
+	/* Now handle any HTLCs we need to immediately fail */
+	for (i = 0; i < tal_count(added); i++) {
+		struct htlc_in *hin;
+
+		if (badonions[i]) {
+			hin = find_htlc_in(ld->htlcs_in, channel, added[i]->id);
+			local_fail_in_htlc_badonion(hin, badonions[i]);
+		} else if (failmsgs[i]) {
+			hin = find_htlc_in(ld->htlcs_in, channel, added[i]->id);
+			local_fail_in_htlc(hin, failmsgs[i]);
+		} else
+			continue;
+
+		wallet_forwarded_payment_add(ld->wallet,
+					 hin, FORWARD_STYLE_UNKNOWN, NULL, NULL,
+					 FORWARD_LOCAL_FAILED,
+					 badonions[i] ? badonions[i]
+					     : fromwire_peektype(failmsgs[i]));
+	}
 }
 
 

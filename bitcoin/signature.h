@@ -371,6 +371,7 @@ char *fmt_bitcoin_signature(const tal_t *ctx,
 			    const struct bitcoin_signature *sig);
 char *fmt_partial_sig(const tal_t *ctx, const struct partial_sig *psig);
 char *fmt_musig_session(const tal_t *ctx, const struct musig_session *session);
+char *fmt_musig_keyagg_cache(const tal_t *ctx, const struct musig_keyagg_cache *cache);
 
 /* For caller convenience, we hand in tag in parts (any can be "") */
 void bip340_sighash_init(struct sha256_ctx *sctx,

@@ -759,28 +759,46 @@ char *fmt_musig_session(const tal_t *ctx, const struct musig_session *session)
     return tal_hexstr(ctx, session->session.data, sizeof(session->session.data));
 }
 
+char *fmt_musig_keyagg_cache(const tal_t *ctx, const struct musig_keyagg_cache *cache)
+{
+    return tal_hexstr(ctx, cache->cache.data, sizeof(cache->cache.data));
+}
+
 bool bipmusig_partial_sig_verify(const struct partial_sig *p_sig,
                                 const struct nonce *signer_nonce,
                                 const struct pubkey *signer_pk,
                                 const struct musig_keyagg_cache *keyagg_cache,
                                 struct musig_session *session)
 {
-    secp256k1_musig_pubnonce pubnonce;
+    int ret;
+    u8 nonce_ser[66], psig_ser[32];
 
-    /* Convert our nonce to secp256k1 format */
-    if (!secp256k1_musig_pubnonce_parse(secp256k1_ctx, &pubnonce,
-                                        signer_nonce->nonce.data))
-        return false;
+    /* Serialize for debug output */
+    secp256k1_musig_pubnonce_serialize(secp256k1_ctx, nonce_ser, &signer_nonce->nonce);
+    secp256k1_musig_partial_sig_serialize(secp256k1_ctx, psig_ser, &p_sig->p_sig);
 
-    /* signer_pk->pubkey is already a secp256k1_pubkey, no parsing needed */
+    fprintf(stderr, "VERIFY: nonce=%s\n", tal_hexstr(NULL, nonce_ser, sizeof(nonce_ser)));
+    fprintf(stderr, "VERIFY: psig=%s\n", tal_hexstr(NULL, psig_ser, sizeof(psig_ser)));
+    fprintf(stderr, "VERIFY: session magic=0x%02x%02x%02x%02x\n",
+           session->session.data[0], session->session.data[1],
+           session->session.data[2], session->session.data[3]);
+    fflush(stderr);
 
-    /* Verify the partial signature */
-    return secp256k1_musig_partial_sig_verify(secp256k1_ctx,
+    /* signer_nonce->nonce is already a secp256k1_musig_pubnonce (parsed by fromwire_nonce).
+     * signer_pk->pubkey is already a secp256k1_pubkey.
+     * p_sig->p_sig is already a secp256k1_musig_partial_sig (parsed by fromwire_partial_sig).
+     * Use them directly - no need to parse again. */
+    ret = secp256k1_musig_partial_sig_verify(secp256k1_ctx,
                                               &p_sig->p_sig,
-                                              &pubnonce,
+                                              &signer_nonce->nonce,
                                               &signer_pk->pubkey,
                                               &keyagg_cache->cache,
                                               &session->session);
+
+    fprintf(stderr, "VERIFY: result=%d\n", ret);
+    fflush(stderr);
+
+    return ret;
 }
 
 char *fmt_bip340sig(const tal_t *ctx, const struct bip340sig *bip340sig)

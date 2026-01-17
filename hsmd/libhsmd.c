@@ -2348,8 +2348,10 @@ u8 *hsmd_init(const u8 *secret_data, size_t secret_len, const u64 hsmd_version,
 	       sizeof(secretstuff.bolt12));
 
 	/* Initialize a hash table for musig state, one entry per channel.
-	 * Must be tal-allocated because htable_tal uses it as parent context. */
-	secretstuff.musig_map = tal(NULL, struct musig_state_map);
+	 * Must be tal-allocated because htable_tal uses it as parent context.
+	 * Mark as notleak since it's intentional global state that lives for
+	 * the lifetime of the hsmd process. */
+	secretstuff.musig_map = notleak_with_children(tal(NULL, struct musig_state_map));
 	musig_state_map_init(secretstuff.musig_map);
 
 	/* Now we can consider ourselves initialized, and we won't get

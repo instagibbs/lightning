@@ -839,7 +839,7 @@ static void send_update(struct eltoo_peer *peer)
                   tal_hex(tmpctx, msg));
 
     /* We don't learn their new nonce until we get ACK... */
-    status_debug("partial signature %s on update tx %s, settle tx %s, using our key %s, their key %s, inner pubkey %s, NEW our nonce %s, OLD their nonce %s, session %s",
+    status_debug("partial signature %s on update tx %s, settle tx %s, using our key %s, their key %s, inner pubkey %s, NEW our nonce %s, OLD their nonce %s, session %s, cache %s",
              fmt_partial_sig(tmpctx, &peer->channel->eltoo_keyset.last_committed_state.self_psig),
              fmt_bitcoin_tx(tmpctx, update_and_settle_txs[0]),
              fmt_bitcoin_tx(tmpctx, update_and_settle_txs[1]),
@@ -848,7 +848,8 @@ static void send_update(struct eltoo_peer *peer)
              fmt_pubkey(tmpctx, &peer->channel->eltoo_keyset.inner_pubkey),
              fmt_nonce(tmpctx, &peer->channel->eltoo_keyset.self_next_nonce),
              fmt_nonce(tmpctx, &peer->channel->eltoo_keyset.other_next_nonce),
-             fmt_musig_session(tmpctx, &peer->channel->eltoo_keyset.last_committed_state.session));
+             fmt_musig_session(tmpctx, &peer->channel->eltoo_keyset.last_committed_state.session),
+             fmt_musig_keyagg_cache(tmpctx, &cache));
 
     /* Cache half-signed tx, for finalization when ACK comes back */
     tal_free(peer->channel->eltoo_keyset.committed_update_tx);
@@ -1114,6 +1115,12 @@ static void handle_peer_update_sig(struct eltoo_peer *peer, const u8 *msg)
 	}
 
 	/* Keyagg cache/session etc lets us verify partial sig; do that for blame purposes */
+	status_debug("VERIFICATION: other_psig=%s other_nonce=%s other_key=%s session=%s cache=%s",
+		     fmt_partial_sig(tmpctx, &peer->channel->eltoo_keyset.last_committed_state.other_psig),
+		     fmt_nonce(tmpctx, &peer->channel->eltoo_keyset.other_next_nonce),
+		     fmt_pubkey(tmpctx, &peer->channel->eltoo_keyset.other_funding_key),
+		     fmt_musig_session(tmpctx, &peer->channel->eltoo_keyset.last_committed_state.session),
+		     fmt_musig_keyagg_cache(tmpctx, &cache));
 	if (!bipmusig_partial_sig_verify(&peer->channel->eltoo_keyset.last_committed_state.other_psig,
 			&peer->channel->eltoo_keyset.other_next_nonce,
 			&peer->channel->eltoo_keyset.other_funding_key,
