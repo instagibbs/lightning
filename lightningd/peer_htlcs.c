@@ -36,6 +36,24 @@ static bool state_update_ok(struct channel *channel,
 	if (expected == RCVD_REMOVE_HTLC)
 		expected = RCVD_REMOVE_COMMIT;
 
+	/* For eltoo channels, there's no revocation step, so we skip
+	 * the intermediate ACK states and go straight to the final
+	 * ACK_REVOCATION state. */
+	if (channel_type_has(channel->type, OPT_ELTOO)) {
+		/* Outgoing HTLC add: SENT_ADD_COMMIT -> SENT_ADD_ACK_REVOCATION */
+		if (oldstate == SENT_ADD_COMMIT && newstate == SENT_ADD_ACK_REVOCATION)
+			expected = SENT_ADD_ACK_REVOCATION;
+		/* Incoming HTLC add: RCVD_ADD_COMMIT -> RCVD_ADD_ACK_REVOCATION */
+		if (oldstate == RCVD_ADD_COMMIT && newstate == RCVD_ADD_ACK_REVOCATION)
+			expected = RCVD_ADD_ACK_REVOCATION;
+		/* Outgoing HTLC remove: RCVD_REMOVE_COMMIT -> RCVD_REMOVE_ACK_REVOCATION */
+		if (oldstate == RCVD_REMOVE_COMMIT && newstate == RCVD_REMOVE_ACK_REVOCATION)
+			expected = RCVD_REMOVE_ACK_REVOCATION;
+		/* Incoming HTLC remove: SENT_REMOVE_COMMIT -> SENT_REMOVE_ACK_REVOCATION */
+		if (oldstate == SENT_REMOVE_COMMIT && newstate == SENT_REMOVE_ACK_REVOCATION)
+			expected = SENT_REMOVE_ACK_REVOCATION;
+	}
+
 	if (newstate != expected) {
 		channel_internal_error(channel,
 				       "HTLC %s %"PRIu64" invalid update %s->%s",
