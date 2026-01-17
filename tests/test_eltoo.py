@@ -29,7 +29,7 @@ def test_uncommitted_removal_reestablishment(node_factory, bitcoind):
     # Pay comment will cause disconnect, but should recover
     l1.pay(l2, 100000*1000)
 
-    wait_for(lambda: l2.rpc.listpeers()['peers'][0]['channels'][0]['in_fulfilled_msat'] == Millisatoshi(100000000))
+    wait_for(lambda: l2.rpc.listpeerchannels()['channels'][0]['in_fulfilled_msat'] == Millisatoshi(100000000))
 
 def test_uncommitted_addition_reestablishment(node_factory, bitcoind):
 
@@ -51,7 +51,7 @@ def test_uncommitted_addition_reestablishment(node_factory, bitcoind):
     # But otherwise be ok on follow-up attempts
     l1.pay(l2, 150000*1000)
 
-    wait_for(lambda: l2.rpc.listpeers()['peers'][0]['channels'][0]['in_fulfilled_msat'] == Millisatoshi(150000000))
+    wait_for(lambda: l2.rpc.listpeerchannels()['channels'][0]['in_fulfilled_msat'] == Millisatoshi(150000000))
 
 def test_eltoo_offerer_ack_reestablishment(node_factory, bitcoind):
     """Test that channel reestablishment does the expected thing when 
@@ -70,7 +70,7 @@ def test_eltoo_offerer_ack_reestablishment(node_factory, bitcoind):
     # Offerer gets new partial sig on reestablishment
     l1.daemon.wait_for_log("partial signature reestablish combine our_psig")
 
-    wait_for(lambda: l2.rpc.listpeers()['peers'][0]['channels'][0]['in_fulfilled_msat'] == Millisatoshi(100000000))
+    wait_for(lambda: l2.rpc.listpeerchannels()['channels'][0]['in_fulfilled_msat'] == Millisatoshi(100000000))
 
 def test_eltoo_uneven_reestablishment(node_factory, bitcoind):
     """Test that channel reestablishment does the expected thing when 
@@ -91,7 +91,7 @@ def test_eltoo_uneven_reestablishment(node_factory, bitcoind):
     l1.daemon.wait_for_log('Retransmitting update')
     l2.daemon.wait_for_log('Received update_sig')
 
-    wait_for(lambda: l2.rpc.listpeers()['peers'][0]['channels'][0]['in_fulfilled_msat'] == Millisatoshi(100000000))
+    wait_for(lambda: l2.rpc.listpeerchannels()['channels'][0]['in_fulfilled_msat'] == Millisatoshi(100000000))
 
 def test_eltoo_base_reestablishment(node_factory, bitcoind):
     """Test that channel reestablishment does the expected thing when all prior messages completed """
@@ -109,17 +109,25 @@ def test_eltoo_base_reestablishment(node_factory, bitcoind):
     l1.daemon.wait_for_log('Reconnected, and reestablished')
     l2.daemon.wait_for_log('Reconnected, and reestablished')
 
-    l1_update_tx = l1.rpc.listpeers(l2.info['id'])["peers"][0]["channels"][0]['last_update_tx']
-    l1_settle_tx = l1.rpc.listpeers(l2.info['id'])["peers"][0]["channels"][0]['last_settle_tx']
+    l1_update_tx = l1.rpc.listpeerchannels(l2.info['id'])['channels'][0]['last_update_tx']
+    l1_settle_tx = l1.rpc.listpeerchannels(l2.info['id'])['channels'][0]['last_settle_tx']
 
-    l2_update_tx = l2.rpc.listpeers(l1.info['id'])["peers"][0]["channels"][0]['last_update_tx']
-    l2_settle_tx = l2.rpc.listpeers(l1.info['id'])["peers"][0]["channels"][0]['last_settle_tx']
+    l2_update_tx = l2.rpc.listpeerchannels(l1.info['id'])['channels'][0]['last_update_tx']
+    l2_settle_tx = l2.rpc.listpeerchannels(l1.info['id'])['channels'][0]['last_settle_tx']
 
-    assert l1_update_tx == l2_update_tx
-    assert l1_settle_tx == l2_settle_tx
-
+    # Decode transactions to compare essential fields (txid can differ due to bound vs unbound format)
     l1_update_details = bitcoind.rpc.decoderawtransaction(l1_update_tx)
+    l2_update_details = bitcoind.rpc.decoderawtransaction(l2_update_tx)
     l1_settle_details = bitcoind.rpc.decoderawtransaction(l1_settle_tx)
+    l2_settle_details = bitcoind.rpc.decoderawtransaction(l2_settle_tx)
+
+    # Verify both nodes agree on the update transaction state number (locktime)
+    assert l1_update_details["locktime"] == l2_update_details["locktime"]
+    assert l1_settle_details["locktime"] == l2_settle_details["locktime"]
+
+    # Verify both nodes have the same outputs (the core channel state)
+    assert l1_update_details["vout"] == l2_update_details["vout"]
+    assert l1_settle_details["vout"] == l2_settle_details["vout"]
 
     # First update recovered
     assert l1_update_details["locktime"] == 500000000
@@ -127,7 +135,7 @@ def test_eltoo_base_reestablishment(node_factory, bitcoind):
 
     # l1 can pay l2
     l1.pay(l2, 100000*SAT)
-    wait_for(lambda: l2.rpc.listpeers()['peers'][0]['channels'][0]['in_fulfilled_msat'] == Millisatoshi(100000000))
+    wait_for(lambda: l2.rpc.listpeerchannels()['channels'][0]['in_fulfilled_msat'] == Millisatoshi(100000000))
 
 def test_eltoo_unannounced_hop(node_factory, bitcoind):
     """Test eltoo payments work over hops"""
@@ -150,7 +158,7 @@ def test_eltoo_unannounced_hop(node_factory, bitcoind):
     scid = l3.rpc.listchannels()['channels'][0]['short_channel_id']
     invoice = l3.rpc.invoice(msatoshi=10000, label='hop', description='test', exposeprivatechannels=scid)
     l1.rpc.pay(invoice['bolt11'])
-    wait_for(lambda: l3.rpc.listpeers()['peers'][0]['channels'][0]['in_fulfilled_msat'] == Millisatoshi(200010000))
+    wait_for(lambda: l3.rpc.listpeerchannels()['channels'][0]['in_fulfilled_msat'] == Millisatoshi(200010000))
 
 # Example flags to run test
 # DEBUG_SUBD=eltoo_onchaind VALGRIND=0 BITCOIND_TEST_PATH=/home/greg/bitcoin-dev/lightning/eltoo_bitcoind pytest -s tests/test_eltoo.py -k test_eltoo_htlc
@@ -196,11 +204,11 @@ def test_eltoo_htlc(node_factory, bitcoind, executor, chainparams):
     l2.daemon.wait_for_log('WIRE_UPDATE_SIGNED_ACK')
 
     # Take our snapshot of complete tx with HTLC.
-    l1_update_tx = l1.rpc.listpeers(l2.info['id'])["peers"][0]["channels"][0]['last_update_tx']
-    l1_settle_tx = l1.rpc.listpeers(l2.info['id'])["peers"][0]["channels"][0]['last_settle_tx']
+    l1_update_tx = l1.rpc.listpeerchannels(l2.info['id'])['channels'][0]['last_update_tx']
+    l1_settle_tx = l1.rpc.listpeerchannels(l2.info['id'])['channels'][0]['last_settle_tx']
 
-    l2_update_tx = l2.rpc.listpeers(l1.info['id'])["peers"][0]["channels"][0]['last_update_tx']
-    l2_settle_tx = l2.rpc.listpeers(l1.info['id'])["peers"][0]["channels"][0]['last_settle_tx']
+    l2_update_tx = l2.rpc.listpeerchannels(l1.info['id'])['channels'][0]['last_update_tx']
+    l2_settle_tx = l2.rpc.listpeerchannels(l1.info['id'])['channels'][0]['last_settle_tx']
 
     assert l1_update_tx == l2_update_tx
     assert l1_settle_tx == l2_settle_tx

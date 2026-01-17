@@ -1352,8 +1352,11 @@ impl From<responses::ListpeerchannelsChannels> for pb::ListpeerchannelsChannels 
             inflight: c.inflight.map(|arr| arr.into_iter().map(|i| i.into()).collect()).unwrap_or(vec![]), // Rule #3
             initial_feerate: c.initial_feerate, // Rule #2 for type string?
             last_feerate: c.last_feerate, // Rule #2 for type string?
+            last_settle_tx: c.last_settle_tx.map(|v| hex::decode(v).unwrap()), // Rule #2 for type hex?
             last_stable_connection: c.last_stable_connection, // Rule #2 for type u64?
+            last_tx: c.last_tx.map(|v| hex::decode(v).unwrap()), // Rule #2 for type hex?
             last_tx_fee_msat: c.last_tx_fee_msat.map(|f| f.into()), // Rule #2 for type msat?
+            last_update_tx: c.last_update_tx.map(|v| hex::decode(v).unwrap()), // Rule #2 for type hex?
             lost_state: c.lost_state, // Rule #2 for type boolean?
             max_accepted_htlcs: c.max_accepted_htlcs, // Rule #2 for type u32?
             max_to_us_msat: c.max_to_us_msat.map(|f| f.into()), // Rule #2 for type msat?

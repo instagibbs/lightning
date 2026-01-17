@@ -1,6 +1,7 @@
 #include "config.h"
 #include <bitcoin/privkey.h>
 #include <bitcoin/script.h>
+#include <bitcoin/tx.h>
 #include <ccan/array_size/array_size.h>
 #include <ccan/crypto/hkdf_sha256/hkdf_sha256.h>
 #include <ccan/crypto/siphash24/siphash24.h>
@@ -1547,6 +1548,9 @@ static u8 *handle_combine_psig(struct hsmd_client *c, const u8 *msg_in)
     p_sig_ptrs[0] = &p_sig_1.p_sig;
     p_sig_ptrs[1] = &p_sig_2.p_sig;
 
+    printf("combine settle_tx: %s\n", fmt_bitcoin_tx(tmpctx, settle_tx));
+    printf("combine update_tx: %s\n", fmt_bitcoin_tx(tmpctx, update_tx));
+
     annex = make_eltoo_annex(tmpctx, settle_tx);
     bitcoin_tx_taproot_hash_for_sig(update_tx, /* input_index */ 0, SIGHASH_ANYPREVOUTANYSCRIPT|SIGHASH_SINGLE, /* non-NULL script signals bip342... */ annex, annex, &hash_out);
     printf("validate taproot Sighash: ");
@@ -1620,6 +1624,9 @@ static u8 *handle_psign_update_tx(struct hsmd_client *c, const u8 *msg_in)
 			  &local_funding_pubkey, NULL, &secrets, NULL);
 
     /* Now that we have both public keys, we can derive the MuSig session */
+
+    printf("psign settle_tx: %s\n", fmt_bitcoin_tx(tmpctx, settle_tx));
+    printf("psign update_tx: %s\n", fmt_bitcoin_tx(tmpctx, update_tx));
 
     annex = make_eltoo_annex(tmpctx, settle_tx);
     pubkey_ptrs[0] = &remote_funding_pubkey;

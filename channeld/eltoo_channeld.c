@@ -35,6 +35,7 @@
 #include <common/status.h>
 #include <common/subdaemon.h>
 #include <common/timeout.h>
+#include <common/update_tx.h>
 #include <common/utils.h>
 #include <common/wire_error.h>
 #include <errno.h>
@@ -1877,7 +1878,7 @@ static void resend_updates(struct eltoo_peer *peer, struct changed_htlc *last)
                              h->path_key);
             } else
                 tlvs = NULL;
-            u8 *msg = towire_update_add_htlc(NULL, &peer->channel_id,
+            msg = towire_update_add_htlc(NULL, &peer->channel_id,
                              h->id, h->amount,
                              &h->rhash,
                              abs_locktime_to_blocks(
@@ -2044,8 +2045,6 @@ static void peer_reconnect(struct eltoo_peer *peer,
     if (peer->funding_locked[LOCAL]
         && last_update_num == 0
         && remote_last_update_num == 0) {
-        u8 *msg;
-
         status_debug("Retransmitting funding_locked_eltoo for channel %s",
                      fmt_channel_id(tmpctx, &peer->channel_id));
         msg = towire_funding_locked_eltoo(NULL,
@@ -2059,15 +2058,25 @@ static void peer_reconnect(struct eltoo_peer *peer,
 		/* They say they sent a response we didn't get yet */
 		if (peer->channel->eltoo_keyset.committed_update_tx) {
 			/* This section is(?) a carbon copy of normal operation of receiving ack */
-			const struct htlc **changed_htlcs = tal_arr(msg, const struct htlc *, 0);
+			const struct htlc **changed_htlcs = tal_arr(tmpctx, const struct htlc *, 0);
 			struct bip340sig update_sig;
+			struct bitcoin_tx *update_for_verify;
+
+			/* TODO: While SIGHASH_ANYPREVOUTANYSCRIPT doesn't commit to prevout,
+			 * the stored committed_update_tx may be in different formats between
+			 * nodes (bound vs unbound). Use unbind to ensure consistency for
+			 * verification. This is a workaround - investigate why the transactions
+			 * differ and fix at the source. */
+			update_for_verify = unbind_update_tx(tmpctx,
+					peer->channel->eltoo_keyset.committed_update_tx,
+					&peer->channel->eltoo_keyset.inner_pubkey);
 
 			peer->channel->eltoo_keyset.last_committed_state.other_psig = remote_update_psig;
 
 			status_debug("partial signature reestablish combine our_psig %s their_psig %s on update tx %s, settle tx %s, using our key %s, their key %s, inner pubkey %s, NEW our nonce %s, NEW their nonce %s, session %s",
 				 fmt_partial_sig(tmpctx, &peer->channel->eltoo_keyset.last_committed_state.self_psig),
 				 fmt_partial_sig(tmpctx, &peer->channel->eltoo_keyset.last_committed_state.other_psig),
-				 fmt_bitcoin_tx(tmpctx, peer->channel->eltoo_keyset.committed_update_tx),
+				 fmt_bitcoin_tx(tmpctx, update_for_verify),
 				 fmt_bitcoin_tx(tmpctx, peer->channel->eltoo_keyset.committed_settle_tx),
 				 fmt_pubkey(tmpctx, &peer->channel->eltoo_keyset.self_funding_key),
 				 fmt_pubkey(tmpctx, &peer->channel->eltoo_keyset.other_funding_key),
@@ -2076,13 +2085,13 @@ static void peer_reconnect(struct eltoo_peer *peer,
 				 fmt_nonce(tmpctx, &peer->channel->eltoo_keyset.other_next_nonce),
 				 fmt_musig_session(tmpctx, &peer->channel->eltoo_keyset.last_committed_state.session));
 
-			/* Check psig */
+			/* Check psig using unbind update transaction for consistency */
 			msg = towire_hsmd_combine_psig(NULL,
 									&peer->channel_id,
 									&peer->channel->eltoo_keyset.last_committed_state.self_psig,
 									&peer->channel->eltoo_keyset.last_committed_state.other_psig,
 									&peer->channel->eltoo_keyset.last_committed_state.session,
-									peer->channel->eltoo_keyset.committed_update_tx,
+									update_for_verify,
 									peer->channel->eltoo_keyset.committed_settle_tx,
 									&peer->channel->eltoo_keyset.inner_pubkey);
 			wire_sync_write(HSM_FD, take(msg));

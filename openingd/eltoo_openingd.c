@@ -663,6 +663,8 @@ static bool funder_finalize_channel_setup(struct eltoo_state *state,
     /* Update succeeded, migrate over signing state from last_committed_state to last_complete_state */
     state->channel->eltoo_keyset.last_complete_state = state->channel->eltoo_keyset.last_committed_state;
 
+    /* Transactions are stored unbound - binding happens just before broadcast */
+
     /* State is sent back to master later */
 
 	peer_billboard(false, "Funding channel: opening negotiation succeeded");

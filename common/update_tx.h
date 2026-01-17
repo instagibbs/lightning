@@ -120,5 +120,16 @@ struct bitcoin_tx *unbound_update_tx(const tal_t *ctx,
 				     struct amount_sat funding_sats,
                      const struct pubkey *inner_pubkey);
 
+/**
+ * unbind_update_tx: create an unbound copy of a bound update transaction
+ * Used for signature verification during reestablishment where we need
+ * the original unbound transaction that was signed.
+ * @ctx: context to allocate transaction from
+ * @bound_tx: the bound update transaction to unbind
+ * @inner_pubkey: inner public key for the eltoo channel (needed for PSBT witness_utxo)
+ */
+struct bitcoin_tx *unbind_update_tx(const tal_t *ctx,
+                     const struct bitcoin_tx *bound_tx,
+                     const struct pubkey *inner_pubkey);
 
 #endif /* LIGHTNING_COMMON_UPDATE_TX_H */

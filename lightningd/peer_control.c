@@ -8,6 +8,7 @@
 #include <common/addr.h>
 #include <common/htlc_trim.h>
 #include <common/initial_commit_tx.h>
+#include <common/update_tx.h>
 #include <common/json_channel_type.h>
 #include <common/json_command.h>
 #include <common/timeout.h>
@@ -305,10 +306,30 @@ static struct bitcoin_tx *sign_and_send_last(const tal_t *ctx,
 	struct anchor_details *adet;
 	struct bitcoin_tx *tx;
 
-	/* For eltoo channels, the settle tx is already fully signed with
-	 * the MuSig2 aggregate signature. We just need to clone and broadcast. */
+	/* For eltoo channels, we need to bind the update and settle txs
+	 * to the funding outpoint before broadcasting. */
 	if (channel_type_has(channel->type, OPT_ELTOO)) {
-		tx = clone_bitcoin_tx(ctx, last_tx);
+		struct bitcoin_tx **bound_txs;
+		struct bitcoin_tx *bound_update_tx;
+
+		/* Use bind_txs_to_funding_outpoint to combine partial sigs and bind txs */
+		bound_txs = bind_txs_to_funding_outpoint(
+			channel->last_update_tx,
+			&channel->funding,
+			channel->last_settle_tx,
+			&channel->our_last_psig,
+			&channel->their_last_psig,
+			&channel->local_funding_pubkey,
+			&channel->channel_info.remote_fundingkey,
+			&channel->session);
+
+		bound_update_tx = tal_steal(ctx, bound_txs[0]);
+		tx = tal_steal(ctx, bound_txs[1]);
+
+		/* Broadcast the update tx first - it spends the funding output */
+		log_debug(channel->log, "Broadcasting eltoo update tx");
+		broadcast_tx(channel, ld->topology, channel, bound_update_tx,
+			     cmd_id, false, 0, NULL, NULL, NULL);
 	} else {
 		tx = sign_last_tx(ctx, channel, last_tx, last_sig);
 	}
@@ -1318,8 +1339,12 @@ static void NON_NULL_ARGS(1, 2, 4, 5) json_add_channel(struct command *cmd,
 
 	json_add_htlcs(ld, response, channel);
 
-	/* FIXME: add eltoo update_tx and settle_tx display when implemented */
-	if (channel->last_tx) {
+	if (channel_type_has(channel->type, OPT_ELTOO)) {
+		if (channel->last_update_tx)
+			json_add_tx(response, "last_update_tx", channel->last_update_tx);
+		if (channel->last_settle_tx)
+			json_add_tx(response, "last_settle_tx", channel->last_settle_tx);
+	} else if (channel->last_tx) {
 		json_add_tx(response, "last_tx", channel->last_tx);
 	}
 

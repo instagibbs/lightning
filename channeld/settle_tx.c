@@ -278,13 +278,13 @@ struct bitcoin_tx *settle_tx(const tal_t *ctx,
 	/* Identify the direct outputs (to_us, to_them). */
 	if (direct_outputs != NULL) {
 		direct_outputs[LOCAL] = direct_outputs[REMOTE] = NULL;
-		for (size_t i = 0; i < tx->wtx->num_outputs; i++) {
-			if ((*htlcmap)[i] == dummy_to_local) {
-				(*htlcmap)[i] = NULL;
-				direct_outputs[LOCAL] = tx->wtx->outputs + i;
-			} else if ((*htlcmap)[i] == dummy_to_remote) {
-				(*htlcmap)[i] = NULL;
-				direct_outputs[REMOTE] = tx->wtx->outputs + i;
+		for (size_t out_idx = 0; out_idx < tx->wtx->num_outputs; out_idx++) {
+			if ((*htlcmap)[out_idx] == dummy_to_local) {
+				(*htlcmap)[out_idx] = NULL;
+				direct_outputs[LOCAL] = tx->wtx->outputs + out_idx;
+			} else if ((*htlcmap)[out_idx] == dummy_to_remote) {
+				(*htlcmap)[out_idx] = NULL;
+				direct_outputs[REMOTE] = tx->wtx->outputs + out_idx;
 			}
 		}
 	}

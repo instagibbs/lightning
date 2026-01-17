@@ -1,4 +1,5 @@
 #include "config.h"
+#include <bitcoin/psbt.h>
 #include <bitcoin/script.h>
 #include <bitcoin/tx.h>
 #include <ccan/array_size/array_size.h>
@@ -412,4 +413,39 @@ struct bitcoin_tx *unbound_update_tx(const tal_t *ctx,
     bitcoin_tx_finalize(update_tx);
 
     return update_tx;
+}
+
+struct bitcoin_tx *unbind_update_tx(const tal_t *ctx,
+                     const struct bitcoin_tx *bound_tx,
+                     const struct pubkey *inner_pubkey)
+{
+    struct bitcoin_tx *unbound_tx;
+    struct amount_sat funding_sats;
+    struct bitcoin_outpoint fake_outpoint;
+    u8 *script_pubkey;
+    int input_num;
+
+    /* Clone the transaction to preserve outputs */
+    unbound_tx = clone_bitcoin_tx(ctx, bound_tx);
+
+    /* Get funding amount from PSBT */
+    funding_sats = psbt_input_get_amount(unbound_tx->psbt, 0);
+
+    /* Remove the bound input */
+    bitcoin_tx_remove_input(unbound_tx, 0);
+
+    /* Create fake unbound outpoint (all 0xff) */
+    memset(fake_outpoint.txid.shad.sha.u.u8, 0xff, sizeof(fake_outpoint.txid.shad.sha.u.u8));
+    fake_outpoint.n = 0;
+
+    /* Generate P2TR scriptPubkey from inner_pubkey for taproot signing */
+    script_pubkey = scriptpubkey_p2tr(tmpctx, inner_pubkey);
+
+    /* Add unbound input with correct PSBT witness_utxo */
+    input_num = bitcoin_tx_add_input(unbound_tx, &fake_outpoint, /* sequence */ 0xFFFFFFFD,
+                 /* scriptSig */ NULL, funding_sats, script_pubkey,
+                 /* input_wscript */ NULL, /* inner_pubkey */ NULL, /* tap_tree */ NULL);
+    assert(input_num == 0);
+
+    return unbound_tx;
 }

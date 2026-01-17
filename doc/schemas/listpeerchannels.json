@@ -997,9 +997,24 @@
               }
             },
             "last_tx": {
+              "added": "pre-v0.10.1",
               "type": "hex",
               "description": [
                 "The last transaction for this channel (commitment or settle)."
+              ]
+            },
+            "last_update_tx": {
+              "added": "pre-v0.10.1",
+              "type": "hex",
+              "description": [
+                "The last signed update transaction for eltoo channels."
+              ]
+            },
+            "last_settle_tx": {
+              "added": "pre-v0.10.1",
+              "type": "hex",
+              "description": [
+                "The last signed settlement transaction for eltoo channels."
               ]
             }
           },
@@ -1123,7 +1138,9 @@
                       "The bitcoin address we will close to (present if close_to_addr is a standardized address)."
                     ]
                   },
-                  "last_tx": {}
+                  "last_tx": {},
+                  "last_update_tx": {},
+                  "last_settle_tx": {}
                 }
               }
             },
@@ -1224,7 +1241,9 @@
                       "Fee attached to this the current tx."
                     ]
                   },
-                  "last_tx": {}
+                  "last_tx": {},
+                  "last_update_tx": {},
+                  "last_settle_tx": {}
                 }
               }
             },
@@ -1326,7 +1345,9 @@
                       "0 if we're the lesser node_id, 1 if we're the greater (as used in BOLT #7 channel_update)."
                     ]
                   },
-                  "last_tx": {}
+                  "last_tx": {},
+                  "last_update_tx": {},
+                  "last_settle_tx": {}
                 }
               }
             },
@@ -1439,7 +1460,9 @@
                       "The minimum feerate for the next funding transaction in per-1000-weight, with `kpw` appended."
                     ]
                   },
-                  "last_tx": {}
+                  "last_tx": {},
+                  "last_update_tx": {},
+                  "last_settle_tx": {}
                 }
               }
             }

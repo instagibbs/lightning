@@ -2928,8 +2928,11 @@
             "ListPeerChannels.channels[].inflight[]": 16,
             "ListPeerChannels.channels[].initial_feerate": 12,
             "ListPeerChannels.channels[].last_feerate": 13,
+            "ListPeerChannels.channels[].last_settle_tx": 65,
             "ListPeerChannels.channels[].last_stable_connection": 56,
+            "ListPeerChannels.channels[].last_tx": 63,
             "ListPeerChannels.channels[].last_tx_fee_msat": 59,
+            "ListPeerChannels.channels[].last_update_tx": 64,
             "ListPeerChannels.channels[].lost_state": 57,
             "ListPeerChannels.channels[].max_accepted_htlcs": 40,
             "ListPeerChannels.channels[].max_to_us_msat": 25,
@@ -10925,11 +10928,23 @@
             "added": "v23.02",
             "deprecated": null
         },
+        "ListPeerChannels.channels[].last_settle_tx": {
+            "added": "pre-v0.10.1",
+            "deprecated": null
+        },
         "ListPeerChannels.channels[].last_stable_connection": {
             "added": "v24.02",
             "deprecated": null
         },
+        "ListPeerChannels.channels[].last_tx": {
+            "added": "pre-v0.10.1",
+            "deprecated": null
+        },
         "ListPeerChannels.channels[].last_tx_fee_msat": {
+            "added": "pre-v0.10.1",
+            "deprecated": null
+        },
+        "ListPeerChannels.channels[].last_update_tx": {
             "added": "pre-v0.10.1",
             "deprecated": null
         },

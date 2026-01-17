@@ -1649,11 +1649,17 @@ static unsigned channel_msg(struct subd *sd, const u8 *msg, const int *fds)
 		peer_got_channel_ready_eltoo(sd->channel, msg);
 		break;
 	case WIRE_CHANNELD_GOT_UPDATESIG:
+		peer_got_updatesig(sd->channel, msg);
+		break;
 	case WIRE_CHANNELD_GOT_ACK:
-	case WIRE_CHANNELD_GOT_SHUTDOWN_ELTOO:
+		peer_got_ack(sd->channel, msg);
+		break;
 	case WIRE_CHANNELD_SENDING_UPDATESIG:
+		peer_sending_updatesig(sd->channel, msg);
+		break;
+	case WIRE_CHANNELD_GOT_SHUTDOWN_ELTOO:
 	case WIRE_CHANNELD_RESENDING_UPDATESIG:
-		/* FIXME: handle eltoo state updates properly */
+		/* FIXME: handle eltoo shutdown and resending properly */
 		break;
 	case WIRE_CHANNELD_UPGRADED:
 		handle_channel_upgrade(sd->channel, msg);
