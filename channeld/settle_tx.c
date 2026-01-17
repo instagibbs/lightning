@@ -11,6 +11,7 @@
 #include <common/permute_tx.h>
 
 #include <stdio.h>
+#include <inttypes.h>
 
 #ifndef SUPERVERBOSE
 #define SUPERVERBOSE(...)
@@ -250,7 +251,21 @@ struct bitcoin_tx *settle_tx(const tal_t *ctx,
 	 * 9. Sort the outputs into [BIP 69+CLTV
 	 *    order](#transaction-input-and-output-ordering)
 	 */
+	printf("DEBUG: Before permute_outputs, num_outputs=%zu\n", tx->wtx->num_outputs);
+	for (size_t dbg_i = 0; dbg_i < tx->wtx->num_outputs; dbg_i++) {
+		printf("DEBUG: Output[%zu] satoshi=%"PRIu64" script=%s\n",
+			   dbg_i,
+			   tx->wtx->outputs[dbg_i].satoshi,
+			   tal_hexstr(tmpctx, tx->wtx->outputs[dbg_i].script, tx->wtx->outputs[dbg_i].script_len));
+	}
 	permute_outputs(tx, cltvs, (const void **)*htlcmap);
+	printf("DEBUG: After permute_outputs\n");
+	for (size_t dbg_i = 0; dbg_i < tx->wtx->num_outputs; dbg_i++) {
+		printf("DEBUG: Output[%zu] satoshi=%"PRIu64" script=%s\n",
+			   dbg_i,
+			   tx->wtx->outputs[dbg_i].satoshi,
+			   tal_hexstr(tmpctx, tx->wtx->outputs[dbg_i].script, tx->wtx->outputs[dbg_i].script_len));
+	}
 
 	/* BOLT #???:
 	 *

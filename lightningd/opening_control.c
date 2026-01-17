@@ -1157,12 +1157,13 @@ static void eltoo_opening_funder_finished(struct subd *openingd,
 	derive_channel_id(&cid, &funding);
 
 	/* For eltoo, we need to store the remote funding key in channel_info.
-	 * The basepoint fields are not used for eltoo but the wallet code
+	 * Most basepoint fields are not used for eltoo but the wallet code
 	 * requires valid pubkeys to serialize, so use remote_fundingkey as
-	 * a placeholder for all of them. */
+	 * a placeholder. However, theirbase.payment is used as the settlement
+	 * pubkey for eltoo, so we must use the actual remote_settlekey. */
 	channel_info.remote_fundingkey = remote_fundingkey;
 	channel_info.theirbase.revocation = remote_fundingkey;
-	channel_info.theirbase.payment = remote_fundingkey;
+	channel_info.theirbase.payment = remote_settlekey;
 	channel_info.theirbase.htlc = remote_fundingkey;
 	channel_info.theirbase.delayed_payment = remote_fundingkey;
 	channel_info.remote_per_commit = remote_fundingkey;
@@ -1283,12 +1284,13 @@ static void eltoo_opening_fundee_finished(struct subd *openingd,
 	derive_channel_id(&cid, &funding);
 
 	/* For eltoo, we need to store the remote funding key in channel_info.
-	 * The basepoint fields are not used for eltoo but the wallet code
+	 * Most basepoint fields are not used for eltoo but the wallet code
 	 * requires valid pubkeys to serialize, so use remote_fundingkey as
-	 * a placeholder for all of them. */
+	 * a placeholder. However, theirbase.payment is used as the settlement
+	 * pubkey for eltoo, so we must use the actual remote_settlekey. */
 	channel_info.remote_fundingkey = remote_fundingkey;
 	channel_info.theirbase.revocation = remote_fundingkey;
-	channel_info.theirbase.payment = remote_fundingkey;
+	channel_info.theirbase.payment = remote_settlekey;
 	channel_info.theirbase.htlc = remote_fundingkey;
 	channel_info.theirbase.delayed_payment = remote_fundingkey;
 	channel_info.remote_per_commit = remote_fundingkey;
