@@ -2169,14 +2169,42 @@ static bool peer_save_updatesig_received(struct channel *channel, u64 update_num
 	 * So we also need to increment REMOTE to keep in sync. */
 	channel->next_index[REMOTE]++;
 
-	/* TODO: channel_set_last_eltoo_txs needs to be implemented
-	 * to store eltoo state properly */
-	/* channel_set_last_eltoo_txs(channel, update_tx, settle_tx, their_psig, our_psig, session, TX_CHANNEL_UNILATERAL); */
-	(void)update_tx;
-	(void)settle_tx;
-	(void)their_psig;
-	(void)our_psig;
-	(void)session;
+	/* When we receive update_signed, we have both psigs and this becomes
+	 * the complete state. Update the channel with this state. */
+	channel->their_last_psig = *their_psig;
+	channel->our_last_psig = *our_psig;
+	channel->session = *session;
+
+	/* Update the complete transactions.
+	 * For eltoo channels, last_tx and last_settle_tx may point to the same object
+	 * (both initialized to first_settle at channel creation). We need to free
+	 * the old one and update both to avoid leaks and dangling pointers. */
+	tal_free(channel->last_update_tx);
+	/* Free the old settle tx. If aliased with last_tx, free via last_tx. */
+	if (channel->last_settle_tx == channel->last_tx) {
+		tal_free(channel->last_tx);
+		channel->last_tx = NULL;
+		channel->last_settle_tx = NULL;
+	} else {
+		tal_free(channel->last_settle_tx);
+	}
+	channel->last_update_tx = tal_steal(channel, update_tx);
+	channel->last_settle_tx = tal_steal(channel, settle_tx);
+	/* For eltoo, also update last_tx to point to the new settle tx */
+	channel->last_tx = channel->last_settle_tx;
+
+	/* Clear any committed state since we now have the complete state
+	 * (we're the recipient, so we have both psigs immediately) */
+	tal_free(channel->committed_update_tx);
+	tal_free(channel->committed_settle_tx);
+	tal_free(channel->committed_their_psig);
+	tal_free(channel->committed_our_psig);
+	tal_free(channel->committed_session);
+	channel->committed_update_tx = NULL;
+	channel->committed_settle_tx = NULL;
+	channel->committed_their_psig = NULL;
+	channel->committed_our_psig = NULL;
+	channel->committed_session = NULL;
 
 	return true;
 }
@@ -2281,6 +2309,43 @@ void peer_got_ack(struct channel *channel, const u8 *msg)
 
 
     /* FIXME check if update_num is right? */
+
+	/* Update complete state with the ack - this transition from committed to complete */
+	channel->their_last_psig = their_psig;
+	channel->our_last_psig = our_psig;
+	channel->session = session;
+
+	/* Migrate committed transactions to complete.
+	 * For eltoo channels, last_tx and last_settle_tx may point to the same object,
+	 * so we need to handle this carefully to avoid double-frees and leaks. */
+	if (channel->committed_update_tx) {
+		tal_free(channel->last_update_tx);
+		channel->last_update_tx = tal_steal(channel, channel->committed_update_tx);
+		channel->committed_update_tx = NULL;
+	}
+	if (channel->committed_settle_tx) {
+		/* Free the old settle tx. If last_settle_tx == last_tx (aliased),
+		 * free via last_tx and clear both to avoid double-free. */
+		if (channel->last_settle_tx == channel->last_tx) {
+			tal_free(channel->last_tx);
+			channel->last_tx = NULL;
+			channel->last_settle_tx = NULL;
+		} else {
+			tal_free(channel->last_settle_tx);
+		}
+		channel->last_settle_tx = tal_steal(channel, channel->committed_settle_tx);
+		/* For eltoo, also update last_tx to point to the new settle tx */
+		channel->last_tx = channel->last_settle_tx;
+		channel->committed_settle_tx = NULL;
+	}
+
+	/* Clear committed psig/session state now that we have the complete state */
+	tal_free(channel->committed_their_psig);
+	tal_free(channel->committed_our_psig);
+	tal_free(channel->committed_session);
+	channel->committed_their_psig = NULL;
+	channel->committed_our_psig = NULL;
+	channel->committed_session = NULL;
 
     log_debug(channel->log, "Responding with CHANNEL_GOT_ACK_REPLY");
 	subd_send_msg(channel->owner,
@@ -2392,11 +2457,22 @@ void peer_sending_updatesig(struct channel *channel, const u8 *msg)
 	tal_free(channel->last_sent_commit);
 	channel->last_sent_commit = tal_steal(channel, changed_htlcs);
 
-	/* Save committed transactions for reestablishment retransmit */
+	/* Save committed transactions and signing state for reestablishment retransmit */
 	tal_free(channel->committed_update_tx);
 	tal_free(channel->committed_settle_tx);
 	channel->committed_update_tx = tal_steal(channel, committed_update_tx);
 	channel->committed_settle_tx = tal_steal(channel, committed_settle_tx);
+
+	/* Save the committed psig and session - these are our own sig and session
+	 * that we used when signing the update. The peer's sig will be stored
+	 * when we receive the ack. */
+	tal_free(channel->committed_our_psig);
+	tal_free(channel->committed_session);
+	channel->committed_our_psig = tal_dup(channel, struct partial_sig, &our_update_psig);
+	channel->committed_session = tal_dup(channel, struct musig_session, &session);
+	/* their_psig will be set when we receive the ack, or NULL if we haven't gotten it */
+	tal_free(channel->committed_their_psig);
+	channel->committed_their_psig = NULL;
 
 	wallet_channel_save(ld->wallet, channel);
 

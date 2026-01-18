@@ -24,7 +24,7 @@ def test_uncommitted_removal_reestablishment(node_factory, bitcoind):
     disconnects = ['+WIRE_UPDATE_FULFILL_HTLC']
 
     l1, l2 = node_factory.line_graph(2,
-                                    opts=[{'may_reconnect': True}, {'may_reconnect': True, 'disconnect': disconnects}])
+                                    opts=[{'may_reconnect': True, 'developer': None}, {'may_reconnect': True, 'developer': None, 'disconnect': disconnects}])
 
     # Pay comment will cause disconnect, but should recover
     l1.pay(l2, 100000*1000)
@@ -37,7 +37,7 @@ def test_uncommitted_addition_reestablishment(node_factory, bitcoind):
     disconnects = ['+WIRE_UPDATE_ADD_HTLC']
 
     l1, l2 = node_factory.line_graph(2,
-                                    opts=[{'may_reconnect': True, 'disconnect': disconnects}, {'may_reconnect': True}])
+                                    opts=[{'may_reconnect': True, 'developer': None, 'disconnect': disconnects}, {'may_reconnect': True, 'developer': None}])
 
     # Pay comment will cause disconnect, and payment should fail hard
     try:
@@ -175,10 +175,12 @@ def test_eltoo_htlc(node_factory, bitcoind, executor, chainparams):
     l1, l2 = node_factory.line_graph(2,
                                      opts=[{'dev-disable-commit-after': 1, # add HTLC once
                                             'may_fail': True,
+                                            'developer': None,
                                             'feerates': (7500, 7500, 7500, 7500),
                                             'allow_broken_log': True,
                                             'plugin': coin_mvt_plugin},
                                            {'dev-disable-commit-after': 2, # remove HTLC, then later add
+                                            'developer': None,
                                             'plugin': coin_mvt_plugin}])
     channel_id = first_channel_id(l1, l2)
 

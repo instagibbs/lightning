@@ -1202,9 +1202,14 @@ static void eltoo_opening_funder_finished(struct subd *openingd,
 	channel->their_next_nonce = their_next_nonce;
 	channel->our_next_nonce = our_next_nonce;
 	channel->last_update_tx = tal_steal(channel, first_update);
-	channel->last_settle_tx = tal_steal(channel, first_settle);
+	/* first_settle was already stolen to channel->last_tx by wallet_commit_channel,
+	 * so just point last_settle_tx to the same object */
+	channel->last_settle_tx = channel->last_tx;
 	channel->committed_update_tx = NULL;
 	channel->committed_settle_tx = NULL;
+	channel->committed_their_psig = NULL;
+	channel->committed_our_psig = NULL;
+	channel->committed_session = NULL;
 
 	/* Watch for funding confirms */
 	channel_watch_funding(ld, channel);
@@ -1328,9 +1333,14 @@ static void eltoo_opening_fundee_finished(struct subd *openingd,
 	channel->their_next_nonce = their_next_nonce;
 	channel->our_next_nonce = our_next_nonce;
 	channel->last_update_tx = tal_steal(channel, first_update);
-	channel->last_settle_tx = tal_steal(channel, first_settle);
+	/* first_settle was already stolen to channel->last_tx by wallet_commit_channel,
+	 * so just point last_settle_tx to the same object */
+	channel->last_settle_tx = channel->last_tx;
 	channel->committed_update_tx = NULL;
 	channel->committed_settle_tx = NULL;
+	channel->committed_their_psig = NULL;
+	channel->committed_our_psig = NULL;
+	channel->committed_session = NULL;
 
 	log_debug(channel->log, "Watching funding tx %s",
 		  fmt_bitcoin_txid(reply,

@@ -247,6 +247,9 @@ struct channel {
 	struct bitcoin_tx *last_settle_tx;  /* Eltoo: last complete settle tx */
 	struct bitcoin_tx *committed_update_tx;  /* Eltoo: committed but not yet complete update tx */
 	struct bitcoin_tx *committed_settle_tx;  /* Eltoo: committed but not yet complete settle tx */
+	struct partial_sig *committed_their_psig;  /* Eltoo: committed state their psig (NULL if none) */
+	struct partial_sig *committed_our_psig;    /* Eltoo: committed state our psig (NULL if none) */
+	struct musig_session *committed_session;   /* Eltoo: committed state session (NULL if none) */
 	const struct bitcoin_signature *last_htlc_sigs;
 
 	/* Keys for channel */
