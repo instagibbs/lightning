@@ -132,10 +132,10 @@ struct eltoo_peer {
 	struct msg_queue *update_queue;
 #endif
 
-#ifdef DEVELOPER
 	/* If set, don't fire commit counter when this hits 0 */
 	u32 *dev_disable_commit;
 
+#ifdef DEVELOPER
 	/* If set, send channel_announcement after 1 second, not 30 */
 	bool dev_fast_gossip;
 #endif
@@ -754,12 +754,10 @@ static void send_update(struct eltoo_peer *peer)
 	struct wally_tx_output *direct_outputs[NUM_SIDES];
 	struct musig_keyagg_cache cache;
 
-#ifdef DEVELOPER
 	if (peer->dev_disable_commit && !*peer->dev_disable_commit) {
 		peer->commit_timer = NULL;
 		return;
 	}
-#endif
 
 	/* We can't send two commits in a row. */
 	if (peer->sigs_received != peer->next_index - 1) {
@@ -857,13 +855,11 @@ static void send_update(struct eltoo_peer *peer)
     peer->channel->eltoo_keyset.committed_update_tx = tal_steal(peer->channel, update_and_settle_txs[0]);
     peer->channel->eltoo_keyset.committed_settle_tx = tal_steal(peer->channel, update_and_settle_txs[1]);
 
-#ifdef DEVELOPER
 	if (peer->dev_disable_commit) {
 		(*peer->dev_disable_commit)--;
 		if (*peer->dev_disable_commit == 0)
 			status_unusual("dev-disable-commit-after: disabling");
 	}
-#endif
 
 	status_debug("Telling master we're about to update...");
 	/* Tell master to save this next commit to database, then wait. */
@@ -2750,8 +2746,8 @@ static void init_channel(struct eltoo_peer *peer)
 	peer->final_index = tal_dup(peer, u32, &final_index);
 	peer->final_ext_key = tal_dup(peer, struct ext_key, &final_ext_key);
 
-#ifdef DEVELOPER
 	peer->dev_disable_commit = dev_disable_commit;
+#ifdef DEVELOPER
 	peer->dev_fast_gossip = dev_fast_gossip;
 #endif
 

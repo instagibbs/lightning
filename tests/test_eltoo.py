@@ -177,7 +177,7 @@ def test_eltoo_htlc(node_factory, bitcoind, executor, chainparams):
                                             'may_fail': True,
                                             'developer': None,
                                             'feerates': (7500, 7500, 7500, 7500),
-                                            'allow_broken_log': True,
+                                            'allow_warning': True,
                                             'plugin': coin_mvt_plugin},
                                            {'dev-disable-commit-after': 2, # remove HTLC, then later add
                                             'developer': None,
