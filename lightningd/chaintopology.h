@@ -242,6 +242,41 @@ void broadcast_tx_(const tal_t *ctx,
 		   bool (*refresh)(struct channel *, const struct bitcoin_tx **, void *),
 		   void *cbarg TAKES);
 
+/**
+ * broadcast_package - Broadcast a package of transactions (for ephemeral anchors)
+ * @ctx: context: when this is freed, callback won't happen.
+ * @topo: topology
+ * @channel: the channel responsible for this.
+ * @txs: array of transactions to broadcast as a package
+ * @num_txs: number of transactions in the package
+ * @cmd_id: the JSON command id which triggered this (or NULL).
+ * @cb: callback when package broadcast completes
+ * @cbarg: argument for @cb
+ *
+ * This is used for eltoo transactions with ephemeral anchors, where the
+ * parent transaction has a zero-value output that must be spent in the
+ * same package as the CPFP child transaction.
+ */
+#define broadcast_package(ctx, topo, channel, txs, num_txs, cmd_id, cb, cbarg) \
+	broadcast_package_((ctx), (topo), (channel), (txs), (num_txs), (cmd_id), \
+			   typesafe_cb_preargs(void, void *,		\
+					       (cb), (cbarg),		\
+					       struct channel *,	\
+					       bool, const char *),	\
+			   (cbarg))
+
+void broadcast_package_(const tal_t *ctx,
+			struct chain_topology *topo,
+			struct channel *channel,
+			const struct bitcoin_tx **txs,
+			size_t num_txs,
+			const char *cmd_id,
+			void (*cb)(struct channel *channel,
+				   bool success,
+				   const char *err,
+				   void *cbarg),
+			void *cbarg TAKES);
+
 struct chain_topology *new_topology(struct lightningd *ld, struct logger *log);
 void setup_topology(struct chain_topology *topology);
 

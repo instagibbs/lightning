@@ -880,11 +880,13 @@ void create_keypair_of_one(secp256k1_keypair *G_pair)
 u8 *scriptpubkey_eltoo_funding(const tal_t *ctx, const struct pubkey *pubkey1, const struct pubkey *pubkey2)
 {
     struct pubkey taproot_pubkey;
+    struct pubkey inner_pk_debug;
     secp256k1_musig_keyagg_cache keyagg_cache;
     const struct pubkey *pk_ptrs[2];
     struct sha256 tap_merkle_root;
     unsigned char tap_tweak_out[32];
     u8 *update_tapscript[1];
+    u8 *result;
 
     pk_ptrs[0] = pubkey1;
     pk_ptrs[1] = pubkey2;
@@ -893,13 +895,37 @@ u8 *scriptpubkey_eltoo_funding(const tal_t *ctx, const struct pubkey *pubkey1, c
 
     compute_taptree_merkle_root(&tap_merkle_root, update_tapscript, /* num_scripts */ 1);
 
+    /* Get inner pubkey for debug */
     bipmusig_finalize_keys(&taproot_pubkey,
            &keyagg_cache,
            pk_ptrs,
            /* n_pubkeys */ 2,
            &tap_merkle_root,
            tap_tweak_out,
-		   NULL);
+		   &inner_pk_debug);
 
-    return scriptpubkey_p2tr(ctx, &taproot_pubkey);
+    /* Create scriptPubKey directly from the already-tweaked pubkey.
+     * Do NOT use scriptpubkey_p2tr() as it applies another tweak!
+     * P2TR scriptPubKey format: OP_1 (0x51) + push32 (0x20) + 32-byte x-coordinate */
+    {
+        unsigned char key_bytes[33];
+        size_t out_len = sizeof(key_bytes);
+
+        secp256k1_ec_pubkey_serialize(secp256k1_ctx, key_bytes, &out_len,
+                                      &taproot_pubkey.pubkey, SECP256K1_EC_COMPRESSED);
+
+        result = tal_arr(ctx, u8, 34);
+        result[0] = 0x51;  /* OP_1 (witness version 1) */
+        result[1] = 0x20;  /* push 32 bytes */
+        memcpy(result + 2, key_bytes + 1, 32);  /* x-coordinate (skip 02/03 prefix) */
+    }
+
+    fprintf(stderr, "DEBUG scriptpubkey_eltoo_funding: pubkey1=%s pubkey2=%s inner=%s tweaked=%s spk=%s\n",
+            fmt_pubkey(tmpctx, pubkey1),
+            fmt_pubkey(tmpctx, pubkey2),
+            fmt_pubkey(tmpctx, &inner_pk_debug),
+            fmt_pubkey(tmpctx, &taproot_pubkey),
+            tal_hex(tmpctx, result));
+
+    return result;
 }

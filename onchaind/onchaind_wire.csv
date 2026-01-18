@@ -210,3 +210,42 @@ msgtype,onchaind_spend_created,5140
 msgdata,onchaind_spend_created,expect_to_succeed,bool,
 msgdata,onchaind_spend_created,num_witnesses,u32,
 msgdata,onchaind_spend_created,witness,onchain_witness_element,num_witnesses
+
+# Eltoo-specific messages (5200 range)
+
+# Begin eltoo onchaind messages
+msgtype,eltoo_onchaind_init,5200
+msgdata,eltoo_onchaind_init,chainparams,chainparams,
+msgdata,eltoo_onchaind_init,funding,bitcoin_outpoint,
+msgdata,eltoo_onchaind_init,funding_sats,amount_sat,
+msgdata,eltoo_onchaind_init,spending_tx,tx_parts,
+msgdata,eltoo_onchaind_init,locktime,u32,
+msgdata,eltoo_onchaind_init,complete_update_tx,bitcoin_tx,
+msgdata,eltoo_onchaind_init,complete_settle_tx,bitcoin_tx,
+msgdata,eltoo_onchaind_init,committed_update_tx,?bitcoin_tx,
+msgdata,eltoo_onchaind_init,committed_settle_tx,?bitcoin_tx,
+msgdata,eltoo_onchaind_init,tx_blockheight,u32,
+msgdata,eltoo_onchaind_init,our_msat,amount_msat,
+msgdata,eltoo_onchaind_init,htlc_feerate,u32,
+msgdata,eltoo_onchaind_init,dust_limit,amount_sat,
+msgdata,eltoo_onchaind_init,local_scriptpubkey_len,u16,
+msgdata,eltoo_onchaind_init,local_scriptpubkey,u8,local_scriptpubkey_len
+msgdata,eltoo_onchaind_init,remote_scriptpubkey_len,u16,
+msgdata,eltoo_onchaind_init,remote_scriptpubkey,u8,remote_scriptpubkey_len
+msgdata,eltoo_onchaind_init,local_funding_pubkey,pubkey,
+msgdata,eltoo_onchaind_init,remote_funding_pubkey,pubkey,
+msgdata,eltoo_onchaind_init,local_settle_pubkey,pubkey,
+msgdata,eltoo_onchaind_init,remote_settle_pubkey,pubkey,
+msgdata,eltoo_onchaind_init,self_psig,partial_sig,
+msgdata,eltoo_onchaind_init,other_psig,partial_sig,
+msgdata,eltoo_onchaind_init,session,musig_session,
+
+# eltoo_onchaind -> master: ready
+msgtype,eltoo_onchaind_init_reply,5300
+
+# eltoo_onchaind -> master: inform about new state output for rebinding
+msgtype,eltoo_onchaind_new_state_output,5201
+msgdata,eltoo_onchaind_new_state_output,outpoint,bitcoin_outpoint,
+msgdata,eltoo_onchaind_new_state_output,invalidated_update_num,u64,
+msgdata,eltoo_onchaind_new_state_output,annex_hint_len,u16,
+msgdata,eltoo_onchaind_new_state_output,annex_hint,u8,annex_hint_len

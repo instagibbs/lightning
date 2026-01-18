@@ -201,6 +201,9 @@ void script_push_bytes(u8 **scriptp, const void *mem, size_t len);
 /* "anyonecanspend" Ephemeral anchor outputs */
 u8 *bitcoin_spk_ephemeral_anchor(const tal_t *ctx);
 
+/* Check if a scriptpubkey is an ephemeral anchor (BIP-431) */
+bool is_ephemeral_anchor(const u8 *scriptpubkey, size_t scriptpubkey_len);
+
 /* to_node balance output script with anti-pinning 1 block CSV */
 u8 *bitcoin_tapscript_to_node(const tal_t *ctx, const struct pubkey *settlement_pubkey);
 

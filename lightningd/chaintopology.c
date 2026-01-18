@@ -288,6 +288,88 @@ void broadcast_tx_(const tal_t *ctx,
 			   broadcast_done, otx);
 }
 
+/* Package broadcast context for tracking all txs in the package */
+struct package_broadcast {
+	struct chain_topology *topo;
+	struct channel *channel;
+	const char *cmd_id;
+	const struct bitcoin_tx **txs;
+	size_t num_txs;
+	void (*cb)(struct channel *channel,
+		   bool success,
+		   const char *err,
+		   void *cbarg);
+	void *cbarg;
+};
+
+static void package_broadcast_done(struct bitcoind *bitcoind,
+				   bool success, const char *msg,
+				   struct package_broadcast *pb)
+{
+	if (!success) {
+		log_unusual(pb->topo->log,
+			    "Package broadcast failed: %s", msg);
+	} else {
+		log_debug(pb->topo->log,
+			  "Package broadcast succeeded with %zu txs",
+			  pb->num_txs);
+		/* Add all txs to wallet on success */
+		for (size_t i = 0; i < pb->num_txs; i++) {
+			wallet_transaction_add(pb->topo->ld->wallet,
+					       pb->txs[i]->wtx, 0, 0);
+		}
+	}
+
+	if (pb->cb)
+		pb->cb(pb->channel, success, msg, pb->cbarg);
+
+	tal_free(pb);
+}
+
+void broadcast_package_(const tal_t *ctx,
+			struct chain_topology *topo,
+			struct channel *channel,
+			const struct bitcoin_tx **txs,
+			size_t num_txs,
+			const char *cmd_id,
+			void (*cb)(struct channel *channel,
+				   bool success,
+				   const char *err,
+				   void *cbarg),
+			void *cbarg)
+{
+	struct package_broadcast *pb;
+	const char **hextxs;
+
+	pb = tal(ctx, struct package_broadcast);
+	pb->topo = topo;
+	pb->channel = channel;
+	pb->cmd_id = tal_strdup_or_null(pb, cmd_id);
+	pb->txs = tal_dup_arr(pb, const struct bitcoin_tx *, txs, num_txs, 0);
+	pb->num_txs = num_txs;
+	pb->cb = cb;
+	pb->cbarg = cbarg;
+	if (taken(pb->cbarg))
+		tal_steal(pb, pb->cbarg);
+
+	/* Build hex tx array */
+	hextxs = tal_arr(tmpctx, const char *, num_txs);
+	for (size_t i = 0; i < num_txs; i++) {
+		struct bitcoin_txid txid;
+		hextxs[i] = fmt_bitcoin_tx(hextxs, txs[i]);
+		bitcoin_txid(txs[i], &txid);
+		log_debug(topo->log, "Package tx %zu: %s", i,
+			  fmt_bitcoin_txid(tmpctx, &txid));
+	}
+
+	log_debug(topo->log, "Broadcasting package with %zu txs%s%s",
+		  num_txs,
+		  cmd_id ? " for " : "", cmd_id ? cmd_id : "");
+
+	bitcoind_submitpackage(pb, topo->bitcoind, cmd_id,
+			       hextxs, package_broadcast_done, pb);
+}
+
 static enum watch_result closeinfo_txid_confirmed(struct lightningd *ld,
 						  const struct bitcoin_txid *txid,
 						  const struct bitcoin_tx *tx,

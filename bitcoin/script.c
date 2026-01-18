@@ -1077,6 +1077,15 @@ u8 *bitcoin_spk_ephemeral_anchor(const tal_t *ctx)
 	return script;
 }
 
+bool is_ephemeral_anchor(const u8 *scriptpubkey, size_t scriptpubkey_len)
+{
+	/* BIP-431 ephemeral anchor: OP_1 <0x4e73> (4 bytes total) */
+	static const u8 ephemeral_anchor_spk[] = { 0x51, 0x02, 0x4e, 0x73 };
+	return scriptpubkey_len == sizeof(ephemeral_anchor_spk)
+		&& memeq(scriptpubkey, scriptpubkey_len,
+			 ephemeral_anchor_spk, sizeof(ephemeral_anchor_spk));
+}
+
 u8 *bitcoin_tapscript_to_node(const tal_t *ctx, const struct pubkey *settlement_pubkey)
 {
 	u8 *script = tal_arr(ctx, u8, 0);

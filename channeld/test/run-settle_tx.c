@@ -123,8 +123,12 @@ static struct bip340sig musig_sign(struct bitcoin_tx *update_tx, u8 *annex, stru
     }
 
     for (i=0; i<2; ++i){
-        /* For keypath spending (MuSig), tapleaf_script is NULL; annex commits to settlement tx */
-        bitcoin_tx_taproot_hash_for_sig(update_tx, /* input_index */ 0, SIGHASH_ANYPREVOUTANYSCRIPT|SIGHASH_SINGLE, /* tapleaf_script */ NULL, annex, &msg_out);
+        /* For script-path spending with ANYPREVOUTANYSCRIPT:
+         * - Pass the actual tapscript being executed to signal script-path (ext_flag=1)
+         * - tapleaf_hash is NOT included (because ANYPREVOUTANYSCRIPT)
+         * - But key_version (0x01) and codesep_position ARE included */
+        u8 *update_tapscript = make_eltoo_funding_update_script(tmpctx);
+        bitcoin_tx_taproot_hash_for_sig(update_tx, /* input_index */ 0, SIGHASH_ANYPREVOUTANYSCRIPT|SIGHASH_SINGLE, update_tapscript, annex, &msg_out);
         bipmusig_partial_sign((i == 0) ? alice_privkey : bob_privkey,
                &secnonce[i],
                pubnonce_ptrs,

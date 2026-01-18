@@ -57,6 +57,7 @@ COMMON_SRC_NOGEN :=				\
 	common/initial_eltoo_channel.c		\
 	common/initial_settlement_tx.c		\
 	common/update_tx.c			\
+	common/ephemeral_anchor.c		\
 	common/iso4217.c			\
 	common/json_blinded_path.c		\
 	common/json_channel_type.c		\

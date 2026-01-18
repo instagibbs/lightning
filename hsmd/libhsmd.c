@@ -1552,7 +1552,12 @@ static u8 *handle_combine_psig(struct hsmd_client *c, const u8 *msg_in)
     printf("combine update_tx: %s\n", fmt_bitcoin_tx(tmpctx, update_tx));
 
     annex = make_eltoo_annex(tmpctx, settle_tx);
-    bitcoin_tx_taproot_hash_for_sig(update_tx, /* input_index */ 0, SIGHASH_ANYPREVOUTANYSCRIPT|SIGHASH_SINGLE, /* non-NULL script signals bip342... */ annex, annex, &hash_out);
+    /* For script-path spending with ANYPREVOUTANYSCRIPT:
+     * Pass the actual tapscript to signal script-path (ext_flag=1) */
+    {
+        u8 *update_tapscript = make_eltoo_funding_update_script(tmpctx);
+        bitcoin_tx_taproot_hash_for_sig(update_tx, /* input_index */ 0, SIGHASH_ANYPREVOUTANYSCRIPT|SIGHASH_SINGLE, update_tapscript, annex, &hash_out);
+    }
     printf("validate taproot Sighash: ");
     for (i = 0; i < 32; i++)
     {
@@ -1560,15 +1565,24 @@ static u8 *handle_combine_psig(struct hsmd_client *c, const u8 *msg_in)
     }
     printf("\n");
 
+    /* For eltoo script-path spending with OP_1 OP_CHECKSIG, the signature
+     * verifies against the *inner pubkey* (untweaked MuSig2 aggregate key).
+     * OP_1 in tapscript pushes the internal key onto the stack. */
+    printf("combine inner_pubkey for verify: %s\n", fmt_pubkey(tmpctx, &inner_pubkey));
     if (!bipmusig_partial_sigs_combine_verify(p_sig_ptrs,
                /* num_signers */ 2,
                &inner_pubkey,
                &session.session,
                &hash_out,
                &sig)) {
-		return hsmd_status_bad_request(c, msg_in,
-				   "Failed to verify combined psigs");
+        return hsmd_status_bad_request(c, msg_in,
+                       "Failed to verify combined psigs");
     }
+    printf("combine verified OK, sig: ");
+    for (i = 0; i < 64; i++) {
+        printf("%02X", sig.u8[i]);
+    }
+    printf("\n");
     return towire_hsmd_combine_psig_reply(NULL, &sig);
 }
 
@@ -1629,17 +1643,33 @@ static u8 *handle_psign_update_tx(struct hsmd_client *c, const u8 *msg_in)
     printf("psign update_tx: %s\n", fmt_bitcoin_tx(tmpctx, update_tx));
 
     annex = make_eltoo_annex(tmpctx, settle_tx);
+    printf("psign annex (%zu bytes): ", tal_count(annex));
+    for (i = 0; i < (int)tal_count(annex); i++)
+        printf("%02X", annex[i]);
+    printf("\n");
     pubkey_ptrs[0] = &remote_funding_pubkey;
     pubkey_ptrs[1] = &local_funding_pubkey;
-    bipmusig_inner_pubkey(&inner_pubkey,
-               &cache.cache,
-               pubkey_ptrs,
-               /* n_pubkeys */ 2);
 
-    /* Update transactions do not require commitment to the tapleaf hash via APOAS, hence sending in annex here
-     * just to signal bip342 path evaluation */
-    bitcoin_tx_taproot_hash_for_sig(update_tx, /* input_index */ 0, SIGHASH_ANYPREVOUTANYSCRIPT|SIGHASH_SINGLE,
-        annex /* tapleaf_script */, annex, &hash_out);
+    /* For eltoo script-path spending with OP_1 OP_CHECKSIG, the signature
+     * must verify against the *internal key* (untweaked MuSig2 aggregate key).
+     * OP_1 in tapscript pushes the internal key onto the stack.
+     * Therefore, we use bipmusig_inner_pubkey (not bipmusig_finalize_keys)
+     * to get an untweaked keyagg cache for signing. */
+    bipmusig_inner_pubkey(&inner_pubkey,
+           &cache.cache,
+           pubkey_ptrs,
+           /* n_pubkeys */ 2);
+    printf("psign inner_pubkey for signing: %s\n", fmt_pubkey(tmpctx, &inner_pubkey));
+
+    /* For script-path spending with ANYPREVOUTANYSCRIPT:
+     * - Pass the actual tapscript being executed to signal script-path (ext_flag=1)
+     * - tapleaf_hash is NOT included (because ANYPREVOUTANYSCRIPT)
+     * - But key_version (0x01) and codesep_position ARE included */
+    {
+        u8 *update_tapscript = make_eltoo_funding_update_script(tmpctx);
+        bitcoin_tx_taproot_hash_for_sig(update_tx, /* input_index */ 0, SIGHASH_ANYPREVOUTANYSCRIPT|SIGHASH_SINGLE,
+            update_tapscript, annex, &hash_out);
+    }
     printf("sign taproot Sighash: ");
     for (i = 0; i < 32; i++)
     {

@@ -14,7 +14,6 @@
 #include <common/psbt_keypath.h>
 #include <common/status.h>
 #include <common/subdaemon.h>
-#include <common/type_to_string.h>
 #include <common/update_tx.h>
 #include <hsmd/hsmd_wiregen.h>
 #include <onchaind/onchain_types.h>
@@ -189,11 +188,11 @@ static struct bitcoin_tx *bip340_tx_to_us(const tal_t *ctx,
 		tal_hex(NULL, out->scriptPubKey),
 		tal_hex(NULL, tapscript),
 		tal_hex(NULL, control_block),
-		type_to_string(NULL, struct pubkey,
+		fmt_pubkey(tmpctx,
                     &keyset->self_funding_key),
-		type_to_string(NULL, struct pubkey,
+		fmt_pubkey(tmpctx,
                     &keyset->other_funding_key),
-		type_to_string(NULL, struct pubkey,
+		fmt_pubkey(tmpctx,
                     &keyset->inner_pubkey));
 
     tx = bitcoin_tx(ctx, chainparams, 1, 1, locktime);
@@ -228,8 +227,8 @@ static struct bitcoin_tx *bip340_tx_to_us(const tal_t *ctx,
     if (!amount_sat_add(&min_out, dust_limit, fee)) {
         status_failed(STATUS_FAIL_INTERNAL_ERROR,
                   "Cannot add dust_limit %s and fee %s",
-                  type_to_string(tmpctx, struct amount_sat, &dust_limit),
-                  type_to_string(tmpctx, struct amount_sat, &fee));
+                  fmt_amount_sat(tmpctx, dust_limit),
+                  fmt_amount_sat(tmpctx, fee));
     }
 
     if (amount_sat_less(out->sat, min_out)) {
@@ -239,7 +238,7 @@ static struct bitcoin_tx *bip340_tx_to_us(const tal_t *ctx,
                    " pay reasonable fee, using minimal fee"
                    " and ignoring",
                    eltoo_tx_type_name(*tx_type),
-                   type_to_string(tmpctx, struct amount_sat, &out->sat));
+                   fmt_amount_sat(tmpctx, out->sat));
         *tx_type = IGNORING_TINY_PAYMENT;
     }
 
@@ -250,8 +249,7 @@ static struct bitcoin_tx *bip340_tx_to_us(const tal_t *ctx,
         status_broken("TX %s can't afford minimal feerate"
                   "; setting output to %s",
                   eltoo_tx_type_name(*tx_type),
-                  type_to_string(tmpctx, struct amount_sat,
-                         &amt));
+                  fmt_amount_sat(tmpctx, amt));
     }
     bitcoin_tx_output_set_amount(tx, 0, amt);
     bitcoin_tx_finalize(tx);
@@ -396,7 +394,7 @@ new_tracked_output(struct tracked_output ***outs,
 	struct tracked_output *out = tal(*outs, struct tracked_output);
 
 	status_debug("Tracking output %s: %s/%s",
-		     type_to_string(tmpctx, struct bitcoin_outpoint, outpoint),
+		     fmt_bitcoin_outpoint(tmpctx, outpoint),
 		     eltoo_tx_type_name(tx_type),
 		     output_type_name(output_type));
 
@@ -427,8 +425,7 @@ new_tracked_output(struct tracked_output ***outs,
 static void ignore_output(struct tracked_output *out)
 {
 	status_debug("Ignoring output %s: %s/%s",
-		     type_to_string(tmpctx, struct bitcoin_outpoint,
-				    &out->outpoint),
+		     fmt_bitcoin_outpoint(tmpctx, &out->outpoint),
 		     eltoo_tx_type_name(out->tx_type),
 		     output_type_name(out->output_type));
 
@@ -521,7 +518,7 @@ static void eltoo_proposal_should_rbf(struct tracked_output *out)
 		status_debug("Broadcasting RBF %s (%s) to resolve %s/%s "
 			     "depth=%"PRIu32"",
 			     eltoo_tx_type_name(out->proposal->tx_type),
-			     type_to_string(tmpctx, struct bitcoin_tx, tx),
+			     fmt_bitcoin_tx(tmpctx, tx),
 			     eltoo_tx_type_name(out->tx_type),
 			     output_type_name(out->output_type),
 			     depth);
@@ -562,7 +559,7 @@ static void eltoo_proposal_meets_depth(struct tracked_output *out)
 
 	status_debug("Broadcasting %s (%s) to resolve %s/%s",
 		     eltoo_tx_type_name(out->proposal->tx_type),
-		     type_to_string(tmpctx, struct bitcoin_tx, out->proposal->tx),
+		     fmt_bitcoin_tx(tmpctx, out->proposal->tx),
 		     eltoo_tx_type_name(out->tx_type),
 		     output_type_name(out->output_type));
 
@@ -652,8 +649,7 @@ static bool resolved_by_proposal(struct tracked_output *out,
 		     eltoo_tx_type_name(out->tx_type),
 		     output_type_name(out->output_type),
 		     eltoo_tx_type_name(out->proposal->tx_type),
-		     type_to_string(tmpctx, struct bitcoin_txid,
-				    &out->resolved->txid));
+		     fmt_bitcoin_txid(tmpctx, &out->resolved->txid));
 
 	out->resolved->depth = 0;
 	out->resolved->tx_type = out->proposal->tx_type;
@@ -674,7 +670,7 @@ static void resolved_by_other(struct tracked_output *out,
 		     eltoo_tx_type_name(out->tx_type),
 		     output_type_name(out->output_type),
 		     eltoo_tx_type_name(tx_type),
-		     type_to_string(tmpctx, struct bitcoin_txid, txid));
+		     fmt_bitcoin_txid(tmpctx, txid));
 }
 
 static bool is_mutual_close(u32 locktime)
@@ -725,9 +721,7 @@ static void billboard_update(struct tracked_output **outs)
 				       "%u outputs unresolved: waiting confirmation that we spent %s (%s) using %s",
 				       num_not_irrevocably_resolved(outs),
 				       output_type_name(best->output_type),
-				       type_to_string(tmpctx,
-						      struct bitcoin_outpoint,
-						      &best->outpoint),
+				       fmt_bitcoin_outpoint(tmpctx, &best->outpoint),
 				       eltoo_tx_type_name(best->proposal->tx_type));
 		} else {
 			peer_billboard(false,
@@ -735,9 +729,7 @@ static void billboard_update(struct tracked_output **outs)
 				       num_not_irrevocably_resolved(outs),
 				       best->proposal->depth_required - best->depth,
 				       output_type_name(best->output_type),
-				       type_to_string(tmpctx,
-						      struct bitcoin_outpoint,
-						      &best->outpoint),
+				       fmt_bitcoin_outpoint(tmpctx, &best->outpoint),
 				       eltoo_tx_type_name(best->proposal->tx_type));
 		}
 		return;
@@ -778,7 +770,7 @@ static void propose_resolution(struct tracked_output *out,
              eltoo_tx_type_name(out->tx_type),
              output_type_name(out->output_type),
              eltoo_tx_type_name(tx_type),
-             tx ? type_to_string(tmpctx, struct bitcoin_tx, tx):"IGNORING",
+             tx ? fmt_bitcoin_tx(tmpctx, tx):"IGNORING",
              depth_required);
 
     out->proposal = tal(out, struct proposed_resolution);
@@ -824,12 +816,12 @@ static void propose_htlc_resolution_at_block(struct tracked_output *out,
     propose_htlc_timeout_resolution(out, depth, tx_type);
 }
 
-static void unwatch_txid(const struct bitcoin_txid *txid)
+/* FIXME: No unwatch_tx message defined - commenting out for now */
+static void unwatch_txid(const struct bitcoin_txid *txid UNUSED)
 {
-	u8 *msg;
-
+	/* u8 *msg;
 	msg = towire_onchaind_unwatch_tx(NULL, txid);
-	wire_sync_write(REQ_FD, take(msg));
+	wire_sync_write(REQ_FD, take(msg)); */
 }
 
 
@@ -873,9 +865,8 @@ static void handle_eltoo_htlc_onchain_fulfill(struct tracked_output *out,
 			      "%s/%s spent with bad preimage %s (ripemd not %s)",
 			      eltoo_tx_type_name(out->tx_type),
 			      output_type_name(out->output_type),
-			      type_to_string(tmpctx, struct preimage, &preimage),
-			      type_to_string(tmpctx, struct ripemd160,
-					     &out->htlc.ripemd));
+			      fmt_preimage(tmpctx, &preimage),
+			      fmt_ripemd160(tmpctx, &out->htlc.ripemd));
 
 	/* we stash the payment_hash into the tracking_output so we
 	 * can pass it along, if needbe, to the coin movement tracker */
@@ -885,7 +876,7 @@ static void handle_eltoo_htlc_onchain_fulfill(struct tracked_output *out,
 	status_debug("%s/%s gave us preimage %s",
 		     eltoo_tx_type_name(out->tx_type),
 		     output_type_name(out->output_type),
-		     type_to_string(tmpctx, struct preimage, &preimage));
+		     fmt_preimage(tmpctx, &preimage));
 	wire_sync_write(REQ_FD,
 			take(towire_onchaind_extracted_preimage(NULL,
 							       &preimage)));
@@ -922,12 +913,12 @@ static void track_settle_outputs(struct tracked_output ***outs,
 
 
         /* (1) Ephemeral Anchor */
-        if (is_ephemeral_anchor(settle_out->script)) {
+        if (is_ephemeral_anchor(settle_out->script, settle_out->script_len)) {
             /* Anchor is lightningd's problem */
             continue;
         }
 
-		if (!is_p2tr(settle_out->script, NULL)) {
+		if (!is_p2tr(settle_out->script, settle_out->script_len, NULL)) {
 			/* Everything should be taproot FIXME what do */
 			abort();
 		}
@@ -1196,7 +1187,7 @@ static void output_spent(struct tracked_output ***outs,
     wally_tx_input_get_txid(tx_parts->inputs[input_num], &txid);
     /* Not interesting to us, so unwatch the tx and all its outputs */
     status_debug("Notified about tx %s output %u spend, but we don't care",
-             type_to_string(tmpctx, struct bitcoin_txid, &txid),
+             fmt_bitcoin_txid(tmpctx, &txid),
              tx_parts->inputs[input_num]->index);
 
     unwatch_txid(&tx_parts->txid);
@@ -1295,7 +1286,7 @@ static void eltoo_tx_new_depth(struct tracked_output **outs,
 }
 
 
-#if DEVELOPER
+#ifdef DEVELOPER
 static void memleak_remove_globals(struct htable *memtable, const tal_t *topctx)
 {
 	if (keyset)
@@ -1686,15 +1677,15 @@ int main(int argc, char *argv[])
 	tal_steal(ctx, notleak(complete_settle_tx));
 
     status_debug("Unbound update and settle transactions to potentially broadcast: %s, %s",
-        type_to_string(tmpctx, struct bitcoin_tx, complete_update_tx),
-        type_to_string(tmpctx, struct bitcoin_tx, complete_settle_tx));
+        fmt_bitcoin_tx(tmpctx, complete_update_tx),
+        fmt_bitcoin_tx(tmpctx, complete_settle_tx));
 
     if (committed_update_tx) {
 	    tal_steal(ctx, notleak(committed_update_tx));
 	    tal_steal(ctx, notleak(committed_settle_tx));
         status_debug("Unbound update and settle transactions committed but incomplete: %s, %s",
-            type_to_string(tmpctx, struct bitcoin_tx, committed_update_tx),
-            type_to_string(tmpctx, struct bitcoin_tx, committed_settle_tx));
+            fmt_bitcoin_tx(tmpctx, committed_update_tx),
+            fmt_bitcoin_tx(tmpctx, committed_settle_tx));
     }
 
     /* These are the utxos we are interested in */
@@ -1710,11 +1701,12 @@ int main(int argc, char *argv[])
                locktime, NULL /* htlc */, NULL /* htlc_success_tapscript */, NULL /* htlc_timeout_tapscript */);
 
     /* Record funding output spent */
-    send_coin_mvt(take(new_coin_channel_close(NULL, &spending_tx->txid,
+    send_coin_mvt(take(new_coin_channel_close(NULL, NULL, "", &spending_tx->txid,
                           &funding, tx_blockheight,
                           our_msat,
                           funding_sats,
-                          tal_count(spending_tx->outputs))));
+                          tal_count(spending_tx->outputs),
+                          /* is_splice? */ false)));
 
     /* Committed state should be one step further max */
     if (committed_update_tx) {

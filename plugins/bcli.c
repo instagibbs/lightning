@@ -587,6 +587,126 @@ static struct command_result *process_sendrawtransaction(struct bitcoin_cli *bcl
 	return command_finished(bcli->cmd, response);
 }
 
+/* Process the response from submitpackage RPC.
+ * Bitcoin Core returns:
+ * {
+ *   "package_msg": "success" | "package-mempool-error" | ...,
+ *   "tx-results": {
+ *     "<txid>": {
+ *       "txid": "<txid>",
+ *       "vsize": <num>,
+ *       "fees": { "base": <sats> },
+ *       "error": "<error string if failed>"
+ *     },
+ *     ...
+ *   },
+ *   "replaced-transactions": [...]
+ * }
+ */
+static struct command_result *process_submitpackage(struct bitcoin_cli *bcli)
+{
+	struct json_stream *response;
+	const jsmntok_t *tokens, *package_msg_tok, *tx_results_tok, *t;
+	const char *package_msg;
+	bool success = false;
+	char *errmsg = "";
+	size_t i;
+
+	/* This is useful for functional tests. */
+	if (bcli->exitstatus)
+		plugin_log(bcli->cmd->plugin, LOG_DBG,
+			   "submitpackage exit %i (%s) %.*s",
+			   *bcli->exitstatus, bcli_args(tmpctx, bcli),
+			   *bcli->exitstatus ?
+				(u32)bcli->output_bytes-1 : 0,
+				bcli->output);
+
+	/* Non-zero exit status means failure */
+	if (*bcli->exitstatus != 0) {
+		errmsg = tal_strndup(bcli->cmd, bcli->output, bcli->output_bytes-1);
+		goto done;
+	}
+
+	tokens = json_parse_simple(bcli->output, bcli->output, bcli->output_bytes);
+	if (!tokens) {
+		errmsg = "Failed to parse submitpackage response";
+		goto done;
+	}
+
+	/* Check package_msg for overall success */
+	package_msg_tok = json_get_member(bcli->output, tokens, "package_msg");
+	if (!package_msg_tok) {
+		errmsg = "Missing package_msg in response";
+		goto done;
+	}
+
+	package_msg = json_strdup(tmpctx, bcli->output, package_msg_tok);
+	if (streq(package_msg, "success")) {
+		success = true;
+	} else {
+		/* Check individual tx results for errors */
+		tx_results_tok = json_get_member(bcli->output, tokens, "tx-results");
+		if (tx_results_tok) {
+			json_for_each_obj(i, t, tx_results_tok) {
+				const jsmntok_t *error_tok;
+				error_tok = json_get_member(bcli->output, t + 1, "error");
+				if (error_tok) {
+					errmsg = tal_fmt(bcli->cmd, "%s: %.*s",
+							 package_msg,
+							 error_tok->end - error_tok->start,
+							 bcli->output + error_tok->start);
+					break;
+				}
+			}
+		}
+		if (strlen(errmsg) == 0)
+			errmsg = tal_strdup(bcli->cmd, package_msg);
+	}
+
+done:
+	response = jsonrpc_stream_success(bcli->cmd);
+	json_add_bool(response, "success", success);
+	json_add_string(response, "errmsg", errmsg);
+
+	return command_finished(bcli->cmd, response);
+}
+
+/* Submit a package of transactions to the Bitcoin network.
+ * Calls `submitpackage` using the transactions array.
+ * Requires Bitcoin Core 25.0+.
+ */
+static struct command_result *submitpackage(struct command *cmd,
+					    const char *buf,
+					    const jsmntok_t *toks)
+{
+	const jsmntok_t *txs_tok;
+	char *txs_json;
+
+	if (!param(cmd, buf, toks,
+		   p_req("txs", param_array, &txs_tok),
+		   NULL))
+		return command_param_failed();
+
+	/* Check bitcoind version - submitpackage requires 25.0+ */
+	if (bitcoind->version < 250000) {
+		return command_done_err(cmd, BCLI_ERROR,
+					"submitpackage requires Bitcoin Core 25.0+",
+					NULL);
+	}
+
+	/* Build JSON array string for bitcoin-cli */
+	txs_json = tal_fmt(cmd, "%.*s",
+			   txs_tok->end - txs_tok->start,
+			   buf + txs_tok->start);
+
+	start_bitcoin_cli(NULL, cmd, process_submitpackage, true,
+			  BITCOIND_HIGH_PRIO, NULL,
+			  "submitpackage",
+			  txs_json, NULL);
+
+	return command_still_pending(cmd);
+}
+
 struct getrawblock_stash {
 	const char *block_hash;
 	u32 block_height;
@@ -1164,6 +1284,10 @@ static const struct plugin_command commands[] = {
 	{
 		"getutxout",
 		getutxout
+	},
+	{
+		"submitpackage",
+		submitpackage
 	},
 };
 

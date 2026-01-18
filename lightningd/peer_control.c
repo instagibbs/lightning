@@ -6,6 +6,7 @@
 #include <ccan/tal/str/str.h>
 #include <channeld/channeld_wiregen.h>
 #include <common/addr.h>
+#include <common/ephemeral_anchor.h>
 #include <common/htlc_trim.h>
 #include <common/initial_commit_tx.h>
 #include <common/update_tx.h>
@@ -311,6 +312,10 @@ static struct bitcoin_tx *sign_and_send_last(const tal_t *ctx,
 	if (channel_type_has(channel->type, OPT_ELTOO)) {
 		struct bitcoin_tx **bound_txs;
 		struct bitcoin_tx *bound_update_tx;
+		struct bitcoin_outpoint anchor_outpoint;
+		struct bitcoin_tx *cpfp_tx;
+		struct pubkey final_key;
+		u32 target_feerate;
 
 		/* Use bind_txs_to_funding_outpoint to combine partial sigs and bind txs */
 		bound_txs = bind_txs_to_funding_outpoint(
@@ -326,10 +331,49 @@ static struct bitcoin_tx *sign_and_send_last(const tal_t *ctx,
 		bound_update_tx = tal_steal(ctx, bound_txs[0]);
 		tx = tal_steal(ctx, bound_txs[1]);
 
-		/* Broadcast the update tx first - it spends the funding output */
-		log_debug(channel->log, "Broadcasting eltoo update tx");
-		broadcast_tx(channel, ld->topology, channel, bound_update_tx,
-			     cmd_id, false, 0, NULL, NULL, NULL);
+		/* Broadcast the update tx with CPFP for ephemeral anchor.
+		 * Eltoo transactions have zero-value ephemeral anchors that must
+		 * be spent in the same package per BIP-431. */
+		log_debug(channel->log, "Broadcasting eltoo update tx with package");
+
+		if (find_ephemeral_anchor_output(bound_update_tx, &anchor_outpoint)) {
+			/* Get target feerate for unilateral close */
+			target_feerate = unilateral_feerate(ld->topology, true);
+
+			/* Derive final key for CPFP change output */
+			if (ld->bip86_base)
+				bip86_pubkey(ld, &final_key, channel->final_key_idx);
+			else
+				bip32_pubkey(ld, &final_key, channel->final_key_idx);
+
+			/* Create CPFP transaction spending the ephemeral anchor */
+			cpfp_tx = create_ephemeral_anchor_cpfp(
+				tmpctx, ld, bound_update_tx, &anchor_outpoint,
+				bitcoin_tx_weight(bound_update_tx),
+				target_feerate,
+				&final_key, channel->final_key_idx);
+
+			if (cpfp_tx) {
+				/* Broadcast as package: [update_tx, cpfp_tx] */
+				const struct bitcoin_tx *package[2];
+				package[0] = bound_update_tx;
+				package[1] = cpfp_tx;
+				broadcast_package(channel, ld->topology, channel,
+						  package, 2, cmd_id, NULL, NULL);
+			} else {
+				/* Fallback: broadcast without CPFP (may fail for non-inquisition nodes) */
+				log_unusual(channel->log,
+					    "Could not create CPFP for eltoo update tx, "
+					    "broadcasting without package");
+				broadcast_tx(channel, ld->topology, channel, bound_update_tx,
+					     cmd_id, false, 0, NULL, NULL, NULL);
+			}
+		} else {
+			/* No ephemeral anchor found - broadcast normally */
+			log_debug(channel->log, "No ephemeral anchor in update tx");
+			broadcast_tx(channel, ld->topology, channel, bound_update_tx,
+				     cmd_id, false, 0, NULL, NULL, NULL);
+		}
 	} else {
 		tx = sign_last_tx(ctx, channel, last_tx, last_sig);
 	}
@@ -1344,28 +1388,27 @@ static void NON_NULL_ARGS(1, 2, 4, 5) json_add_channel(struct command *cmd,
 			/* Return unbound version (with placeholder input) */
 			json_add_tx(response, "last_update_tx_unbound", channel->last_update_tx);
 
-			/* Create bound version with actual funding outpoint */
-			struct bitcoin_tx *bound_update = clone_bitcoin_tx(tmpctx, channel->last_update_tx);
-			memcpy(bound_update->wtx->inputs[0].txhash, &channel->funding.txid, sizeof(channel->funding.txid));
-			bound_update->wtx->inputs[0].index = channel->funding.n;
-			json_add_tx(response, "last_update_tx", bound_update);
-		}
-		if (channel->last_settle_tx) {
-			/* Return unbound version (with placeholder input) */
-			json_add_tx(response, "last_settle_tx_unbound", channel->last_settle_tx);
+			log_unusual(channel->log, "bind_txs: local_funding_pubkey=%s remote_fundingkey=%s funding=%s:%u",
+				fmt_pubkey(tmpctx, &channel->local_funding_pubkey),
+				fmt_pubkey(tmpctx, &channel->channel_info.remote_fundingkey),
+				fmt_bitcoin_txid(tmpctx, &channel->funding.txid),
+				channel->funding.n);
 
-			/* Create bound version - settle tx input references the update tx output */
-			struct bitcoin_tx *bound_settle = clone_bitcoin_tx(tmpctx, channel->last_settle_tx);
-			if (channel->last_update_tx) {
-				struct bitcoin_tx *bound_update = clone_bitcoin_tx(tmpctx, channel->last_update_tx);
-				memcpy(bound_update->wtx->inputs[0].txhash, &channel->funding.txid, sizeof(channel->funding.txid));
-				bound_update->wtx->inputs[0].index = channel->funding.n;
-				struct bitcoin_txid update_txid;
-				bitcoin_txid(bound_update, &update_txid);
-				memcpy(bound_settle->wtx->inputs[0].txhash, &update_txid, sizeof(update_txid));
-				bound_settle->wtx->inputs[0].index = 0; /* State output is always index 0 */
-			}
-			json_add_tx(response, "last_settle_tx", bound_settle);
+			/* Create fully signed bound version using bind_txs_to_funding_outpoint
+			 * which combines partial signatures and binds to funding outpoint */
+			struct bitcoin_tx **bound_txs = bind_txs_to_funding_outpoint(
+				channel->last_update_tx,
+				&channel->funding,
+				channel->last_settle_tx,
+				&channel->our_last_psig,
+				&channel->their_last_psig,
+				&channel->local_funding_pubkey,
+				&channel->channel_info.remote_fundingkey,
+				&channel->session);
+
+			json_add_tx(response, "last_update_tx", bound_txs[0]);
+			json_add_tx(response, "last_settle_tx_unbound", channel->last_settle_tx);
+			json_add_tx(response, "last_settle_tx", bound_txs[1]);
 		}
 	} else if (channel->last_tx) {
 		json_add_tx(response, "last_tx", channel->last_tx);

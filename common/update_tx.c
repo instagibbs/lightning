@@ -111,6 +111,14 @@ void bind_tx_to_funding_outpoint(struct bitcoin_tx *update_tx,
 
     compute_taptree_merkle_root(&psbt_tap_merkle_root, update_tapscript, /* num_scripts */ 1);
 
+    /* Debug: compute inner pubkey locally to compare */
+    struct pubkey local_inner_pubkey;
+    secp256k1_musig_keyagg_cache inner_cache;
+    bipmusig_inner_pubkey(&local_inner_pubkey, &inner_cache, pubkey_ptrs, 2);
+    fprintf(stderr, "DEBUG bind_tx: passed_inner=%s local_inner=%s\n",
+            fmt_pubkey(tmpctx, psbt_inner_pubkey),
+            fmt_pubkey(tmpctx, &local_inner_pubkey));
+
     bipmusig_finalize_keys(&taproot_pk,
            &unused_coop_cache,
            pubkey_ptrs,
@@ -119,7 +127,26 @@ void bind_tx_to_funding_outpoint(struct bitcoin_tx *update_tx,
            psbt_tap_tweak,
 		   NULL);
 
-    script_pubkey = scriptpubkey_p2tr(tmpctx, &taproot_pk);
+    fprintf(stderr, "DEBUG bind_tx: tweaked_pk=%s parity=%d\n",
+            fmt_pubkey(tmpctx, &taproot_pk),
+            pubkey_parity(&taproot_pk));
+
+    /* Create scriptPubKey directly from the already-tweaked pubkey.
+     * Do NOT use scriptpubkey_p2tr() as it applies another tweak!
+     * P2TR scriptPubKey format: OP_1 (0x51) + push32 (0x20) + 32-byte x-coordinate */
+    {
+        unsigned char key_bytes[33];
+        size_t out_len = sizeof(key_bytes);
+
+        secp256k1_ec_pubkey_serialize(secp256k1_ctx, key_bytes, &out_len,
+                                      &taproot_pk.pubkey, SECP256K1_EC_COMPRESSED);
+
+        script_pubkey = tal_arr(tmpctx, u8, 34);
+        script_pubkey[0] = 0x51;  /* OP_1 (witness version 1) */
+        script_pubkey[1] = 0x20;  /* push 32 bytes */
+        memcpy(script_pubkey + 2, key_bytes + 1, 32);  /* x-coordinate (skip 02/03 prefix) */
+    }
+    fprintf(stderr, "DEBUG bind_tx: script_pubkey=%s\n", tal_hex(tmpctx, script_pubkey));
 
     /* Remove existing input since we're over-writing all details */
     funding_sats.satoshis = update_tx->psbt->inputs[0].witness_utxo->satoshi;
@@ -136,6 +163,14 @@ void bind_tx_to_funding_outpoint(struct bitcoin_tx *update_tx,
     update_witness[1] = update_tapscript[0];
     update_witness[2] = compute_control_block(tmpctx, /* other_script */ NULL, /* annex_hint */ NULL, psbt_inner_pubkey, pubkey_parity(&taproot_pk));
     update_witness[3] = make_eltoo_annex(tmpctx, settle_tx);
+    fprintf(stderr, "DEBUG bind_tx: annex (%zu bytes): ", tal_count(update_witness[3]));
+    for (size_t j = 0; j < tal_count(update_witness[3]); j++)
+        fprintf(stderr, "%02X", update_witness[3][j]);
+    fprintf(stderr, "\n");
+    fprintf(stderr, "DEBUG bind_tx: sig (%zu bytes): ", tal_count(update_witness[0]));
+    for (size_t j = 0; j < tal_count(update_witness[0]); j++)
+        fprintf(stderr, "%02X", update_witness[0][j]);
+    fprintf(stderr, "\n");
     bitcoin_tx_input_set_witness(update_tx, /* input_num */ 0, update_witness);
 }
 
@@ -200,7 +235,21 @@ void bind_update_tx_to_update_outpoint(struct bitcoin_tx *update_tx,
            psbt_tap_tweak,
 		   NULL);
 
-    script_pubkey = scriptpubkey_p2tr(tmpctx, &taproot_pk);
+    /* Create scriptPubKey directly from the already-tweaked pubkey.
+     * Do NOT use scriptpubkey_p2tr() as it applies another tweak!
+     * P2TR scriptPubKey format: OP_1 (0x51) + push32 (0x20) + 32-byte x-coordinate */
+    {
+        unsigned char key_bytes[33];
+        size_t out_len = sizeof(key_bytes);
+
+        secp256k1_ec_pubkey_serialize(secp256k1_ctx, key_bytes, &out_len,
+                                      &taproot_pk.pubkey, SECP256K1_EC_COMPRESSED);
+
+        script_pubkey = tal_arr(tmpctx, u8, 34);
+        script_pubkey[0] = 0x51;  /* OP_1 (witness version 1) */
+        script_pubkey[1] = 0x20;  /* push 32 bytes */
+        memcpy(script_pubkey + 2, key_bytes + 1, 32);  /* x-coordinate (skip 02/03 prefix) */
+    }
 
     /* Remove existing input since we're over-writing all details */
     funding_sats.satoshis = update_tx->psbt->inputs[0].witness_utxo->satoshi;
@@ -362,6 +411,11 @@ struct bitcoin_tx **bind_txs_to_funding_outpoint(const struct bitcoin_tx *update
         &dummy_cache,
         pubkey_ptrs,
         2 /* n_pubkeys */);
+
+    fprintf(stderr, "DEBUG bind_txs: pubkey1=%s pubkey2=%s inner=%s\n",
+            fmt_pubkey(tmpctx, funding_pubkey1),
+            fmt_pubkey(tmpctx, funding_pubkey2),
+            fmt_pubkey(tmpctx, &inner_pubkey));
 
     /* FIXME pass in pubkeys, not keyset ... or get pubkeys from PSBT directly */
     bind_tx_to_funding_outpoint(bound_update_tx,

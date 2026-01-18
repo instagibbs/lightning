@@ -75,7 +75,22 @@ void add_settlement_input(struct bitcoin_tx *tx, const struct bitcoin_outpoint *
 
     parity_bit = pubkey_parity(&update_agg_pk);
     control_block = compute_control_block(tmpctx, settle_and_update_tapscripts[1], /* annex_hint */ NULL, inner_pubkey, parity_bit);
-    script_pubkey = scriptpubkey_p2tr(tmpctx, &update_agg_pk);
+
+    /* Create scriptPubKey directly from the already-tweaked pubkey.
+     * Do NOT use scriptpubkey_p2tr() as it applies another tweak!
+     * P2TR scriptPubKey format: OP_1 (0x51) + push32 (0x20) + 32-byte x-coordinate */
+    {
+        unsigned char key_bytes[33];
+        size_t out_len = sizeof(key_bytes);
+
+        secp256k1_ec_pubkey_serialize(secp256k1_ctx, key_bytes, &out_len,
+                                      &update_agg_pk.pubkey, SECP256K1_EC_COMPRESSED);
+
+        script_pubkey = tal_arr(tmpctx, u8, 34);
+        script_pubkey[0] = 0x51;  /* OP_1 (witness version 1) */
+        script_pubkey[1] = 0x20;  /* push 32 bytes */
+        memcpy(script_pubkey + 2, key_bytes + 1, 32);  /* x-coordinate (skip 02/03 prefix) */
+    }
 
     /* Remove and re-add with updated information */
     bitcoin_tx_remove_input(tx, input_num);
