@@ -1,5 +1,6 @@
 #include "config.h"
 #include <bitcoin/feerate.h>
+#include <inttypes.h>
 #include <bitcoin/script.h>
 #include <ccan/asort/asort.h>
 #include <ccan/mem/mem.h>
@@ -20,6 +21,7 @@
 #include <onchaind/onchaind_wiregen.h>
 #include <unistd.h>
 #include <wally_bip32.h>
+#include <wally_crypto.h>
 #include <wire/wire_sync.h>
 #include "onchain_types_names_gen.h"
 
@@ -196,7 +198,9 @@ static struct bitcoin_tx *bip340_tx_to_us(const tal_t *ctx,
                     &keyset->inner_pubkey));
 
     tx = bitcoin_tx(ctx, chainparams, 1, 1, locktime);
-    bitcoin_tx_add_input(tx, &out->outpoint, 0 /* sequence */,
+    /* HTLC timeout script has CSV(1), so we need nSequence >= 1.
+     * Setting to 1 satisfies both CLTV (needs < 0xffffffff) and CSV (needs >= 1) */
+    bitcoin_tx_add_input(tx, &out->outpoint, 1 /* sequence: must be >= 1 for CSV(1) */,
             NULL /* scriptSig */, out->sat, out->scriptPubKey /* scriptPubkey */,
             NULL /* input_wscript */, NULL /* inner_pubkey */, NULL /* tap_tree */);
 
@@ -233,7 +237,7 @@ static struct bitcoin_tx *bip340_tx_to_us(const tal_t *ctx,
 
     if (amount_sat_less(out->sat, min_out)) {
         /* FIXME: We should use SIGHASH_NONE so others can take it */
-        fee = amount_tx_fee(feerate_floor(), max_weight);
+        fee = amount_tx_fee(feerate_floor_check(), max_weight);
         status_unusual("TX %s amount %s too small to"
                    " pay reasonable fee, using minimal fee"
                    " and ignoring",
@@ -242,7 +246,7 @@ static struct bitcoin_tx *bip340_tx_to_us(const tal_t *ctx,
         *tx_type = IGNORING_TINY_PAYMENT;
     }
 
-    /* This can only happen if feerate_floor() is still too high; shouldn't
+    /* This can only happen if feerate_floor_check() is still too high; shouldn't
      * happen! */
     if (!amount_sat_sub(&amt, out->sat, fee)) {
         amt = dust_limit;
@@ -282,9 +286,17 @@ static u8 **derive_htlc_success_scripts(const tal_t *ctx, const struct htlc_stub
     size_t i;
     u8 **htlc_scripts = tal_arr(ctx, u8 *, tal_count(htlcs));
 
+    status_debug("derive_htlc_success_scripts: our_htlc_pubkey=%s their_htlc_pubkey=%s",
+        fmt_pubkey(tmpctx, our_htlc_pubkey),
+        fmt_pubkey(tmpctx, their_htlc_pubkey));
+
     for (i = 0; i < tal_count(htlcs); i++) {
+        const struct pubkey *used_pubkey = htlcs[i].owner == LOCAL ? their_htlc_pubkey : our_htlc_pubkey;
+        status_debug("HTLC[%zu] owner=%s, using pubkey=%s for success script", i,
+            htlcs[i].owner == LOCAL ? "LOCAL" : "REMOTE",
+            fmt_pubkey(tmpctx, used_pubkey));
         htlc_scripts[i] = make_eltoo_htlc_success_script(htlc_scripts,
-                                   htlcs[i].owner == LOCAL ? their_htlc_pubkey : our_htlc_pubkey,
+                                   used_pubkey,
                                    &htlcs[i].ripemd);
 		status_debug("HTLC success script %lu: %s", i, tal_hex(NULL, htlc_scripts[i]));
     }
@@ -338,7 +350,7 @@ static const size_t *eltoo_match_htlc_output(const tal_t *ctx,
     const u8 *script = tal_dup_arr(tmpctx, u8, out->script, out->script_len,
                        0);
     /* Must be a p2tr output */
-    if (!is_p2tr(script, NULL)) {
+    if (!is_p2tr(script, tal_bytelen(script), NULL)) {
 		/* FIXME do something better than crash */
 		abort();
 	}
@@ -363,9 +375,22 @@ static const size_t *eltoo_match_htlc_output(const tal_t *ctx,
 		compute_taptree_merkle_root(&tap_merkle_root, htlc_scripts, /* num_scripts */ 2);
 		//success_annex = make_annex_from_script(tmpctx, htlc_success_scripts[i]);
 		//compute_taptree_merkle_root_with_hint(&tap_merkle_root_annex, htlc_timeout_scripts[i], success_annex);
+        struct pubkey inner_pubkey;
+        bipmusig_inner_pubkey(&inner_pubkey, &keyagg_cache, funding_pubkey_ptrs, 2);
+        status_debug("HTLC[%zu] inner_pubkey=%s tap_merkle_root=%s", i,
+            fmt_pubkey(tmpctx, &inner_pubkey),
+            tal_hexstr(tmpctx, tap_merkle_root.u.u8, sizeof(tap_merkle_root)));
+        status_debug("HTLC[%zu] success_script=%s timeout_script=%s", i,
+            tal_hex(tmpctx, htlc_success_scripts[i]),
+            tal_hex(tmpctx, htlc_timeout_scripts[i]));
+
         bipmusig_finalize_keys(&taproot_pubkey, &keyagg_cache, funding_pubkey_ptrs, /* n_pubkeys */ 2,
-               &tap_merkle_root, tap_tweak_out, NULL);
-        taproot_script = scriptpubkey_p2tr(ctx, &taproot_pubkey);
+               &tap_merkle_root, tap_tweak_out, &inner_pubkey);
+        /* Use scriptpubkey_raw_p2tr since taproot_pubkey is already tweaked by bipmusig_finalize_keys */
+        taproot_script = scriptpubkey_raw_p2tr(ctx, &taproot_pubkey);
+        status_debug("HTLC[%zu] finalized: inner_pubkey=%s taproot_pubkey=%s tap_tweak_out=%s",
+            i, fmt_pubkey(tmpctx, &inner_pubkey), fmt_pubkey(tmpctx, &taproot_pubkey),
+            tal_hexstr(tmpctx, tap_tweak_out, 32));
 
 		status_debug("Reconstructed HTLC script %s for comparison with output: %s", tal_hex(NULL, taproot_script), tal_hex(NULL, script));
 
@@ -525,7 +550,7 @@ static void eltoo_proposal_should_rbf(struct tracked_output *out)
 
 		wtt = onchain_txtype_to_wallet_txtype(out->proposal->tx_type);
 		wire_sync_write(REQ_FD,
-				take(towire_onchaind_broadcast_tx(NULL, tx,
+				take(towire_eltoo_onchaind_broadcast_tx(NULL, tx,
 								 wtt,
 								 true)));
 	}
@@ -541,12 +566,32 @@ static void eltoo_proposal_meets_depth(struct tracked_output *out)
 			status_broken("Proposal tx already exists for HTLC timeout when it should be null. Stumbling through.");
 		} else {
 			status_debug("Creating HTLC timeout sweep transaction to be signed");
+			status_debug("HTLC timeout: spending output script=%s", tal_hex(tmpctx, out->scriptPubKey));
+			status_debug("HTLC timeout: timeout_tapscript=%s (len=%zu)", tal_hex(tmpctx, out->htlc_timeout_tapscript), tal_count(out->htlc_timeout_tapscript));
+			status_debug("HTLC timeout: success_tapscript=%s (len=%zu)", tal_hex(tmpctx, out->htlc_success_tapscript), tal_count(out->htlc_success_tapscript));
+			status_debug("HTLC timeout: inner_pubkey=%s parity=%d", fmt_pubkey(tmpctx, &keyset->inner_pubkey), out->parity_bit);
+
+			/* Debug: manually compute and print tapleaf hash of success script for comparison */
+			{
+				u8 *preimage = tal_arr(tmpctx, u8, 1 + 1 + tal_count(out->htlc_success_tapscript));
+				u8 tapleaf_hash[32];
+				size_t success_len = tal_count(out->htlc_success_tapscript);
+				preimage[0] = 0xc0; /* leaf version */
+				preimage[1] = (u8)success_len; /* compact_size for lengths < 253 */
+				memcpy(preimage + 2, out->htlc_success_tapscript, success_len);
+				wally_bip340_tagged_hash(preimage, 2 + success_len, "TapLeaf", tapleaf_hash, 32);
+				status_debug("HTLC timeout: expected success tapleaf_hash=%s", tal_hexstr(tmpctx, tapleaf_hash, 32));
+			}
+
+			status_debug("HTLC timeout: keyset->inner_pubkey=%s", fmt_pubkey(tmpctx, &keyset->inner_pubkey));
+			u8 *ctrl_block = compute_control_block(out, out->htlc_success_tapscript /* other_script */, NULL /* annex_hint*/, &keyset->inner_pubkey, out->parity_bit);
+			status_debug("HTLC timeout: control_block=%s (parity=%d)", tal_hex(tmpctx, ctrl_block), out->parity_bit);
 			out->proposal->tx = bip340_tx_to_us(out,
 				htlc_timeout_to_us,
 				out,
 				out->htlc.cltv_expiry,
 				out->htlc_timeout_tapscript,
-				compute_control_block(out, out->htlc_success_tapscript /* other_script */, NULL /* annex_hint*/, &keyset->inner_pubkey, out->parity_bit),
+				ctrl_block,
 				&out->proposal->tx_type, /* over-written if too small to care */
 				htlc_feerate,
 				NULL /* elem */, 0 /* elem_size */);
@@ -565,7 +610,7 @@ static void eltoo_proposal_meets_depth(struct tracked_output *out)
 
 	wire_sync_write(
 	    REQ_FD,
-	    take(towire_onchaind_broadcast_tx(
+	    take(towire_eltoo_onchaind_broadcast_tx(
 		 NULL, out->proposal->tx,
 		 onchain_txtype_to_wallet_txtype(out->proposal->tx_type),
 		 is_rbf)));
@@ -1362,6 +1407,20 @@ static void wait_for_resolved(struct tracked_output **outs, struct htlcs_info *h
 {
 	billboard_update(outs);
 
+    status_debug("HTLC keys for matching: self_settle=%s other_settle=%s self_funding=%s other_funding=%s",
+        fmt_pubkey(tmpctx, &keyset->self_settle_key),
+        fmt_pubkey(tmpctx, &keyset->other_settle_key),
+        fmt_pubkey(tmpctx, &keyset->self_funding_key),
+        fmt_pubkey(tmpctx, &keyset->other_funding_key));
+
+    for (size_t i = 0; i < tal_count(htlcs_info->htlcs); i++) {
+        status_debug("HTLC[%zu]: owner=%s cltv=%u ripemd=%s",
+            i,
+            htlcs_info->htlcs[i].owner == LOCAL ? "LOCAL" : "REMOTE",
+            htlcs_info->htlcs[i].cltv_expiry,
+            tal_hexstr(tmpctx, htlcs_info->htlcs[i].ripemd.u.u8, sizeof(htlcs_info->htlcs[i].ripemd)));
+    }
+
     /* Calculate all the HTLC scripts so we can match them */
     u8 **htlc_success_scripts = derive_htlc_success_scripts(outs, htlcs_info->htlcs, &keyset->self_settle_key, &keyset->other_settle_key);
     u8 **htlc_timeout_scripts = derive_htlc_timeout_scripts(outs, htlcs_info->htlcs, &keyset->self_settle_key, &keyset->other_settle_key);
@@ -1559,6 +1618,10 @@ static void handle_unilateral(const struct tx_parts *tx,
            /* n_pubkeys */ 2);
 
     /* FIXME I think this logic will be the same in main loop under output_spent  */
+
+    status_debug("Comparing locktimes: spending_tx locktime=%u, complete_update_tx locktime=%u, committed_update_tx=%p",
+                 locktime, complete_update_tx->wtx->locktime,
+                 committed_update_tx);
 
     /* Proposed resolution is the matching settlement tx */
     if (locktime == complete_update_tx->wtx->locktime) {

@@ -1137,8 +1137,19 @@ void compute_taptree_merkle_root(struct sha256 *hash_out, u8 **scripts, size_t n
 		memcpy(p, scripts[0], script_len);
 		p += script_len;
 
+		fprintf(stderr, "DEBUG compute_taptree: script[0] len=%zu, preimage_len=%zu\n", script_len, (size_t)(p - tag_hash_buf));
+		fprintf(stderr, "DEBUG compute_taptree: script[0] preimage=");
+		for (size_t i = 0; i < (size_t)(p - tag_hash_buf); i++)
+			fprintf(stderr, "%02x", tag_hash_buf[i]);
+		fprintf(stderr, "\n");
+
 		ok = wally_bip340_tagged_hash(tag_hash_buf, p - tag_hash_buf, "TapLeaf", tap_hashes, 32);
 		assert(ok == WALLY_OK);
+
+		fprintf(stderr, "DEBUG compute_taptree: script[0] tapleaf_hash=");
+		for (size_t i = 0; i < 32; i++)
+			fprintf(stderr, "%02x", tap_hashes[i]);
+		fprintf(stderr, "\n");
 
 		/* Second script */
 		script_len = tal_count(scripts[1]);
@@ -1150,8 +1161,19 @@ void compute_taptree_merkle_root(struct sha256 *hash_out, u8 **scripts, size_t n
 		memcpy(p, scripts[1], script_len);
 		p += script_len;
 
+		fprintf(stderr, "DEBUG compute_taptree: script[1] len=%zu, preimage_len=%zu\n", script_len, (size_t)(p - tag_hash_buf));
+		fprintf(stderr, "DEBUG compute_taptree: script[1] preimage=");
+		for (size_t i = 0; i < (size_t)(p - tag_hash_buf); i++)
+			fprintf(stderr, "%02x", tag_hash_buf[i]);
+		fprintf(stderr, "\n");
+
 		ok = wally_bip340_tagged_hash(tag_hash_buf, p - tag_hash_buf, "TapLeaf", tap_hashes + 32, 32);
 		assert(ok == WALLY_OK);
+
+		fprintf(stderr, "DEBUG compute_taptree: script[1] tapleaf_hash=");
+		for (size_t i = 0; i < 32; i++)
+			fprintf(stderr, "%02x", tap_hashes[32 + i]);
+		fprintf(stderr, "\n");
 
         /* If kj ≥ ej: kj+1 = hashTapBranch(ej || kj), swap them*/
         if (memcmp(tap_hashes, tap_hashes + 32, 32) >= 0) {
@@ -1159,8 +1181,22 @@ void compute_taptree_merkle_root(struct sha256 *hash_out, u8 **scripts, size_t n
             memcpy(tap_hashes, tap_hashes + 32, 32);
             memcpy(tap_hashes + 32, tag_hash_buf, 32);
         }
+
+		fprintf(stderr, "DEBUG compute_taptree: after sort: tap_hashes[0]=");
+		for (size_t i = 0; i < 32; i++)
+			fprintf(stderr, "%02x", tap_hashes[i]);
+		fprintf(stderr, " tap_hashes[1]=");
+		for (size_t i = 0; i < 32; i++)
+			fprintf(stderr, "%02x", tap_hashes[32 + i]);
+		fprintf(stderr, "\n");
+
         ok = wally_bip340_tagged_hash(tap_hashes, sizeof(tap_hashes), "TapBranch", hash_out->u.u8, 32);
         assert(ok == WALLY_OK);
+
+		fprintf(stderr, "DEBUG compute_taptree: merkle_root=");
+		for (size_t i = 0; i < 32; i++)
+			fprintf(stderr, "%02x", hash_out->u.u8[i]);
+		fprintf(stderr, "\n");
     }
 }
 
@@ -1246,8 +1282,20 @@ u8 *compute_control_block(const tal_t *ctx, const u8 *other_script, const u8 *an
         memcpy(p, other_script, script_len);
         p += script_len;
 
+        fprintf(stderr, "DEBUG compute_control_block: other_script_len=%zu, tag_hash_buf_len=%zu\n", script_len, (size_t)(p - tag_hash_buf));
+        fprintf(stderr, "DEBUG compute_control_block: tag_hash_buf=");
+        for (size_t i = 0; i < (size_t)(p - tag_hash_buf); i++)
+            fprintf(stderr, "%02x", tag_hash_buf[i]);
+        fprintf(stderr, "\n");
+
         ok = wally_bip340_tagged_hash(tag_hash_buf, p - tag_hash_buf, "TapLeaf", control_block_cursor, 32);
         assert(ok == WALLY_OK);
+
+        fprintf(stderr, "DEBUG compute_control_block: sibling tapleaf_hash=");
+        for (size_t i = 0; i < 32; i++)
+            fprintf(stderr, "%02x", control_block_cursor[i]);
+        fprintf(stderr, "\n");
+
         control_block_cursor += 32;
     } else if (annex_hint) {
         assert(tal_count(annex_hint) == 34);
@@ -1272,16 +1320,32 @@ u8 *make_eltoo_settle_script(const tal_t *ctx, const struct bitcoin_tx *settle_t
     struct privkey g;
     unsigned char one_G_bytes[33];
 
-    /* For SIGHASH_ANYPREVOUTANYSCRIPT, the script is not committed to,
-     * so we pass NULL for tapleaf_script. The script will contain this
-     * signature and be built afterwards.
+    /* For SIGHASH_ANYPREVOUTANYSCRIPT, the tapleaf_hash is NOT committed,
+     * BUT we still need to include key_version and codesep_position in
+     * the sighash (they are part of "tapscript extensions").
+     *
+     * libwally's bip341_signature_hash skips ALL tapscript extensions if
+     * tapleaf_script is NULL, so we must pass a non-NULL placeholder.
+     * The actual content doesn't matter since the tapleaf_hash is skipped
+     * for ANYPREVOUTANYSCRIPT anyway.
+     *
+     * Use a 1-byte placeholder script (OP_1) since libwally validates
+     * that non-NULL scripts have length > 0.
      */
+    u8 *dummy_tapscript = tal_arr(tmpctx, u8, 1);
+    dummy_tapscript[0] = 0x51; /* OP_1 */
     bitcoin_tx_taproot_hash_for_sig(settle_tx,
                  input_index,
                  sh_type,
-                 /* tapleaf_script */ NULL,
+                 dummy_tapscript,
                  /* annex */ NULL,
                  &sighash);
+
+    fprintf(stderr, "make_eltoo_settle_script: sighash=%s, sighash_type=%02x, num_outputs=%zu, locktime=%u\n",
+            tal_hexstr(tmpctx, &sighash, sizeof(sighash)),
+            sh_type,
+            settle_tx->wtx->num_outputs,
+            settle_tx->wtx->locktime);
 
 
     /* Should directly take keypair instead of extracting but... */

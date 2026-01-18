@@ -596,7 +596,11 @@ def test_eltoo_htlc(node_factory, bitcoind, executor, chainparams):
     l2.wait_for_onchaind_broadcast('ELTOO_SETTLE',
                                    'ELTOO_UPDATE/DELAYED_OUTPUT_TO_US')
 
-    assert len(bitcoind.rpc.getrawmempool()) == 1
+    # With submitpackage/CPFP, we have 2 txs: settle + CPFP child
+    # Both nodes may broadcast, but only one package should succeed (second fails as duplicate)
+    mempool = bitcoind.rpc.getrawmempool()
+    # Should have at least settle tx, possibly with CPFP child
+    assert len(mempool) >= 1 and len(mempool) <= 2, f"Expected 1-2 txs in mempool, got {len(mempool)}"
 
     # We're going to disable transaction relay for the SUCCESS transaction
     # To allow us to test broadcast of one transaction at a time
@@ -605,7 +609,7 @@ def test_eltoo_htlc(node_factory, bitcoind, executor, chainparams):
 
     l1.daemon.rpcproxy.mock_rpc('sendrawtransaction', censoring_sendrawtx)
 
-    # Mine settle tx, then we should see HTLC timeout resolution hit the mempool by the receiver
+    # Mine settle tx (and CPFP if present), then we should see HTLC timeout resolution hit the mempool by the receiver
     bitcoind.generate_block(1)
 
     wait_for(lambda: len(bitcoind.rpc.getrawmempool()) == 1)

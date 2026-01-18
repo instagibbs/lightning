@@ -94,6 +94,12 @@ struct bitcoin_tx *create_ephemeral_anchor_cpfp(
 				default_locktime(ld->topology),
 				BITCOIN_TX_RBF_SEQUENCE, NULL);
 
+	/* TRUC (BIP-431): If parent is version 3, child must also be version 3 */
+	if (parent_tx->wtx->version == 3) {
+		log_debug(ld->log, "CPFP: parent_tx version=3, setting CPFP version=3");
+		wally_psbt_set_tx_version(psbt, 3);
+	}
+
 	/* Add the ephemeral anchor input (zero-value, anyone-can-spend) */
 	psbt_append_input(psbt, anchor_outpoint, BITCOIN_TX_RBF_SEQUENCE,
 			  NULL, NULL, NULL);

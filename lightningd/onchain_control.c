@@ -3,6 +3,7 @@
 #include <bitcoin/script.h>
 #include <ccan/cast/cast.h>
 #include <ccan/tal/str/str.h>
+#include <common/ephemeral_anchor.h>
 #include <common/htlc_tx.h>
 #include <common/memleak.h>
 #include <common/psbt_keypath.h>
@@ -166,7 +167,12 @@ static void handle_onchain_init_reply(struct channel *channel, const u8 *msg)
 
 static void handle_eltoo_onchain_init_reply(struct channel *channel, const u8 *msg UNUSED)
 {
-	/* TODO: eltoo onchaind wire messages need to be defined */
+	struct lightningd *ld = channel->peer->ld;
+	struct htlc_stub *stubs;
+	bool *tell, *tell_immediate;
+	u8 *htlcs_msg;
+
+	log_debug(channel->log, "Received eltoo_onchaind_init_reply, sending htlcs");
 
 	/* FIXME: We may already be ONCHAIN state when we implement restart! */
 	channel_set_state(channel,
@@ -175,10 +181,81 @@ static void handle_eltoo_onchain_init_reply(struct channel *channel, const u8 *m
 			  REASON_UNKNOWN,
 			  "Onchain init reply");
 
+	/* Tell it about any relevant HTLCs */
+	/* For eltoo, use the current state number (max of local/remote index - 1) */
+	u64 current_state = max_u64(channel->next_index[LOCAL], channel->next_index[REMOTE]) - 1;
+	log_debug(channel->log, "Querying HTLCs for eltoo state %"PRIu64, current_state);
+	stubs = wallet_htlc_stubs(tmpctx, ld->wallet, channel, current_state);
+	tell = tal_arr(stubs, bool, tal_count(stubs));
+	tell_immediate = tal_arr(stubs, bool, tal_count(stubs));
+
+	for (size_t i = 0; i < tal_count(stubs); i++) {
+		tell[i] = tell_if_missing(channel, &stubs[i],
+					  &tell_immediate[i]);
+	}
+	htlcs_msg = towire_onchaind_htlcs(channel, stubs, tell, tell_immediate);
+	log_debug(channel->log, "Sending onchaind_htlcs message with %zu HTLCs", tal_count(stubs));
+	subd_send_msg(channel->owner, take(htlcs_msg));
+
 	/* Tell it about any preimages we know. */
 	onchaind_tell_fulfill(channel);
 }
 
+static void handle_eltoo_onchaind_broadcast_tx(struct channel *channel, const u8 *msg)
+{
+	struct lightningd *ld = channel->peer->ld;
+	struct bitcoin_tx *tx;
+	enum wallet_tx_type type;
+	bool is_rbf;
+	struct bitcoin_outpoint anchor_outpoint;
+
+	if (!fromwire_eltoo_onchaind_broadcast_tx(tmpctx, msg, &tx, &type, &is_rbf)) {
+		channel_internal_error(channel, "Invalid eltoo_onchaind_broadcast_tx");
+		return;
+	}
+
+	log_debug(channel->log, "eltoo_onchaind wants to broadcast %s tx: %s",
+		  is_rbf ? "RBF" : "initial",
+		  fmt_bitcoin_tx(tmpctx, tx));
+
+	/* Check if tx has an ephemeral anchor that needs CPFP */
+	if (find_ephemeral_anchor_output(tx, &anchor_outpoint)) {
+		struct bitcoin_tx *cpfp_tx;
+		u32 feerate = unilateral_feerate(ld->topology, true);
+
+		log_debug(channel->log, "Found ephemeral anchor at %s:%u",
+			  fmt_bitcoin_txid(tmpctx, &anchor_outpoint.txid),
+			  anchor_outpoint.n);
+
+		/* Create CPFP transaction for the ephemeral anchor */
+		cpfp_tx = create_ephemeral_anchor_cpfp(
+			tmpctx, ld, tx, &anchor_outpoint,
+			bitcoin_tx_weight(tx),
+			feerate,
+			&channel->local_funding_pubkey,
+			channel->final_key_idx);
+
+		if (cpfp_tx) {
+			/* Broadcast as package: [tx, cpfp_tx] */
+			const struct bitcoin_tx *package[2];
+			package[0] = tx;
+			package[1] = cpfp_tx;
+			broadcast_package(channel, ld->topology, channel,
+					  package, 2, NULL, NULL, NULL);
+		} else {
+			/* Fallback: try without CPFP (may fail for non-inquisition nodes) */
+			log_unusual(channel->log,
+				    "Could not create CPFP for eltoo tx, "
+				    "broadcasting without package (may fail)");
+			broadcast_tx(channel, ld->topology, channel,
+				     take(tx), NULL, is_rbf, 0, NULL, NULL, NULL);
+		}
+	} else {
+		/* No ephemeral anchor, broadcast normally */
+		broadcast_tx(channel, ld->topology, channel,
+			     take(tx), NULL, is_rbf, 0, NULL, NULL, NULL);
+	}
+}
 
 /**
  * Notify onchaind about the depth change of the watched tx.
@@ -1730,6 +1807,11 @@ static unsigned int onchain_msg(struct subd *sd, const u8 *msg, const int *fds U
 	case WIRE_ONCHAIND_DEV_MEMLEAK:
 	case WIRE_ONCHAIND_DEV_MEMLEAK_REPLY:
 	case WIRE_ONCHAIND_SPENT_REPLY:
+	/* Eltoo-specific messages - not handled by regular onchaind handler */
+	case WIRE_ELTOO_ONCHAIND_INIT:
+	case WIRE_ELTOO_ONCHAIND_INIT_REPLY:
+	case WIRE_ELTOO_ONCHAIND_NEW_STATE_OUTPUT:
+	case WIRE_ELTOO_ONCHAIND_BROADCAST_TX:
 		break;
 	}
 
@@ -1741,9 +1823,11 @@ static unsigned int eltoo_onchain_msg(struct subd *sd, const u8 *msg, const int 
 {
 	enum onchaind_wire t = fromwire_peektype(msg);
 
+	log_debug(sd->log, "eltoo_onchain_msg received type %u (%s)", t, onchaind_wire_name(t));
+
 	switch (t) {
-	/* For eltoo, treat init_reply as eltoo init reply */
-	case WIRE_ONCHAIND_INIT_REPLY:
+	/* Eltoo sends ELTOO_ONCHAIND_INIT_REPLY */
+	case WIRE_ELTOO_ONCHAIND_INIT_REPLY:
 		handle_eltoo_onchain_init_reply(sd->channel, msg);
 		break;
 	case WIRE_ONCHAIND_ALL_IRREVOCABLY_RESOLVED:
@@ -1789,8 +1873,16 @@ static unsigned int eltoo_onchain_msg(struct subd *sd, const u8 *msg, const int 
 	case WIRE_ONCHAIND_SPEND_HTLC_EXPIRED:
 		handle_onchaind_spend_htlc_expired(sd->channel, msg);
 		break;
+	case WIRE_ELTOO_ONCHAIND_BROADCAST_TX:
+		handle_eltoo_onchaind_broadcast_tx(sd->channel, msg);
+		break;
+	case WIRE_ELTOO_ONCHAIND_NEW_STATE_OUTPUT:
+		/* TODO: Store for rebinding support */
+		break;
 	/* We send these, not receive them */
 	case WIRE_ONCHAIND_INIT:
+	case WIRE_ONCHAIND_INIT_REPLY: /* Regular onchaind sends this, not eltoo */
+	case WIRE_ELTOO_ONCHAIND_INIT:
 	case WIRE_ONCHAIND_SPENT:
 	case WIRE_ONCHAIND_DEPTH:
 	case WIRE_ONCHAIND_HTLCS:
@@ -2023,50 +2115,31 @@ enum watch_result eltoo_onchaind_funding_spent(struct channel *channel,
 		return KEEP_WATCHING;
 	}
 
-	/* TODO: eltoo onchaind init message needs to be defined.
-	 * For now, just send the regular onchaind init message.
-	 * The eltoo onchaind will need its own init message with the
-	 * last_tx and last_settle_tx. */
-	struct bitcoin_txid our_last_txid;
-	bitcoin_txid(channel->last_tx, &our_last_txid);
-
-	msg = towire_onchaind_init(channel,
-				   &channel->their_shachain.chain,
+	/* Send eltoo-specific init message with update and settle txs */
+	msg = towire_eltoo_onchaind_init(channel,
 				   chainparams,
+				   &channel->funding,
 				   channel->funding_sats,
-				   channel->our_msat,
-				   &channel->channel_info.old_remote_per_commit,
-				   &channel->channel_info.remote_per_commit,
-				   /* BOLT #2:
-				    * `to_self_delay` is the number of blocks
-				    * that the other node's to-self outputs
-				    * must be delayed */
-				   /* So, these are reversed: they specify ours,
-				    * we specify theirs. */
-				   channel->channel_info.their_config.to_self_delay,
-				   channel->our_config.to_self_delay,
-				   channel->our_config.dust_limit,
-				   &our_last_txid,
-				   channel->shutdown_scriptpubkey[LOCAL],
-				   channel->shutdown_scriptpubkey[REMOTE],
-				   channel->opener,
-				   &channel->local_basepoints,
-				   &channel->channel_info.theirbase,
 				   tx_parts_from_wally_tx(tmpctx, tx->wtx, -1, -1),
 				   tx->wtx->locktime,
+				   channel->last_update_tx,
+				   channel->last_settle_tx,
+				   channel->committed_update_tx,
+				   channel->committed_settle_tx,
 				   blockheight,
-				   /* reasonable depth */
-				   3,
-				   channel->last_htlc_sigs,
-				   channel->min_possible_feerate,
-				   channel->max_possible_feerate,
+				   channel->our_msat,
+				   /* FIXME: use proper htlc_feerate */
+				   feerate_min(ld, NULL),
+				   channel->our_config.dust_limit,
+				   channel->shutdown_scriptpubkey[LOCAL],
+				   channel->shutdown_scriptpubkey[REMOTE],
 				   &channel->local_funding_pubkey,
 				   &channel->channel_info.remote_fundingkey,
-				   channel->static_remotekey_start[LOCAL],
-				   channel->static_remotekey_start[REMOTE],
-				   channel_type_has(channel->type, OPT_ANCHOR_OUTPUTS_DEPRECATED),
-				   channel_type_has(channel->type, OPT_ANCHORS_ZERO_FEE_HTLC_TX),
-				   feerate_min(channel->peer->ld, NULL));
+				   &channel->local_basepoints.payment, /* local_settle_pubkey */
+				   &channel->channel_info.theirbase.payment, /* remote_settle_pubkey */
+				   &channel->our_last_psig,
+				   &channel->their_last_psig,
+				   &channel->session);
 	subd_send_msg(channel->owner, take(msg));
 
 	watch_tx_and_outputs(channel, tx);

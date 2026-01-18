@@ -10,7 +10,6 @@
 #include <common/update_tx.h>
 #include <common/permute_tx.h>
 
-#include <stdio.h>
 #include <inttypes.h>
 
 #ifndef SUPERVERBOSE
@@ -85,8 +84,6 @@ static void add_eltoo_htlc_out(struct bitcoin_tx *tx,
 
     htlc_scripts[0] = make_eltoo_htlc_success_script(tx, receiver_pubkey, &ripemd);
     htlc_scripts[1] = make_eltoo_htlc_timeout_script(tx, sender_pubkey, htlc->expiry.locktime);
-	printf("Settle's HTLC success script: %s\n", tal_hex(NULL, htlc_scripts[0]));
-	printf("Settle's HTLC timeout script: %s\n", tal_hex(NULL, htlc_scripts[1]));
     compute_taptree_merkle_root(&tap_merkle_root, htlc_scripts, /* num_scripts */ 2);
     success_annex = make_annex_from_script(tx, htlc_scripts[0]);
     compute_taptree_merkle_root_with_hint(&tap_merkle_root_annex, htlc_scripts[1], success_annex);
@@ -94,8 +91,8 @@ static void add_eltoo_htlc_out(struct bitcoin_tx *tx,
 
     bipmusig_finalize_keys(&taproot_pubkey, &keyagg_cache, funding_pubkey_ptrs, /* n_pubkeys */ 2,
            &tap_merkle_root, tap_tweak_out, NULL);
-	printf("HTLC tweaked pubkey: %s\n", fmt_pubkey(tmpctx, &taproot_pubkey));
-    taproot_script = scriptpubkey_p2tr(tx, &taproot_pubkey);
+    /* Use scriptpubkey_raw_p2tr since taproot_pubkey is already tweaked by bipmusig_finalize_keys */
+    taproot_script = scriptpubkey_raw_p2tr(tx, &taproot_pubkey);
 
 	amount = amount_msat_to_sat_round_down(htlc->amount);
 
@@ -124,7 +121,6 @@ struct bitcoin_tx *settle_tx(const tal_t *ctx,
 			     struct wally_tx_output *direct_outputs[NUM_SIDES],
 			     u64 obscured_update_number)
 {
-    printf("SELF PAY: %lu, OTHER PAY: %lu\n", self_pay.millisatoshis, other_pay.millisatoshis);
 	struct amount_msat total_pay;
 	struct bitcoin_tx *tx;
 	size_t i, n, num_untrimmed;
@@ -146,11 +142,6 @@ struct bitcoin_tx *settle_tx(const tal_t *ctx,
    /* For MuSig aggregation for outputs */
     funding_pubkey_ptrs[0] = &(eltoo_keyset->self_funding_key);
     funding_pubkey_ptrs[1] = &(eltoo_keyset->other_funding_key);
-
-    printf("self update key: %s\n", tal_hexstr(ctx, &eltoo_keyset->self_funding_key, 33));
-    printf("other update key: %s\n", tal_hexstr(ctx, &eltoo_keyset->other_funding_key, 33));
-    printf("self settle key: %s\n", tal_hexstr(ctx, &eltoo_keyset->self_settle_key, 33));
-    printf("other settle key: %s\n", tal_hexstr(ctx, &eltoo_keyset->other_settle_key, 33));
 
     /* Channel-wide inner public key computed here */
     bipmusig_inner_pubkey(&inner_pubkey,
@@ -251,21 +242,7 @@ struct bitcoin_tx *settle_tx(const tal_t *ctx,
 	 * 9. Sort the outputs into [BIP 69+CLTV
 	 *    order](#transaction-input-and-output-ordering)
 	 */
-	printf("DEBUG: Before permute_outputs, num_outputs=%zu\n", tx->wtx->num_outputs);
-	for (size_t dbg_i = 0; dbg_i < tx->wtx->num_outputs; dbg_i++) {
-		printf("DEBUG: Output[%zu] satoshi=%"PRIu64" script=%s\n",
-			   dbg_i,
-			   tx->wtx->outputs[dbg_i].satoshi,
-			   tal_hexstr(tmpctx, tx->wtx->outputs[dbg_i].script, tx->wtx->outputs[dbg_i].script_len));
-	}
 	permute_outputs(tx, cltvs, (const void **)*htlcmap);
-	printf("DEBUG: After permute_outputs\n");
-	for (size_t dbg_i = 0; dbg_i < tx->wtx->num_outputs; dbg_i++) {
-		printf("DEBUG: Output[%zu] satoshi=%"PRIu64" script=%s\n",
-			   dbg_i,
-			   tx->wtx->outputs[dbg_i].satoshi,
-			   tal_hexstr(tmpctx, tx->wtx->outputs[dbg_i].script, tx->wtx->outputs[dbg_i].script_len));
-	}
 
 	/* BOLT #???:
 	 *

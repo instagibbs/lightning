@@ -317,6 +317,13 @@ static struct bitcoin_tx *sign_and_send_last(const tal_t *ctx,
 		struct pubkey final_key;
 		u32 target_feerate;
 
+		/* Check if we have the update and settle txs */
+		if (!channel->last_update_tx || !channel->last_settle_tx) {
+			log_unusual(channel->log,
+				    "Cannot broadcast eltoo tx: missing last_update_tx or last_settle_tx");
+			return NULL;
+		}
+
 		/* Use bind_txs_to_funding_outpoint to combine partial sigs and bind txs */
 		bound_txs = bind_txs_to_funding_outpoint(
 			channel->last_update_tx,

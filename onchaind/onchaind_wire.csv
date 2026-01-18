@@ -249,3 +249,9 @@ msgdata,eltoo_onchaind_new_state_output,outpoint,bitcoin_outpoint,
 msgdata,eltoo_onchaind_new_state_output,invalidated_update_num,u64,
 msgdata,eltoo_onchaind_new_state_output,annex_hint_len,u16,
 msgdata,eltoo_onchaind_new_state_output,annex_hint,u8,annex_hint_len
+
+# eltoo_onchaind -> master: broadcast a pre-signed transaction
+msgtype,eltoo_onchaind_broadcast_tx,5202
+msgdata,eltoo_onchaind_broadcast_tx,tx,bitcoin_tx,
+msgdata,eltoo_onchaind_broadcast_tx,type,enum wallet_tx_type,
+msgdata,eltoo_onchaind_broadcast_tx,is_rbf,bool,

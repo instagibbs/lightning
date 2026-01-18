@@ -1673,6 +1673,11 @@ static void wait_for_resolved(struct tracked_output **outs)
 		case WIRE_ONCHAIND_SPEND_HTLC_TIMEOUT:
 		case WIRE_ONCHAIND_SPEND_FULFILL:
 		case WIRE_ONCHAIND_SPEND_HTLC_EXPIRED:
+		/* Eltoo-specific messages - not used by regular onchaind */
+		case WIRE_ELTOO_ONCHAIND_INIT:
+		case WIRE_ELTOO_ONCHAIND_INIT_REPLY:
+		case WIRE_ELTOO_ONCHAIND_NEW_STATE_OUTPUT:
+		case WIRE_ELTOO_ONCHAIND_BROADCAST_TX:
 			break;
 		}
 		master_badmsg(-1, msg);

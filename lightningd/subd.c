@@ -489,6 +489,8 @@ static struct io_plan *sd_msg_read(struct io_conn *conn, struct subd *sd)
 	unsigned int i;
 	bool freed = false;
 
+	log_debug(sd->log, "sd_msg_read received type %d from %s", type, sd->name);
+
 	/* Everything we do, we wrap in a database transaction */
 	db_begin_transaction(db);
 

@@ -347,6 +347,10 @@ void broadcast_package_(const tal_t *ctx,
 	pb->cmd_id = tal_strdup_or_null(pb, cmd_id);
 	pb->txs = tal_dup_arr(pb, const struct bitcoin_tx *, txs, num_txs, 0);
 	pb->num_txs = num_txs;
+	/* Steal the actual transactions into pb so they survive until callback */
+	for (size_t i = 0; i < num_txs; i++) {
+		tal_steal(pb, pb->txs[i]);
+	}
 	pb->cb = cb;
 	pb->cbarg = cbarg;
 	if (taken(pb->cbarg))

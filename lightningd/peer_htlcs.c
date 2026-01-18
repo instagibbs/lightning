@@ -76,10 +76,21 @@ static bool htlc_in_update_state(struct channel *channel,
 	if (!state_update_ok(channel, hin->hstate, newstate, hin->key.id, "in"))
 		return false;
 
+	/* For eltoo, max_commit_num should be the last state where the HTLC
+	 * was present. Since next_index is already incremented by the time
+	 * we reach a terminal state, we subtract 1 for eltoo channels.
+	 * For terminal states (RCVD_REMOVE_ACK_REVOCATION, SENT_REMOVE_ACK_REVOCATION),
+	 * the HTLC was removed in the previous state, so max = next_index - 1. */
+	u64 max_commit = max_unsigned(channel->next_index[LOCAL],
+				      channel->next_index[REMOTE]);
+	bool terminal = (newstate == RCVD_REMOVE_ACK_REVOCATION
+			 || newstate == SENT_REMOVE_ACK_REVOCATION);
+	if (terminal && channel_type_has(channel->type, OPT_ELTOO) && max_commit > 0)
+		max_commit--;
+
 	wallet_htlc_update(channel->peer->ld->wallet,
 			   hin->dbid, newstate, hin->preimage,
-			   max_unsigned(channel->next_index[LOCAL],
-					channel->next_index[REMOTE]),
+			   max_commit,
 			   hin->badonion, hin->failonion, NULL,
 			   hin->we_filled,
 			   hin->key.id,
@@ -101,11 +112,20 @@ static bool htlc_out_update_state(struct channel *channel,
 			     "out"))
 		return false;
 
+	/* For eltoo, max_commit_num should be the last state where the HTLC
+	 * was present. Since next_index is already incremented by the time
+	 * we reach a terminal state, we subtract 1 for eltoo channels. */
+	u64 max_commit = max_unsigned(channel->next_index[LOCAL],
+				      channel->next_index[REMOTE]);
+	bool terminal = (newstate == RCVD_REMOVE_ACK_REVOCATION
+			 || newstate == SENT_REMOVE_ACK_REVOCATION);
+	if (terminal && channel_type_has(channel->type, OPT_ELTOO) && max_commit > 0)
+		max_commit--;
+
 	bool we_filled = false;
 	wallet_htlc_update(channel->peer->ld->wallet, hout->dbid, newstate,
 			   hout->preimage,
-			   max_unsigned(channel->next_index[LOCAL],
-					channel->next_index[REMOTE]),
+			   max_commit,
 			   0, hout->failonion,
 			   hout->failmsg, &we_filled,
 			   hout->key.id,
