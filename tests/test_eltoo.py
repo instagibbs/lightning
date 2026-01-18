@@ -141,8 +141,9 @@ def test_eltoo_unannounced_hop(node_factory, bitcoind):
     """Test eltoo payments work over hops"""
 
     # Make three nodes, two private channels
+    # 'developer': None enables --developer mode which is needed for --dev-fast-gossip
     l1, l2, l3 = node_factory.line_graph(3,
-                                     opts=[{}, {}, {}], announce_channels=False) # Channel announcement unsupported, doing private hops)
+                                     opts=[{'developer': None}, {'developer': None}, {'developer': None}], announce_channels=False) # Channel announcement unsupported, doing private hops)
 
     # l1 can pay l2
     l1.pay(l2, 100000*SAT)
@@ -155,8 +156,9 @@ def test_eltoo_unannounced_hop(node_factory, bitcoind):
 
     # With proper hints exposed,
     # l1 can pay l3
-    scid = l3.rpc.listchannels()['channels'][0]['short_channel_id']
-    invoice = l3.rpc.invoice(msatoshi=10000, label='hop', description='test', exposeprivatechannels=scid)
+    # Use listpeerchannels since channels are private/unannounced (not in gossip)
+    scid = l3.rpc.listpeerchannels()['channels'][0]['short_channel_id']
+    invoice = l3.rpc.invoice(amount_msat=10000, label='hop', description='test', exposeprivatechannels=scid)
     l1.rpc.pay(invoice['bolt11'])
     wait_for(lambda: l3.rpc.listpeerchannels()['channels'][0]['in_fulfilled_msat'] == Millisatoshi(200010000))
 

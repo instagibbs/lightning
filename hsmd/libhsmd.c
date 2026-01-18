@@ -2150,6 +2150,29 @@ u8 *hsmd_handle_client_message(const tal_t *ctx, struct hsmd_client *client,
     case WIRE_HSMD_REGEN_NONCE:
         return handle_regen_nonce(client, msg);
     /* Eltoo stuff ends */
+
+    /* Preapprove handlers - always approve */
+    case WIRE_HSMD_PREAPPROVE_INVOICE_CHECK:
+    {
+        char *invstring;
+        bool check_only;
+        if (!fromwire_hsmd_preapprove_invoice_check(tmpctx, msg, &invstring, &check_only))
+            return hsmd_status_bad_request(client, msg, "Bad preapprove_invoice_check");
+        /* Always approve */
+        return towire_hsmd_preapprove_invoice_check_reply(NULL, true);
+    }
+    case WIRE_HSMD_PREAPPROVE_KEYSEND_CHECK:
+    {
+        struct node_id destination;
+        struct sha256 payment_hash;
+        struct amount_msat amount_msat;
+        bool check_only;
+        if (!fromwire_hsmd_preapprove_keysend_check(msg, &destination, &payment_hash, &amount_msat, &check_only))
+            return hsmd_status_bad_request(client, msg, "Bad preapprove_keysend_check");
+        /* Always approve */
+        return towire_hsmd_preapprove_keysend_check_reply(NULL, true);
+    }
+
 	/* Not implemented or reply messages */
 	case WIRE_HSMD_DEV_MEMLEAK:
 	case WIRE_HSMD_DEV_PREINIT:
@@ -2191,9 +2214,7 @@ u8 *hsmd_handle_client_message(const tal_t *ctx, struct hsmd_client *client,
 	case WIRE_HSMD_PREAPPROVE_INVOICE_REPLY:
 	case WIRE_HSMD_PREAPPROVE_KEYSEND:
 	case WIRE_HSMD_PREAPPROVE_KEYSEND_REPLY:
-	case WIRE_HSMD_PREAPPROVE_INVOICE_CHECK:
 	case WIRE_HSMD_PREAPPROVE_INVOICE_CHECK_REPLY:
-	case WIRE_HSMD_PREAPPROVE_KEYSEND_CHECK:
 	case WIRE_HSMD_PREAPPROVE_KEYSEND_CHECK_REPLY:
 	case WIRE_HSMD_CHECK_OUTPOINT:
 	case WIRE_HSMD_CHECK_OUTPOINT_REPLY:
