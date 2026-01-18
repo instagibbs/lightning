@@ -18,6 +18,73 @@ import unittest
 # In msats
 SAT = 1000
 
+
+def bind_eltoo_tx(unbound_tx_hex, funding_txid, funding_outnum):
+    """Bind an eltoo transaction's APO input to the funding outpoint.
+
+    Eltoo transactions use SIGHASH_ANYPREVOUT with placeholder inputs (all 0xff).
+    This function replaces the placeholder with the actual funding outpoint.
+    """
+    # Transaction structure after version (4 bytes):
+    # - input count (1 byte varint for small counts)
+    # - prevout txid (32 bytes, reversed)
+    # - prevout vout (4 bytes, little endian)
+    # Position 10-74 is the prevout txid (64 hex chars)
+    # Position 74-82 is the prevout vout (8 hex chars)
+
+    # Reverse the funding txid for little-endian encoding
+    reversed_txid = bytes.fromhex(funding_txid)[::-1].hex()
+
+    # Convert outnum to little-endian 4 bytes
+    outnum_le = funding_outnum.to_bytes(4, 'little').hex()
+
+    # Replace the placeholder input with actual funding outpoint
+    bound_tx = unbound_tx_hex[:10] + reversed_txid + outnum_le + unbound_tx_hex[82:]
+
+    return bound_tx
+
+def test_eltoo_tx_binding(node_factory, bitcoind):
+    """Test that lightningd correctly binds eltoo transactions to funding outpoint"""
+
+    l1, l2 = node_factory.line_graph(2,
+                                    opts=[{'may_reconnect': True, 'developer': None},
+                                          {'may_reconnect': True, 'developer': None}])
+
+    # Get the channel info
+    channel_info = l1.rpc.listpeerchannels(l2.info['id'])['channels'][0]
+    funding_txid = channel_info['funding_txid']
+    funding_outnum = channel_info['funding_outnum']
+
+    # Get both bound and unbound versions
+    bound_update_tx = channel_info['last_update_tx']
+    unbound_update_tx = channel_info['last_update_tx_unbound']
+
+    # Verify unbound has placeholder input (all 0xff)
+    unbound_details = bitcoind.rpc.decoderawtransaction(unbound_update_tx)
+    assert unbound_details['vin'][0]['txid'] == 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'
+
+    # Verify bound has actual funding txid
+    bound_details = bitcoind.rpc.decoderawtransaction(bound_update_tx)
+    assert bound_details['vin'][0]['txid'] == funding_txid
+    assert bound_details['vin'][0]['vout'] == funding_outnum
+
+    # Verify our Python binding function produces the same result as lightningd
+    python_bound = bind_eltoo_tx(unbound_update_tx, funding_txid, funding_outnum)
+    assert python_bound == bound_update_tx, "Python binding should match lightningd binding"
+
+    # Verify settle tx is also bound (to the update tx output)
+    bound_settle_tx = channel_info['last_settle_tx']
+    unbound_settle_tx = channel_info['last_settle_tx_unbound']
+
+    unbound_settle_details = bitcoind.rpc.decoderawtransaction(unbound_settle_tx)
+    assert unbound_settle_details['vin'][0]['txid'] == 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'
+
+    bound_settle_details = bitcoind.rpc.decoderawtransaction(bound_settle_tx)
+    # Settle tx should reference the bound update tx's txid
+    assert bound_settle_details['vin'][0]['txid'] == bound_details['txid']
+    assert bound_settle_details['vin'][0]['vout'] == 0  # State output is always index 0
+
+
 def test_uncommitted_removal_reestablishment(node_factory, bitcoind):
 
     # Want offering node to disconnect right afer sending off update_xxx_htlc
@@ -224,6 +291,7 @@ def test_eltoo_htlc(node_factory, bitcoind, executor, chainparams):
     l1_settle_details = bitcoind.rpc.decoderawtransaction(l1_settle_tx)
 
     # N.B. We rely on bitcoin-inquisition imputing 1 sat/vbyte on txs with EAs
+    # last_update_tx is already bound by lightningd
     bitcoind.rpc.sendrawtransaction(l1_update_tx)
 
     # Mine and mature the update tx

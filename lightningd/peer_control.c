@@ -1340,10 +1340,33 @@ static void NON_NULL_ARGS(1, 2, 4, 5) json_add_channel(struct command *cmd,
 	json_add_htlcs(ld, response, channel);
 
 	if (channel_type_has(channel->type, OPT_ELTOO)) {
-		if (channel->last_update_tx)
-			json_add_tx(response, "last_update_tx", channel->last_update_tx);
-		if (channel->last_settle_tx)
-			json_add_tx(response, "last_settle_tx", channel->last_settle_tx);
+		if (channel->last_update_tx) {
+			/* Return unbound version (with placeholder input) */
+			json_add_tx(response, "last_update_tx_unbound", channel->last_update_tx);
+
+			/* Create bound version with actual funding outpoint */
+			struct bitcoin_tx *bound_update = clone_bitcoin_tx(tmpctx, channel->last_update_tx);
+			memcpy(bound_update->wtx->inputs[0].txhash, &channel->funding.txid, sizeof(channel->funding.txid));
+			bound_update->wtx->inputs[0].index = channel->funding.n;
+			json_add_tx(response, "last_update_tx", bound_update);
+		}
+		if (channel->last_settle_tx) {
+			/* Return unbound version (with placeholder input) */
+			json_add_tx(response, "last_settle_tx_unbound", channel->last_settle_tx);
+
+			/* Create bound version - settle tx input references the update tx output */
+			struct bitcoin_tx *bound_settle = clone_bitcoin_tx(tmpctx, channel->last_settle_tx);
+			if (channel->last_update_tx) {
+				struct bitcoin_tx *bound_update = clone_bitcoin_tx(tmpctx, channel->last_update_tx);
+				memcpy(bound_update->wtx->inputs[0].txhash, &channel->funding.txid, sizeof(channel->funding.txid));
+				bound_update->wtx->inputs[0].index = channel->funding.n;
+				struct bitcoin_txid update_txid;
+				bitcoin_txid(bound_update, &update_txid);
+				memcpy(bound_settle->wtx->inputs[0].txhash, &update_txid, sizeof(update_txid));
+				bound_settle->wtx->inputs[0].index = 0; /* State output is always index 0 */
+			}
+			json_add_tx(response, "last_settle_tx", bound_settle);
+		}
 	} else if (channel->last_tx) {
 		json_add_tx(response, "last_tx", channel->last_tx);
 	}
