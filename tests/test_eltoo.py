@@ -62,7 +62,7 @@ def test_eltoo_offerer_ack_reestablishment(node_factory, bitcoind):
     disconnects = ['-WIRE_UPDATE_SIGNED_ACK']
 
     l1, l2 = node_factory.line_graph(2,
-                                    opts=[{'may_reconnect': True}, {'may_reconnect': True, 'disconnect': disconnects}])
+                                    opts=[{'may_reconnect': True, 'developer': None}, {'may_reconnect': True, 'developer': None, 'disconnect': disconnects}])
 
     # Pay comment will cause disconnect, but should recover
     l1.pay(l2, 100000*SAT)
@@ -82,7 +82,7 @@ def test_eltoo_uneven_reestablishment(node_factory, bitcoind):
     disconnects = ['-WIRE_UPDATE_SIGNED']
 
     l1, l2 = node_factory.line_graph(2,
-                                    opts=[{'may_reconnect': True, 'disconnect': disconnects}, {'may_reconnect': True}])
+                                    opts=[{'may_reconnect': True, 'developer': None, 'disconnect': disconnects}, {'may_reconnect': True, 'developer': None}])
 
     # Pay comment will cause disconnect, but should recover
     l1.pay(l2, 100000*SAT)

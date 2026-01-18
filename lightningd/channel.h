@@ -245,6 +245,8 @@ struct channel {
 	struct nonce their_next_nonce, our_next_nonce; /* Eltoo only */
 	struct bitcoin_tx *last_update_tx;  /* Eltoo: last complete update tx */
 	struct bitcoin_tx *last_settle_tx;  /* Eltoo: last complete settle tx */
+	struct bitcoin_tx *committed_update_tx;  /* Eltoo: committed but not yet complete update tx */
+	struct bitcoin_tx *committed_settle_tx;  /* Eltoo: committed but not yet complete settle tx */
 	const struct bitcoin_signature *last_htlc_sigs;
 
 	/* Keys for channel */

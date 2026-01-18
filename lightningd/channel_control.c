@@ -1658,8 +1658,14 @@ static unsigned channel_msg(struct subd *sd, const u8 *msg, const int *fds)
 		peer_sending_updatesig(sd->channel, msg);
 		break;
 	case WIRE_CHANNELD_GOT_SHUTDOWN_ELTOO:
+		/* FIXME: handle eltoo shutdown properly */
+		break;
 	case WIRE_CHANNELD_RESENDING_UPDATESIG:
-		/* FIXME: handle eltoo shutdown and resending properly */
+		/* Channeld is resending an update after reestablishment.
+		 * We just need to acknowledge receipt so it can continue.
+		 * The psig/session are already stored from the original send. */
+		subd_send_msg(sd,
+			      take(towire_channeld_resending_updatesig_reply(msg)));
 		break;
 	case WIRE_CHANNELD_UPGRADED:
 		handle_channel_upgrade(sd->channel, msg);
@@ -1834,8 +1840,8 @@ bool peer_start_eltoo_channeld(struct channel *channel,
 				       &channel->our_next_nonce,
 				       channel->last_update_tx,
 				       channel->last_settle_tx,
-				       channel->last_update_tx,   /* committed = complete at open */
-				       channel->last_settle_tx,   /* committed = complete at open */
+				       channel->committed_update_tx ? channel->committed_update_tx : channel->last_update_tx,
+				       channel->committed_settle_tx ? channel->committed_settle_tx : channel->last_settle_tx,
 				       &channel->channel_info.remote_fundingkey,
 				       &channel->channel_info.theirbase.payment, /* their_settle_pubkey */
 				       channel->opener,

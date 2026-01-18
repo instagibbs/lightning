@@ -1203,6 +1203,8 @@ static void eltoo_opening_funder_finished(struct subd *openingd,
 	channel->our_next_nonce = our_next_nonce;
 	channel->last_update_tx = tal_steal(channel, first_update);
 	channel->last_settle_tx = tal_steal(channel, first_settle);
+	channel->committed_update_tx = NULL;
+	channel->committed_settle_tx = NULL;
 
 	/* Watch for funding confirms */
 	channel_watch_funding(ld, channel);
@@ -1327,6 +1329,8 @@ static void eltoo_opening_fundee_finished(struct subd *openingd,
 	channel->our_next_nonce = our_next_nonce;
 	channel->last_update_tx = tal_steal(channel, first_update);
 	channel->last_settle_tx = tal_steal(channel, first_settle);
+	channel->committed_update_tx = NULL;
+	channel->committed_settle_tx = NULL;
 
 	log_debug(channel->log, "Watching funding tx %s",
 		  fmt_bitcoin_txid(reply,

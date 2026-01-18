@@ -2110,6 +2110,9 @@ static void peer_reconnect(struct eltoo_peer *peer,
 			/* Migrate over and continue */
 			migrate_committed_to_complete(peer);
 
+			/* We received their signature via reestablishment */
+			peer->sigs_received++;
+
 			/* Fill out changed htlcs */
 			if (channel_rcvd_update_sign_ack(peer->channel, &changed_htlcs)) {
 				/* FIXME I don't think this is possible? */

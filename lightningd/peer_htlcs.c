@@ -2391,6 +2391,13 @@ void peer_sending_updatesig(struct channel *channel, const u8 *msg)
 	channel->last_was_revoke = false;
 	tal_free(channel->last_sent_commit);
 	channel->last_sent_commit = tal_steal(channel, changed_htlcs);
+
+	/* Save committed transactions for reestablishment retransmit */
+	tal_free(channel->committed_update_tx);
+	tal_free(channel->committed_settle_tx);
+	channel->committed_update_tx = tal_steal(channel, committed_update_tx);
+	channel->committed_settle_tx = tal_steal(channel, committed_settle_tx);
+
 	wallet_channel_save(ld->wallet, channel);
 
 	/* Tell it we've got it, and to go ahead. */
