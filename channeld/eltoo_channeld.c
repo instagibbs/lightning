@@ -2128,6 +2128,10 @@ static void peer_reconnect(struct eltoo_peer *peer,
 
 			status_debug("reestablishment update_signed_ack %s: update = %lu",
 					 side_to_str(peer->channel->opener), peer->next_index - 1);
+
+			/* We gave up our turn when we sent update_signed, so after
+			 * processing their ack, it's their turn to propose next */
+			peer->turn = REMOTE;
 		}
 
 		/* Everything is ok, return to normal operation */
