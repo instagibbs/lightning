@@ -754,6 +754,14 @@ static void send_update(struct eltoo_peer *peer)
 	struct wally_tx_output *direct_outputs[NUM_SIDES];
 	struct musig_keyagg_cache cache;
 
+	/* Can't send update if it's not our turn - wait for YIELD.
+	 * Timer will be restarted via change_turn -> maybe_send_uncommitted_removals
+	 * when we receive YIELD. */
+	if (!is_our_turn(peer)) {
+		peer->commit_timer = NULL;
+		return;
+	}
+
 	if (peer->dev_disable_commit && !*peer->dev_disable_commit) {
 		peer->commit_timer = NULL;
 		return;
@@ -888,14 +896,9 @@ static void send_update(struct eltoo_peer *peer)
 
 	/*
 	 * - MUST give up its turn when:
-     * - sending `update_signed`
+	 * - sending `update_signed`
 	 */
-	if (is_our_turn(peer)){
-		change_turn(peer, REMOTE);
-	} else {
-		/* We are not doing optimistic updates */
-		status_broken("We're proposing updates out of turn?");
-	}
+	change_turn(peer, REMOTE);
 
 	/* Timer now considered expired, you can add a new one. */
 	peer->commit_timer = NULL;
@@ -1947,14 +1950,9 @@ static void resend_updates(struct eltoo_peer *peer, struct changed_htlc *last)
 
 	/*
 	 * - MUST give up its turn when:
-     * - sending `update_signed`
+	 * - sending `update_signed`
 	 */
-	if (is_our_turn(peer)){
-		change_turn(peer, REMOTE);
-	} else {
-		/* We are not doing optimistic updates */
-		status_broken("We're proposing updates out of turn?");
-	}
+	change_turn(peer, REMOTE);
 
 	msg = towire_update_signed(NULL, &peer->channel_id,
 				       &peer->channel->eltoo_keyset.last_committed_state.self_psig,
