@@ -1433,13 +1433,12 @@ u8 *make_eltoo_htlc_timeout_script(const tal_t *ctx, const struct pubkey *settle
 {
     /* and EXPR_TIMEOUT =
      *
-     *`<N> OP_CHECKLOCKTIMEVERIFY OP_VERIFY <settlement_pubkey> OP_CHECKSIG`
+     *`<htlc_pubkey> OP_CHECKSIGVERIFY N OP_CHECKLOCKTIMEVERIFY`
      */
 	u8 *script = tal_arr(ctx, u8, 0);
+	add_push_xonly_key(&script, settlement_pubkey);
+	add_op(&script, OP_CHECKSIGVERIFY);
 	add_number(&script, htlc_timeout);
 	add_op(&script, OP_CHECKLOCKTIMEVERIFY);
-	add_op(&script, OP_VERIFY);
-	add_push_xonly_key(&script, settlement_pubkey);
-	add_op(&script, OP_CHECKSIG);
     return script;
 }
