@@ -1081,6 +1081,21 @@ static const struct db_migration dbmigrations[] = {
 
     /* eltoo: shared_delay column for channel_configs */
     {SQL("ALTER TABLE channel_configs ADD shared_delay INTEGER DEFAULT 0"), NULL},
+    /* eltoo: channel state persistence for restart */
+    {SQL("ALTER TABLE channels ADD eltoo_last_update_tx BLOB DEFAULT NULL"), NULL},
+    {SQL("ALTER TABLE channels ADD eltoo_last_settle_tx BLOB DEFAULT NULL"), NULL},
+    {SQL("ALTER TABLE channels ADD eltoo_their_psig BLOB DEFAULT NULL"), NULL},
+    {SQL("ALTER TABLE channels ADD eltoo_our_psig BLOB DEFAULT NULL"), NULL},
+    {SQL("ALTER TABLE channels ADD eltoo_session BLOB DEFAULT NULL"), NULL},
+    {SQL("ALTER TABLE channels ADD eltoo_their_nonce BLOB DEFAULT NULL"), NULL},
+    {SQL("ALTER TABLE channels ADD eltoo_our_nonce BLOB DEFAULT NULL"), NULL},
+    {SQL("ALTER TABLE channels ADD eltoo_committed_update_tx BLOB DEFAULT NULL"), NULL},
+    {SQL("ALTER TABLE channels ADD eltoo_committed_settle_tx BLOB DEFAULT NULL"), NULL},
+    {SQL("ALTER TABLE channels ADD eltoo_committed_their_psig BLOB DEFAULT NULL"), NULL},
+    {SQL("ALTER TABLE channels ADD eltoo_committed_our_psig BLOB DEFAULT NULL"), NULL},
+    {SQL("ALTER TABLE channels ADD eltoo_committed_session BLOB DEFAULT NULL"), NULL},
+    /* eltoo: is_eltoo flag for channel_configs */
+    {SQL("ALTER TABLE channel_configs ADD is_eltoo INTEGER DEFAULT 0"), NULL},
 };
 
 const struct db_migration *get_db_migrations(size_t *num)

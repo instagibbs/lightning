@@ -915,9 +915,18 @@ static u8 *handle_gen_nonce(struct hsmd_client *c,
     struct nonce local_pub_nonce;
     struct channel_id channel_id;
     struct musig_state *new_musig_state;
+    struct musig_state *existing;
 
 	if (!fromwire_hsmd_gen_nonce(msg_in, &channel_id))
 		return hsmd_status_malformed_request(c, msg_in);
+
+    /* Check if there's already an entry for this channel (can happen on reestablish
+     * when the peer restarted but we didn't) and remove it first */
+    existing = musig_state_map_get(secretstuff.musig_map, &channel_id);
+    if (existing) {
+        musig_state_map_del(secretstuff.musig_map, existing);
+        tal_free(existing);
+    }
 
     /* Shouldn't need to be freed, aside from channel teardown */
     new_musig_state = tal(NULL, struct musig_state);
@@ -961,10 +970,11 @@ static u8 *handle_migrate_nonce(struct hsmd_client *c,
 						   "Nonce for channel migration not found");
     }
 
-    /* Update channel id, move keys */
+    /* Delete from map first (while channel_id still matches temp_id),
+     * then update channel_id and re-add under new key */
+    musig_state_map_del(secretstuff.musig_map, musig_lookup);
     musig_lookup->channel_id = perm_id;
     musig_state_map_add(secretstuff.musig_map, musig_lookup);
-    musig_state_map_delkey(secretstuff.musig_map, &temp_id);
 
 	return towire_hsmd_migrate_nonce_reply(NULL);
 }

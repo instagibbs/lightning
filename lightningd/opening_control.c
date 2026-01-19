@@ -1211,6 +1211,9 @@ static void eltoo_opening_funder_finished(struct subd *openingd,
 	channel->committed_our_psig = NULL;
 	channel->committed_session = NULL;
 
+	/* Save eltoo state to database for restart persistence */
+	wallet_channel_save(ld->wallet, channel);
+
 	/* Watch for funding confirms */
 	channel_watch_funding(ld, channel);
 
@@ -1325,8 +1328,7 @@ static void eltoo_opening_fundee_finished(struct subd *openingd,
 		goto failed;
 	}
 
-	/* Store eltoo-specific data in channel struct.
-	 * Note: This data should be persisted to the database in the future */
+	/* Store eltoo-specific data in channel struct */
 	channel->their_last_psig = other_psig;
 	channel->our_last_psig = self_psig;
 	channel->session = session;
@@ -1341,6 +1343,9 @@ static void eltoo_opening_fundee_finished(struct subd *openingd,
 	channel->committed_their_psig = NULL;
 	channel->committed_our_psig = NULL;
 	channel->committed_session = NULL;
+
+	/* Save eltoo state to database for restart persistence */
+	wallet_channel_save(ld->wallet, channel);
 
 	log_debug(channel->log, "Watching funding tx %s",
 		  fmt_bitcoin_txid(reply,

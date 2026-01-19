@@ -1,4 +1,6 @@
 #include "config.h"
+#include <bitcoin/pubkey.h>
+#include <bitcoin/signature.h>
 #include <ccan/asort/asort.h>
 #include <ccan/cast/cast.h>
 #include <ccan/tal/str/str.h>
@@ -1821,6 +1823,21 @@ bool peer_start_eltoo_channeld(struct channel *channel,
 		return false;
 	}
 
+	log_debug(channel->log, "peer_start_eltoo_channeld: their_last_psig=%s",
+		  fmt_partial_sig(tmpctx, &channel->their_last_psig));
+	log_debug(channel->log, "peer_start_eltoo_channeld: our_last_psig=%s",
+		  fmt_partial_sig(tmpctx, &channel->our_last_psig));
+	log_debug(channel->log, "peer_start_eltoo_channeld: session=%s",
+		  fmt_musig_session(tmpctx, &channel->session));
+	log_debug(channel->log, "peer_start_eltoo_channeld: their_next_nonce=%s",
+		  fmt_nonce(tmpctx, &channel->their_next_nonce));
+	log_debug(channel->log, "peer_start_eltoo_channeld: our_next_nonce=%s",
+		  fmt_nonce(tmpctx, &channel->our_next_nonce));
+	log_debug(channel->log, "peer_start_eltoo_channeld: last_update_tx=%p, last_settle_tx=%p",
+		  channel->last_update_tx, channel->last_settle_tx);
+	log_debug(channel->log, "peer_start_eltoo_channeld: committed_update_tx=%p, committed_settle_tx=%p",
+		  channel->committed_update_tx, channel->committed_settle_tx);
+
 	initmsg = towire_channeld_init_eltoo(tmpctx,
 				       chainparams,
 				       ld->our_features,
@@ -1887,6 +1904,8 @@ bool peer_start_eltoo_channeld(struct channel *channel,
 					     : (u32 *)&ld->dev_disable_commit,
 				       reestablish_only,
 				       NULL); /* channel_update */
+
+	log_debug(channel->log, "peer_start_eltoo_channeld: serialized init msg len=%zu", tal_count(initmsg));
 
 	/* We don't expect a response: we are triggered by funding_depth_cb. */
 	subd_send_msg(channel->owner, take(initmsg));
@@ -2019,10 +2038,12 @@ bool peer_start_channeld(struct channel *channel,
 		max_feerate = 0xFFFFFFFF;
 	}
 
-	/* Make sure we don't go backsards on blockheights */
+	/* Make sure we don't go backsards on blockheights
+	 * (eltoo channels don't have blockheight_states) */
 	curr_blockheight = get_block_height(ld->topology);
-	if (curr_blockheight < get_blockheight(channel->blockheight_states,
-					       channel->opener, LOCAL)) {
+	if (channel->blockheight_states
+	    && curr_blockheight < get_blockheight(channel->blockheight_states,
+						  channel->opener, LOCAL)) {
 
 		u32 last_height = get_blockheight(channel->blockheight_states,
 						  channel->opener, LOCAL);

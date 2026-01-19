@@ -641,3 +641,212 @@ def test_eltoo_htlc(node_factory, bitcoind, executor, chainparams):
     bitcoind.generate_block(99)
     l1.daemon.wait_for_log('onchaind complete, forgetting peer')
     l2.daemon.wait_for_log('onchaind complete, forgetting peer')
+
+
+def test_eltoo_restart_after_funding(node_factory, bitcoind):
+    """Test that eltoo channel state is correctly persisted and restored after node restart.
+
+    This tests basic restart functionality after channel funding is complete.
+    """
+    l1, l2 = node_factory.line_graph(2,
+                                     opts=[{'may_reconnect': True, 'developer': None},
+                                           {'may_reconnect': True, 'developer': None}])
+
+    # Get channel state before restart
+    channel_info_before = l1.rpc.listpeerchannels(l2.info['id'])['channels'][0]
+    funding_txid = channel_info_before['funding_txid']
+    update_tx_before = channel_info_before['last_update_tx']
+    settle_tx_before = channel_info_before['last_settle_tx']
+
+    # Decode transactions to compare essential state
+    update_details_before = bitcoind.rpc.decoderawtransaction(update_tx_before)
+    settle_details_before = bitcoind.rpc.decoderawtransaction(settle_tx_before)
+
+    # Restart l1
+    l1.restart()
+
+    # Wait for reconnection and reestablishment
+    l1.daemon.wait_for_log('Reconnected, and reestablished')
+
+    # Get channel state after restart
+    channel_info_after = l1.rpc.listpeerchannels(l2.info['id'])['channels'][0]
+
+    # Verify funding info persisted correctly
+    assert channel_info_after['funding_txid'] == funding_txid
+    assert channel_info_after['state'] == 'CHANNELD_NORMAL'
+
+    # Verify eltoo transaction state persisted correctly
+    update_tx_after = channel_info_after['last_update_tx']
+    settle_tx_after = channel_info_after['last_settle_tx']
+
+    update_details_after = bitcoind.rpc.decoderawtransaction(update_tx_after)
+    settle_details_after = bitcoind.rpc.decoderawtransaction(settle_tx_after)
+
+    # Core state should match - locktime (state number) and outputs
+    assert update_details_before['locktime'] == update_details_after['locktime']
+    assert settle_details_before['locktime'] == settle_details_after['locktime']
+    assert update_details_before['vout'] == update_details_after['vout']
+    assert settle_details_before['vout'] == settle_details_after['vout']
+
+    # Channel should still be operational - make a payment
+    l1.pay(l2, 100000*SAT)
+    wait_for(lambda: l2.rpc.listpeerchannels()['channels'][0]['in_fulfilled_msat'] == Millisatoshi(100000000))
+
+
+def test_eltoo_restart_after_payment(node_factory, bitcoind):
+    """Test that eltoo channel state is correctly persisted after payments.
+
+    This tests that balances and update transactions are correctly stored
+    and restored after a payment followed by restart.
+    """
+    l1, l2 = node_factory.line_graph(2,
+                                     opts=[{'may_reconnect': True, 'developer': None},
+                                           {'may_reconnect': True, 'developer': None}])
+
+    # Make some payments to change the channel state
+    l1.pay(l2, 100000*SAT)
+    l1.pay(l2, 50000*SAT)
+
+    wait_for(lambda: l2.rpc.listpeerchannels()['channels'][0]['in_fulfilled_msat'] == Millisatoshi(150000000))
+
+    # Get channel state before restart
+    l1_channel_before = l1.rpc.listpeerchannels(l2.info['id'])['channels'][0]
+    l2_channel_before = l2.rpc.listpeerchannels(l1.info['id'])['channels'][0]
+
+    update_tx_before = l1_channel_before['last_update_tx']
+    settle_tx_before = l1_channel_before['last_settle_tx']
+
+    update_details_before = bitcoind.rpc.decoderawtransaction(update_tx_before)
+    settle_details_before = bitcoind.rpc.decoderawtransaction(settle_tx_before)
+
+    # State number should have advanced (locktime > 500000000)
+    assert update_details_before['locktime'] > 500000000
+
+    # Restart l1
+    l1.restart()
+
+    # Wait for reconnection and reestablishment
+    l1.daemon.wait_for_log('Reconnected, and reestablished')
+
+    # Get channel state after restart
+    l1_channel_after = l1.rpc.listpeerchannels(l2.info['id'])['channels'][0]
+
+    update_tx_after = l1_channel_after['last_update_tx']
+    settle_tx_after = l1_channel_after['last_settle_tx']
+
+    update_details_after = bitcoind.rpc.decoderawtransaction(update_tx_after)
+    settle_details_after = bitcoind.rpc.decoderawtransaction(settle_tx_after)
+
+    # State should match - locktime and outputs
+    assert update_details_before['locktime'] == update_details_after['locktime']
+    assert settle_details_before['locktime'] == settle_details_after['locktime']
+    assert update_details_before['vout'] == update_details_after['vout']
+    assert settle_details_before['vout'] == settle_details_after['vout']
+
+    # Channel should still work - make another payment
+    l1.pay(l2, 25000*SAT)
+    wait_for(lambda: l2.rpc.listpeerchannels()['channels'][0]['in_fulfilled_msat'] == Millisatoshi(175000000))
+
+    # And payment in reverse direction should also work
+    l2.pay(l1, 10000*SAT)
+    wait_for(lambda: l1.rpc.listpeerchannels()['channels'][0]['in_fulfilled_msat'] == Millisatoshi(10000000))
+
+
+def test_eltoo_restart_both_nodes(node_factory, bitcoind):
+    """Test that both nodes can restart and resume channel operation.
+
+    This tests that channel state is correctly synchronized when both
+    nodes restart at the same time.
+    """
+    l1, l2 = node_factory.line_graph(2,
+                                     opts=[{'may_reconnect': True, 'developer': None},
+                                           {'may_reconnect': True, 'developer': None}])
+
+    # Make a payment to advance state
+    l1.pay(l2, 200000*SAT)
+    wait_for(lambda: l2.rpc.listpeerchannels()['channels'][0]['in_fulfilled_msat'] == Millisatoshi(200000000))
+
+    # Get state before restart
+    l1_update_before = l1.rpc.listpeerchannels(l2.info['id'])['channels'][0]['last_update_tx']
+    l2_update_before = l2.rpc.listpeerchannels(l1.info['id'])['channels'][0]['last_update_tx']
+
+    l1_details_before = bitcoind.rpc.decoderawtransaction(l1_update_before)
+    l2_details_before = bitcoind.rpc.decoderawtransaction(l2_update_before)
+
+    # Both should have the same state
+    assert l1_details_before['locktime'] == l2_details_before['locktime']
+
+    # Stop both nodes
+    l1.stop()
+    l2.stop()
+
+    # Start both nodes
+    l2.start()
+    l1.start()
+
+    # Connect them manually
+    l1.rpc.connect(l2.info['id'], 'localhost', l2.port)
+
+    # Wait for reestablishment
+    l1.daemon.wait_for_log('Reconnected, and reestablished')
+    l2.daemon.wait_for_log('Reconnected, and reestablished')
+
+    # Verify state is preserved
+    l1_update_after = l1.rpc.listpeerchannels(l2.info['id'])['channels'][0]['last_update_tx']
+    l2_update_after = l2.rpc.listpeerchannels(l1.info['id'])['channels'][0]['last_update_tx']
+
+    l1_details_after = bitcoind.rpc.decoderawtransaction(l1_update_after)
+    l2_details_after = bitcoind.rpc.decoderawtransaction(l2_update_after)
+
+    # State should match before and after
+    assert l1_details_before['locktime'] == l1_details_after['locktime']
+    assert l2_details_before['locktime'] == l2_details_after['locktime']
+    assert l1_details_after['locktime'] == l2_details_after['locktime']
+
+    # Channel should work in both directions
+    l1.pay(l2, 50000*SAT)
+    wait_for(lambda: l2.rpc.listpeerchannels()['channels'][0]['in_fulfilled_msat'] == Millisatoshi(250000000))
+
+    l2.pay(l1, 75000*SAT)
+    wait_for(lambda: l1.rpc.listpeerchannels()['channels'][0]['in_fulfilled_msat'] == Millisatoshi(75000000))
+
+
+def test_eltoo_restart_during_payment(node_factory, bitcoind):
+    """Test restart during a payment flow using disconnect.
+
+    This tests that a payment can complete after one node restarts mid-payment
+    using the reestablishment protocol.
+    """
+    # Use disconnect to simulate restart mid-payment
+    disconnects = ['+WIRE_UPDATE_SIGNED']
+
+    l1, l2 = node_factory.line_graph(2,
+                                     opts=[{'may_reconnect': True, 'developer': None,
+                                            'disconnect': disconnects},
+                                           {'may_reconnect': True, 'developer': None}])
+
+    # First payment succeeds and triggers disconnect after update_signed
+    l1.pay(l2, 100000*SAT)
+
+    # After auto-reconnect, payment should have completed
+    wait_for(lambda: l2.rpc.listpeerchannels()['channels'][0]['in_fulfilled_msat'] == Millisatoshi(100000000))
+
+    # Get state before full restart
+    channel_before = l1.rpc.listpeerchannels(l2.info['id'])['channels'][0]
+    update_before = bitcoind.rpc.decoderawtransaction(channel_before['last_update_tx'])
+
+    # Now do a full restart
+    l1.restart()
+
+    # Wait for reconnection
+    l1.daemon.wait_for_log('Reconnected, and reestablished')
+
+    # Verify state preserved
+    channel_after = l1.rpc.listpeerchannels(l2.info['id'])['channels'][0]
+    update_after = bitcoind.rpc.decoderawtransaction(channel_after['last_update_tx'])
+
+    assert update_before['locktime'] == update_after['locktime']
+
+    # Make another payment to verify channel still works
+    l1.pay(l2, 50000*SAT)
+    wait_for(lambda: l2.rpc.listpeerchannels()['channels'][0]['in_fulfilled_msat'] == Millisatoshi(150000000))

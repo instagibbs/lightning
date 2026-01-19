@@ -1822,7 +1822,7 @@ static bool wallet_channel_config_load(struct wallet *w, const u64 id,
 	const char *query = SQL(
 	    "SELECT dust_limit_satoshis, max_htlc_value_in_flight_msat, "
 	    "channel_reserve_satoshis, htlc_minimum_msat, to_self_delay, "
-	    "max_accepted_htlcs, max_dust_htlc_exposure_msat, shared_delay "
+	    "max_accepted_htlcs, max_dust_htlc_exposure_msat, shared_delay, is_eltoo "
 	    " FROM channel_configs WHERE id= ? ;");
 	struct db_stmt *stmt = db_prepare_v2(w->db, query);
 	db_bind_u64(stmt, id);
@@ -1840,6 +1840,7 @@ static bool wallet_channel_config_load(struct wallet *w, const u64 id,
 	cc->max_accepted_htlcs = db_col_int(stmt, "max_accepted_htlcs");
 	cc->max_dust_htlc_exposure_msat = db_col_amount_msat(stmt, "max_dust_htlc_exposure_msat");
 	cc->shared_delay = db_col_int(stmt, "shared_delay");
+	cc->is_eltoo = db_col_int(stmt, "is_eltoo") != 0;
 	tal_free(stmt);
 	return ok;
 }
@@ -2064,8 +2065,8 @@ static struct channel *wallet_stmt2channel(struct wallet *w, struct db_stmt *stm
 	type = db_col_channel_type(NULL, stmt, "channel_type");
 
 	/* last_tx is null for stub channels used for recovering funds through
-	 * Static channel backups. */
-	if (!db_col_is_null(stmt, "last_tx")) {
+	 * Static channel backups, and for eltoo channels which use last_settle_tx instead. */
+	if (!db_col_is_null(stmt, "last_tx") && !channel_type_has(type, OPT_ELTOO)) {
 		last_tx = db_col_psbt_to_tx(tmpctx, stmt, "last_tx");
 		if (!last_tx)
 			db_fatal(w->db, "Failed to decode channel %s psbt %s",
@@ -2076,6 +2077,10 @@ static struct channel *wallet_stmt2channel(struct wallet *w, struct db_stmt *stm
 		db_col_signature(stmt, "last_sig", &last_sig->s);
 		last_sig->sighash_type = SIGHASH_ALL;
 	} else {
+		/* For eltoo channels, explicitly ignore these columns */
+		if (channel_type_has(type, OPT_ELTOO)) {
+			db_col_ignore(stmt, "last_tx");
+		}
 		db_col_ignore(stmt, "last_sig");
 		last_tx = NULL;
 		last_sig = NULL;
@@ -2201,6 +2206,160 @@ static struct channel *wallet_stmt2channel(struct wallet *w, struct db_stmt *stm
 	if (!wallet_channel_load_inflights(w, chan)) {
 		tal_free(chan);
 		return NULL;
+	}
+
+	/* Load eltoo-specific state if this is an eltoo channel */
+	if (channel_type_has(chan->type, OPT_ELTOO)) {
+		const u8 *cursor;
+		size_t max;
+		bool their_psig_null = db_col_is_null(stmt, "eltoo_their_psig");
+		bool their_nonce_null = db_col_is_null(stmt, "eltoo_their_nonce");
+		log_debug(chan->log, "Loading eltoo channel: their_psig_null=%d, their_nonce_null=%d",
+			  their_psig_null, their_nonce_null);
+
+		/* last_update_tx - load full bitcoin_tx (linearized + PSBT) */
+		if (!db_col_is_null(stmt, "eltoo_last_update_tx")) {
+			cursor = db_col_arr(tmpctx, stmt, "eltoo_last_update_tx", u8);
+			max = tal_count(cursor);
+			chan->last_update_tx = fromwire_bitcoin_tx(chan, &cursor, &max);
+			if (chan->last_update_tx)
+				chan->last_update_tx->chainparams = chainparams;
+			else
+				log_broken(chan->log, "Failed to parse last_update_tx from DB!");
+		} else
+			db_col_ignore(stmt, "eltoo_last_update_tx");
+
+		/* last_settle_tx - load full bitcoin_tx (linearized + PSBT) */
+		if (!db_col_is_null(stmt, "eltoo_last_settle_tx")) {
+			cursor = db_col_arr(tmpctx, stmt, "eltoo_last_settle_tx", u8);
+			max = tal_count(cursor);
+			chan->last_settle_tx = fromwire_bitcoin_tx(chan, &cursor, &max);
+			if (chan->last_settle_tx)
+				chan->last_settle_tx->chainparams = chainparams;
+			else
+				log_broken(chan->log, "Failed to parse last_settle_tx from DB!");
+		} else
+			db_col_ignore(stmt, "eltoo_last_settle_tx");
+
+		/* their_last_psig */
+		if (!db_col_is_null(stmt, "eltoo_their_psig")) {
+			cursor = db_col_arr(tmpctx, stmt, "eltoo_their_psig", u8);
+			max = tal_count(cursor);
+			log_debug(chan->log, "Loading their_last_psig: %zu bytes", max);
+			fromwire_partial_sig(&cursor, &max, &chan->their_last_psig);
+			if (cursor == NULL)
+				log_broken(chan->log, "Failed to parse their_last_psig from DB!");
+		} else
+			db_col_ignore(stmt, "eltoo_their_psig");
+
+		/* our_last_psig */
+		if (!db_col_is_null(stmt, "eltoo_our_psig")) {
+			cursor = db_col_arr(tmpctx, stmt, "eltoo_our_psig", u8);
+			max = tal_count(cursor);
+			log_debug(chan->log, "Loading our_last_psig: %zu bytes", max);
+			fromwire_partial_sig(&cursor, &max, &chan->our_last_psig);
+			if (cursor == NULL)
+				log_broken(chan->log, "Failed to parse our_last_psig from DB!");
+		} else
+			db_col_ignore(stmt, "eltoo_our_psig");
+
+		/* session */
+		if (!db_col_is_null(stmt, "eltoo_session")) {
+			cursor = db_col_arr(tmpctx, stmt, "eltoo_session", u8);
+			max = tal_count(cursor);
+			log_debug(chan->log, "Loading session: %zu bytes", max);
+			fromwire_musig_session(&cursor, &max, &chan->session);
+			if (cursor == NULL)
+				log_broken(chan->log, "Failed to parse session from DB!");
+		} else
+			db_col_ignore(stmt, "eltoo_session");
+
+		/* their_next_nonce */
+		if (!db_col_is_null(stmt, "eltoo_their_nonce")) {
+			cursor = db_col_arr(tmpctx, stmt, "eltoo_their_nonce", u8);
+			max = tal_count(cursor);
+			log_debug(chan->log, "Loading their_next_nonce: %zu bytes", max);
+			fromwire_nonce(&cursor, &max, &chan->their_next_nonce);
+			if (cursor == NULL)
+				log_broken(chan->log, "Failed to parse their_next_nonce from DB!");
+		} else
+			db_col_ignore(stmt, "eltoo_their_nonce");
+
+		/* our_next_nonce */
+		if (!db_col_is_null(stmt, "eltoo_our_nonce")) {
+			cursor = db_col_arr(tmpctx, stmt, "eltoo_our_nonce", u8);
+			max = tal_count(cursor);
+			log_debug(chan->log, "Loading our_next_nonce: %zu bytes", max);
+			fromwire_nonce(&cursor, &max, &chan->our_next_nonce);
+			if (cursor == NULL)
+				log_broken(chan->log, "Failed to parse our_next_nonce from DB!");
+		} else
+			db_col_ignore(stmt, "eltoo_our_nonce");
+
+		/* committed_update_tx - load full bitcoin_tx (linearized + PSBT) */
+		if (!db_col_is_null(stmt, "eltoo_committed_update_tx")) {
+			cursor = db_col_arr(tmpctx, stmt, "eltoo_committed_update_tx", u8);
+			max = tal_count(cursor);
+			chan->committed_update_tx = fromwire_bitcoin_tx(chan, &cursor, &max);
+			if (chan->committed_update_tx)
+				chan->committed_update_tx->chainparams = chainparams;
+			else
+				log_broken(chan->log, "Failed to parse committed_update_tx from DB!");
+		} else
+			db_col_ignore(stmt, "eltoo_committed_update_tx");
+
+		/* committed_settle_tx - load full bitcoin_tx (linearized + PSBT) */
+		if (!db_col_is_null(stmt, "eltoo_committed_settle_tx")) {
+			cursor = db_col_arr(tmpctx, stmt, "eltoo_committed_settle_tx", u8);
+			max = tal_count(cursor);
+			chan->committed_settle_tx = fromwire_bitcoin_tx(chan, &cursor, &max);
+			if (chan->committed_settle_tx)
+				chan->committed_settle_tx->chainparams = chainparams;
+			else
+				log_broken(chan->log, "Failed to parse committed_settle_tx from DB!");
+		} else
+			db_col_ignore(stmt, "eltoo_committed_settle_tx");
+
+		/* committed_their_psig */
+		if (!db_col_is_null(stmt, "eltoo_committed_their_psig")) {
+			chan->committed_their_psig = tal(chan, struct partial_sig);
+			cursor = db_col_arr(tmpctx, stmt, "eltoo_committed_their_psig", u8);
+			max = tal_count(cursor);
+			fromwire_partial_sig(&cursor, &max, chan->committed_their_psig);
+		} else
+			db_col_ignore(stmt, "eltoo_committed_their_psig");
+
+		/* committed_our_psig */
+		if (!db_col_is_null(stmt, "eltoo_committed_our_psig")) {
+			chan->committed_our_psig = tal(chan, struct partial_sig);
+			cursor = db_col_arr(tmpctx, stmt, "eltoo_committed_our_psig", u8);
+			max = tal_count(cursor);
+			fromwire_partial_sig(&cursor, &max, chan->committed_our_psig);
+		} else
+			db_col_ignore(stmt, "eltoo_committed_our_psig");
+
+		/* committed_session */
+		if (!db_col_is_null(stmt, "eltoo_committed_session")) {
+			chan->committed_session = tal(chan, struct musig_session);
+			cursor = db_col_arr(tmpctx, stmt, "eltoo_committed_session", u8);
+			max = tal_count(cursor);
+			fromwire_musig_session(&cursor, &max, chan->committed_session);
+		} else
+			db_col_ignore(stmt, "eltoo_committed_session");
+	} else {
+		/* Not an eltoo channel - ignore eltoo columns */
+		db_col_ignore(stmt, "eltoo_last_update_tx");
+		db_col_ignore(stmt, "eltoo_last_settle_tx");
+		db_col_ignore(stmt, "eltoo_their_psig");
+		db_col_ignore(stmt, "eltoo_our_psig");
+		db_col_ignore(stmt, "eltoo_session");
+		db_col_ignore(stmt, "eltoo_their_nonce");
+		db_col_ignore(stmt, "eltoo_our_nonce");
+		db_col_ignore(stmt, "eltoo_committed_update_tx");
+		db_col_ignore(stmt, "eltoo_committed_settle_tx");
+		db_col_ignore(stmt, "eltoo_committed_their_psig");
+		db_col_ignore(stmt, "eltoo_committed_our_psig");
+		db_col_ignore(stmt, "eltoo_committed_session");
 	}
 
 	return chan;
@@ -2460,6 +2619,18 @@ static bool wallet_channels_load_active(struct wallet *w)
 					", close_attempt_height"
 					", funding_psbt"
 					", withheld"
+					", eltoo_last_update_tx"
+					", eltoo_last_settle_tx"
+					", eltoo_their_psig"
+					", eltoo_our_psig"
+					", eltoo_session"
+					", eltoo_their_nonce"
+					", eltoo_our_nonce"
+					", eltoo_committed_update_tx"
+					", eltoo_committed_settle_tx"
+					", eltoo_committed_their_psig"
+					", eltoo_committed_our_psig"
+					", eltoo_committed_session"
 					" FROM channels"
                                         " WHERE state != ?;")); //? 0
 	db_bind_int(stmt, CLOSED);
@@ -2605,7 +2776,8 @@ static void wallet_channel_config_save(struct wallet *w,
 					"  to_self_delay=?,"
 					"  max_accepted_htlcs=?,"
 					"  max_dust_htlc_exposure_msat=?,"
-                    "  shared_delay=?"
+                    "  shared_delay=?,"
+					"  is_eltoo=?"
 					" WHERE id=?;"));
 	db_bind_amount_sat(stmt, cc->dust_limit);
 	db_bind_amount_msat(stmt, cc->max_htlc_value_in_flight);
@@ -2615,6 +2787,7 @@ static void wallet_channel_config_save(struct wallet *w,
 	db_bind_int(stmt, cc->max_accepted_htlcs);
 	db_bind_amount_msat(stmt, cc->max_dust_htlc_exposure_msat);
 	db_bind_int(stmt, cc->shared_delay);
+	db_bind_int(stmt, cc->is_eltoo ? 1 : 0);
 	db_bind_u64(stmt, cc->id);
 	db_exec_prepared_v2(take(stmt));
 }
@@ -2768,7 +2941,8 @@ void wallet_channel_save(struct wallet *w, struct channel *chan)
 	db_bind_talarr(stmt, chan->shutdown_scriptpubkey[REMOTE]);
 	db_bind_u64(stmt, chan->final_key_idx);
 	db_bind_u64(stmt, chan->our_config.id);
-	if (chan->last_tx) {
+	/* For eltoo channels, don't save last_tx - use last_settle_tx instead */
+	if (chan->last_tx && !channel_type_has(chan->type, OPT_ELTOO)) {
 		db_bind_psbt(stmt, chan->last_tx->psbt);
 		db_bind_signature(stmt, &chan->last_sig.s);
 	} else {
@@ -2930,6 +3104,126 @@ void wallet_channel_save(struct wallet *w, struct channel *chan)
 	db_bind_talarr(stmt, last_sent_commit);
 	db_bind_u64(stmt, chan->dbid);
 	db_exec_prepared_v2(take(stmt));
+
+	/* Save eltoo-specific state if this is an eltoo channel */
+	if (channel_type_has(chan->type, OPT_ELTOO)) {
+		u8 *psig_data;
+		log_debug(chan->log, "wallet_channel_save: eltoo channel, last_update_tx=%p", chan->last_update_tx);
+
+		stmt = db_prepare_v2(w->db, SQL("UPDATE channels SET"
+						"  eltoo_last_update_tx=?,"
+						"  eltoo_last_settle_tx=?,"
+						"  eltoo_their_psig=?,"
+						"  eltoo_our_psig=?,"
+						"  eltoo_session=?,"
+						"  eltoo_their_nonce=?,"
+						"  eltoo_our_nonce=?,"
+						"  eltoo_committed_update_tx=?,"
+						"  eltoo_committed_settle_tx=?,"
+						"  eltoo_committed_their_psig=?,"
+						"  eltoo_committed_our_psig=?,"
+						"  eltoo_committed_session=?"
+						" WHERE id=?"));
+
+		/* last_update_tx - save full bitcoin_tx (linearized + PSBT) */
+		if (chan->last_update_tx) {
+			u8 *tx_data = tal_arr(tmpctx, u8, 0);
+			towire_bitcoin_tx(&tx_data, chan->last_update_tx);
+			db_bind_talarr(stmt, tx_data);
+		} else
+			db_bind_null(stmt);
+
+		/* last_settle_tx - save full bitcoin_tx (linearized + PSBT) */
+		if (chan->last_settle_tx) {
+			u8 *tx_data = tal_arr(tmpctx, u8, 0);
+			towire_bitcoin_tx(&tx_data, chan->last_settle_tx);
+			db_bind_talarr(stmt, tx_data);
+		} else
+			db_bind_null(stmt);
+
+		/* their_last_psig - serialize partial sig (only if eltoo state is set) */
+		if (chan->last_update_tx) {
+			psig_data = tal_arr(tmpctx, u8, 0);
+			towire_partial_sig(&psig_data, &chan->their_last_psig);
+			db_bind_talarr(stmt, psig_data);
+		} else
+			db_bind_null(stmt);
+
+		/* our_last_psig */
+		if (chan->last_update_tx) {
+			psig_data = tal_arr(tmpctx, u8, 0);
+			towire_partial_sig(&psig_data, &chan->our_last_psig);
+			db_bind_talarr(stmt, psig_data);
+		} else
+			db_bind_null(stmt);
+
+		/* session - serialize musig session */
+		if (chan->last_update_tx) {
+			psig_data = tal_arr(tmpctx, u8, 0);
+			towire_musig_session(&psig_data, &chan->session);
+			db_bind_talarr(stmt, psig_data);
+		} else
+			db_bind_null(stmt);
+
+		/* their_next_nonce */
+		if (chan->last_update_tx) {
+			psig_data = tal_arr(tmpctx, u8, 0);
+			towire_nonce(&psig_data, &chan->their_next_nonce);
+			db_bind_talarr(stmt, psig_data);
+		} else
+			db_bind_null(stmt);
+
+		/* our_next_nonce */
+		if (chan->last_update_tx) {
+			psig_data = tal_arr(tmpctx, u8, 0);
+			towire_nonce(&psig_data, &chan->our_next_nonce);
+			db_bind_talarr(stmt, psig_data);
+		} else
+			db_bind_null(stmt);
+
+		/* committed_update_tx - save full bitcoin_tx (linearized + PSBT) */
+		if (chan->committed_update_tx) {
+			u8 *tx_data = tal_arr(tmpctx, u8, 0);
+			towire_bitcoin_tx(&tx_data, chan->committed_update_tx);
+			db_bind_talarr(stmt, tx_data);
+		} else
+			db_bind_null(stmt);
+
+		/* committed_settle_tx - save full bitcoin_tx (linearized + PSBT) */
+		if (chan->committed_settle_tx) {
+			u8 *tx_data = tal_arr(tmpctx, u8, 0);
+			towire_bitcoin_tx(&tx_data, chan->committed_settle_tx);
+			db_bind_talarr(stmt, tx_data);
+		} else
+			db_bind_null(stmt);
+
+		/* committed_their_psig */
+		if (chan->committed_their_psig) {
+			psig_data = tal_arr(tmpctx, u8, 0);
+			towire_partial_sig(&psig_data, chan->committed_their_psig);
+			db_bind_talarr(stmt, psig_data);
+		} else
+			db_bind_null(stmt);
+
+		/* committed_our_psig */
+		if (chan->committed_our_psig) {
+			psig_data = tal_arr(tmpctx, u8, 0);
+			towire_partial_sig(&psig_data, chan->committed_our_psig);
+			db_bind_talarr(stmt, psig_data);
+		} else
+			db_bind_null(stmt);
+
+		/* committed_session */
+		if (chan->committed_session) {
+			psig_data = tal_arr(tmpctx, u8, 0);
+			towire_musig_session(&psig_data, chan->committed_session);
+			db_bind_talarr(stmt, psig_data);
+		} else
+			db_bind_null(stmt);
+
+		db_bind_u64(stmt, chan->dbid);
+		db_exec_prepared_v2(take(stmt));
+	}
 
 	channel_gossip_update(chan);
 }

@@ -639,6 +639,22 @@ struct channel *new_channel(struct peer *peer, u64 dbid,
 	}
 	if (last_sig)
 		channel->last_sig = *last_sig;
+	/* Initialize eltoo-specific fields to NULL/zero
+	 * These will be populated during channel opening or
+	 * loaded from reestablishment with peer */
+	channel->last_update_tx = NULL;
+	channel->last_settle_tx = NULL;
+	channel->committed_update_tx = NULL;
+	channel->committed_settle_tx = NULL;
+	channel->committed_their_psig = NULL;
+	channel->committed_our_psig = NULL;
+	channel->committed_session = NULL;
+	memset(&channel->their_last_psig, 0, sizeof(channel->their_last_psig));
+	memset(&channel->our_last_psig, 0, sizeof(channel->our_last_psig));
+	memset(&channel->session, 0, sizeof(channel->session));
+	memset(&channel->their_next_nonce, 0, sizeof(channel->their_next_nonce));
+	memset(&channel->our_next_nonce, 0, sizeof(channel->our_next_nonce));
+	memset(&channel->last_update_sig, 0, sizeof(channel->last_update_sig));
 	channel->last_htlc_sigs = tal_steal(channel, last_htlc_sigs);
 	channel->fee_states = dup_fee_states(channel, fee_states);
 	channel->shutdown_scriptpubkey[REMOTE]
