@@ -198,9 +198,9 @@ static struct bitcoin_tx *bip340_tx_to_us(const tal_t *ctx,
                     &keyset->inner_pubkey));
 
     tx = bitcoin_tx(ctx, chainparams, 1, 1, locktime);
-    /* HTLC timeout script has CSV(1), so we need nSequence >= 1.
-     * Setting to 1 satisfies both CLTV (needs < 0xffffffff) and CSV (needs >= 1) */
-    bitcoin_tx_add_input(tx, &out->outpoint, 1 /* sequence: must be >= 1 for CSV(1) */,
+    /* HTLC timeout script has CLTV, so we need nSequence < 0xffffffff.
+     * Using 0xfffffffe which is standard for CLTV-enabled transactions */
+    bitcoin_tx_add_input(tx, &out->outpoint, 0xfffffffe /* sequence: < 0xffffffff for CLTV */,
             NULL /* scriptSig */, out->sat, out->scriptPubKey /* scriptPubkey */,
             NULL /* input_wscript */, NULL /* inner_pubkey */, NULL /* tap_tree */);
 
