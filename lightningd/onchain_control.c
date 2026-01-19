@@ -5,6 +5,7 @@
 #include <ccan/tal/str/str.h>
 #include <common/ephemeral_anchor.h>
 #include <common/htlc_tx.h>
+#include <lightningd/ephemeral_anchor.h>
 #include <common/memleak.h>
 #include <common/psbt_keypath.h>
 #include <db/exec.h>

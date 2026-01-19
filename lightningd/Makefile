@@ -10,6 +10,7 @@ LIGHTNINGD_SRC :=				\
 	lightningd/closing_control.c		\
 	lightningd/coin_mvts.c			\
 	lightningd/dual_open_control.c		\
+	lightningd/ephemeral_anchor.c		\
 	lightningd/closed_channel.c		\
 	lightningd/connect_control.c		\
 	lightningd/onion_message.c		\

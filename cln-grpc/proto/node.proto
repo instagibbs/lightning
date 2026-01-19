@@ -1467,6 +1467,8 @@ message ListpeerchannelsChannels {
 	optional bytes last_tx = 63;
 	optional bytes last_update_tx = 64;
 	optional bytes last_settle_tx = 65;
+	optional bytes last_update_tx_unbound = 66;
+	optional bytes last_settle_tx_unbound = 67;
 }
 
 message ListpeerchannelsChannelsUpdates {

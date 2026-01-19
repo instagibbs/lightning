@@ -7516,6 +7516,8 @@ pub mod responses {
 	    #[serde(skip_serializing_if = "Option::is_none")]
 	    pub last_settle_tx: Option<String>,
 	    #[serde(skip_serializing_if = "Option::is_none")]
+	    pub last_settle_tx_unbound: Option<String>,
+	    #[serde(skip_serializing_if = "Option::is_none")]
 	    pub last_stable_connection: Option<u64>,
 	    #[serde(skip_serializing_if = "Option::is_none")]
 	    pub last_tx: Option<String>,
@@ -7523,6 +7525,8 @@ pub mod responses {
 	    pub last_tx_fee_msat: Option<Amount>,
 	    #[serde(skip_serializing_if = "Option::is_none")]
 	    pub last_update_tx: Option<String>,
+	    #[serde(skip_serializing_if = "Option::is_none")]
+	    pub last_update_tx_unbound: Option<String>,
 	    #[serde(skip_serializing_if = "Option::is_none")]
 	    pub lost_state: Option<bool>,
 	    #[serde(skip_serializing_if = "Option::is_none")]

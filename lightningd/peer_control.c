@@ -8,6 +8,7 @@
 #include <common/addr.h>
 #include <common/ephemeral_anchor.h>
 #include <common/htlc_trim.h>
+#include <lightningd/ephemeral_anchor.h>
 #include <common/initial_commit_tx.h>
 #include <common/update_tx.h>
 #include <common/json_channel_type.h>

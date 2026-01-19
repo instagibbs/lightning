@@ -1025,10 +1025,12 @@ def listpeerchannels_channels2py(m):
         "initial_feerate": m.initial_feerate,  # PrimitiveField in generate_composite
         "last_feerate": m.last_feerate,  # PrimitiveField in generate_composite
         "last_settle_tx": hexlify(m.last_settle_tx),  # PrimitiveField in generate_composite
+        "last_settle_tx_unbound": hexlify(m.last_settle_tx_unbound),  # PrimitiveField in generate_composite
         "last_stable_connection": m.last_stable_connection,  # PrimitiveField in generate_composite
         "last_tx": hexlify(m.last_tx),  # PrimitiveField in generate_composite
         "last_tx_fee_msat": amount2msat(m.last_tx_fee_msat),  # PrimitiveField in generate_composite
         "last_update_tx": hexlify(m.last_update_tx),  # PrimitiveField in generate_composite
+        "last_update_tx_unbound": hexlify(m.last_update_tx_unbound),  # PrimitiveField in generate_composite
         "lost_state": m.lost_state,  # PrimitiveField in generate_composite
         "max_accepted_htlcs": m.max_accepted_htlcs,  # PrimitiveField in generate_composite
         "max_to_us_msat": amount2msat(m.max_to_us_msat),  # PrimitiveField in generate_composite
