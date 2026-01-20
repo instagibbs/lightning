@@ -1271,6 +1271,7 @@ static struct io_plan *recv_req(struct io_conn *conn,
 	case WIRE_CHANNELD_SENDING_UPDATESIG_REPLY:
 	case WIRE_CHANNELD_RESENDING_UPDATESIG:
 	case WIRE_CHANNELD_RESENDING_UPDATESIG_REPLY:
+	case WIRE_CHANNELD_ELTOO_CLOSE_COMPLETE:
 		break;
 	}
 	master_badmsg(-1, msg);

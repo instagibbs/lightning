@@ -22,6 +22,7 @@
 #include <channeld/watchtower.h>
 #include <common/billboard.h>
 #include <common/ecdh_hsmd.h>
+#include <common/eltoo_close_tx.h>
 #include <common/gossip_store.h>
 #include <common/key_derive.h>
 #include <common/memleak.h>
@@ -174,7 +175,56 @@ struct eltoo_peer {
 
 	/* Most recent channel_update message. */
 	u8 *channel_update;
+
+	/* Eltoo close negotiation state */
+	struct {
+		/* Nonces for close tx signing.
+		 * self_close_nonce is sent in shutdown_eltoo (or updated for new round).
+		 * other_close_nonce is received from peer's shutdown_eltoo (or updated for new round).
+		 * other_next_close_nonce holds their "next round" nonce from closing_signed TLV. */
+		struct nonce self_close_nonce;
+		struct nonce other_close_nonce;
+		struct nonce other_next_close_nonce;
+		bool have_other_next_nonce;
+
+		/* Fee negotiation state */
+		struct amount_sat last_sent_fee;
+		struct amount_sat last_received_fee;
+
+		/* Fee ranges for quick close negotiation */
+		struct tlv_closing_signed_eltoo_tlvs_fee_range *our_fee_range;
+		struct tlv_closing_signed_eltoo_tlvs_fee_range *their_fee_range;
+
+		/* Partial signatures for close tx */
+		struct partial_sig self_close_psig;
+		struct partial_sig other_close_psig;
+
+		/* MuSig2 session for close tx */
+		struct musig_session close_session;
+
+		/* MuSig2 aggregate key info for close tx */
+		struct pubkey close_inner_pubkey;
+		struct musig_keyagg_cache close_cache;
+
+		/* True once shutdown has been sent/received with nonces */
+		bool shutdown_nonces_received;
+
+		/* True when eltoo close negotiation is in progress */
+		bool in_progress;
+
+		/* True when eltoo close is complete (close tx ready to broadcast) */
+		bool complete;
+
+		/* Remote's shutdown scriptpubkey from their shutdown_eltoo message */
+		u8 *remote_shutdown_script;
+	} close_state;
 };
+
+/* Forward declarations for eltoo close handling */
+static void handle_peer_closing_signed_eltoo(struct eltoo_peer *peer, const u8 *msg);
+static void send_eltoo_closing_offer(struct eltoo_peer *peer, struct amount_sat fee);
+static void finalize_eltoo_close(struct eltoo_peer *peer, struct amount_sat fee);
+static bool begin_closing_negotiation(struct eltoo_peer *peer);
 
 /* TODO: Unused function - commented out
 static u8 *create_channel_announcement(const tal_t *ctx, struct eltoo_peer *peer);
@@ -617,11 +667,9 @@ static u8 *resending_updatesig_msg(const tal_t *ctx,
 
 static bool shutdown_complete(const struct eltoo_peer *peer)
 {
-    /* FIXME last line is very wrong */
-	return peer->shutdown_sent[LOCAL]
-		&& peer->shutdown_sent[REMOTE]
-		&& num_channel_htlcs(peer->channel) == 0
-		&& peer->sigs_received == peer->next_index - 1;
+	/* For eltoo channels, we handle close within eltoo_channeld.
+	 * Return true only when eltoo close is complete. */
+	return peer->close_state.complete;
 }
 
 /* BOLT #2:
@@ -636,7 +684,7 @@ static bool shutdown_complete(const struct eltoo_peer *peer)
 static void maybe_send_shutdown(struct eltoo_peer *peer)
 {
 	u8 *msg;
-	struct tlv_shutdown_tlvs *tlvs;
+	const u8 *hsmd_msg;
 
 	if (!peer->send_shutdown)
 		return;
@@ -645,21 +693,38 @@ static void maybe_send_shutdown(struct eltoo_peer *peer)
 	 * over us */
 	send_channel_update(peer, ROUTING_FLAGS_DISABLED);
 
-	if (peer->shutdown_wrong_funding) {
-		tlvs = tlv_shutdown_tlvs_new(tmpctx);
-		tlvs->wrong_funding
-			= tal(tlvs, struct tlv_shutdown_tlvs_wrong_funding);
-		tlvs->wrong_funding->txid = peer->shutdown_wrong_funding->txid;
-		tlvs->wrong_funding->outnum = peer->shutdown_wrong_funding->n;
-	} else
-		tlvs = NULL;
+	/* For eltoo channels, send shutdown_eltoo with a fresh nonce
+	 * for mutual close MuSig2 signing */
 
-	msg = towire_shutdown(NULL, &peer->channel_id, peer->final_scriptpubkey,
-			      tlvs);
+	/* Generate fresh nonce from HSM for close signing */
+	hsmd_msg = hsm_req(tmpctx,
+			   towire_hsmd_regen_nonce(tmpctx, &peer->channel_id));
+
+	if (!fromwire_hsmd_regen_nonce_reply(hsmd_msg,
+					     &peer->close_state.self_close_nonce)) {
+		peer_failed_warn(peer->pps, &peer->channel_id,
+				 "HSM failed to generate close nonce");
+		return;
+	}
+
+	status_debug("Sending shutdown_eltoo with nonce %s",
+		     fmt_nonce(tmpctx, &peer->close_state.self_close_nonce));
+
+	msg = towire_shutdown_eltoo(NULL, &peer->channel_id,
+				    peer->final_scriptpubkey,
+				    &peer->close_state.self_close_nonce);
 	peer_write(peer->pps, take(msg));
 	peer->send_shutdown = false;
 	peer->shutdown_sent[LOCAL] = true;
 	billboard_update(peer);
+
+	/* If both shutdowns are now sent and no pending updates, begin close negotiation */
+	if (peer->shutdown_sent[REMOTE] && peer->close_state.shutdown_nonces_received) {
+		if (!pending_updates(peer->channel, LOCAL, false) &&
+		    !pending_updates(peer->channel, REMOTE, false)) {
+			begin_closing_negotiation(peer);
+		}
+	}
 }
 
 static void send_shutdown_complete(struct eltoo_peer *peer)
@@ -754,6 +819,11 @@ static void send_update(struct eltoo_peer *peer)
 	struct wally_tx_output *direct_outputs[NUM_SIDES];
 	struct musig_keyagg_cache cache;
 
+	/* Shutdown can be sent regardless of whose turn it is */
+	if (peer->send_shutdown) {
+		maybe_send_shutdown(peer);
+	}
+
 	/* Can't send update if it's not our turn - wait for YIELD.
 	 * Timer will be restarted via change_turn -> maybe_send_uncommitted_removals
 	 * when we receive YIELD. */
@@ -794,6 +864,14 @@ static void send_update(struct eltoo_peer *peer)
 	if (peer->shutdown_sent[LOCAL] && !num_channel_htlcs(peer->channel)) {
 		status_debug("Can't send commit: final shutdown phase");
 
+		/* If both shutdowns are done and no pending updates, start close negotiation */
+		if (peer->shutdown_sent[REMOTE] &&
+		    !pending_updates(peer->channel, LOCAL, false) &&
+		    !pending_updates(peer->channel, REMOTE, false)) {
+			status_debug("Ready for close negotiation - starting");
+			begin_closing_negotiation(peer);
+		}
+
 		peer->commit_timer = NULL;
 		return;
 	}
@@ -810,6 +888,26 @@ static void send_update(struct eltoo_peer *peer)
 
 		/* Covers the case where we've just been told to shutdown. */
 		maybe_send_shutdown(peer);
+
+		/* If we're in shutdown mode, keep checking for close readiness.
+		 * We may be waiting for peer to send updates that resolve HTLCs. */
+		if (peer->shutdown_sent[LOCAL] && peer->shutdown_sent[REMOTE]) {
+			if (num_channel_htlcs(peer->channel) == 0 &&
+			    !pending_updates(peer->channel, LOCAL, false) &&
+			    !pending_updates(peer->channel, REMOTE, false)) {
+				status_debug("Ready for close negotiation after nothing to send");
+				peer->commit_timer = NULL;
+				begin_closing_negotiation(peer);
+				return;
+			} else {
+				/* Keep timer running to check again later.
+				 * Must clear timer before restarting so it can be rearmed. */
+				status_debug("Shutdown mode: pending work, restarting timer");
+				peer->commit_timer = NULL;
+				start_update_timer(peer);
+				return;
+			}
+		}
 
 		peer->commit_timer = NULL;
 		return;
@@ -1036,7 +1134,12 @@ static void send_update_sign_ack(struct eltoo_peer *peer,
 	/* Now we can finally send update_signed_ack to peer */
 	peer_write(peer->pps, take(msg));
 
-    /* FIXME Update HTLC states to reflect this and tell master? */
+	/* Advance REMOVING HTLCs to final state now that we've sent the ack.
+	 * Note: ADDING HTLCs stay at UPDATE state until master sends fulfill/fail. */
+	{
+		const struct htlc **ack_changed = tal_arr(tmpctx, const struct htlc *, 0);
+		channel_sending_sign_ack(peer->channel, &ack_changed);
+	}
 
 }
 
@@ -1429,9 +1532,19 @@ static void handle_peer_shutdown(struct eltoo_peer *peer, const u8 *shutdown)
     */
     /* No OPT_SHUTDOWN_WRONG_FUNDING support for now */
 	if (!fromwire_shutdown_eltoo(tmpctx, shutdown, &channel_id, &scriptpubkey,
-			       &peer->channel->eltoo_keyset.other_next_nonce))
+			       &peer->close_state.other_close_nonce))
 		peer_failed_warn(peer->pps, &peer->channel_id,
 				 "Bad shutdown %s", tal_hex(peer, shutdown));
+
+	/* Also store in eltoo_keyset for compatibility */
+	peer->channel->eltoo_keyset.other_next_nonce = peer->close_state.other_close_nonce;
+
+	/* Store their shutdown script for use in close tx creation */
+	peer->close_state.remote_shutdown_script = tal_dup_talarr(peer, u8, scriptpubkey);
+
+	status_debug("Received shutdown_eltoo with nonce %s, script %s",
+		     fmt_nonce(tmpctx, &peer->close_state.other_close_nonce),
+		     tal_hex(tmpctx, scriptpubkey));
 
 	/* FIXME: We shouldn't let them initiate a shutdown while the
 	 * channel is active (if we leased funds) */
@@ -1460,7 +1573,7 @@ static void handle_peer_shutdown(struct eltoo_peer *peer, const u8 *shutdown)
 	 * will re-send anyway. */
 	wire_sync_write(MASTER_FD,
 			take(towire_channeld_got_shutdown_eltoo(NULL, scriptpubkey,
-							  &peer->channel->eltoo_keyset.other_next_nonce)));
+							  &peer->close_state.other_close_nonce)));
 
 	peer->shutdown_sent[REMOTE] = true;
 	/* BOLT #2:
@@ -1473,9 +1586,420 @@ static void handle_peer_shutdown(struct eltoo_peer *peer, const u8 *shutdown)
 	 */
 	if (!peer->shutdown_sent[LOCAL]) {
 		peer->send_shutdown = true;
-		start_update_timer(peer);
+		/* Try to send immediately if we can */
+		maybe_send_shutdown(peer);
+		/* Also start timer as fallback */
+		if (!peer->shutdown_sent[LOCAL])
+			start_update_timer(peer);
 	}
+
+	/* Store the nonce for close negotiation */
+	peer->close_state.shutdown_nonces_received = true;
 	billboard_update(peer);
+
+	/* If both shutdowns are sent and there are no pending HTLCs, begin close negotiation.
+	 * For eltoo, we also need no HTLCs in the channel. */
+	status_debug("handle_peer_shutdown: LOCAL=%d REMOTE=%d pending_local=%d pending_remote=%d num_htlcs=%zu",
+		     peer->shutdown_sent[LOCAL], peer->shutdown_sent[REMOTE],
+		     pending_updates(peer->channel, LOCAL, false),
+		     pending_updates(peer->channel, REMOTE, false),
+		     num_channel_htlcs(peer->channel));
+	if (peer->shutdown_sent[LOCAL] && peer->shutdown_sent[REMOTE]) {
+		/* For eltoo, wait until all HTLCs are resolved and no pending updates */
+		if (num_channel_htlcs(peer->channel) == 0 &&
+		    !pending_updates(peer->channel, LOCAL, false) &&
+		    !pending_updates(peer->channel, REMOTE, false)) {
+			begin_closing_negotiation(peer);
+		} else {
+			status_debug("Not starting close negotiation yet - pending work");
+			/* Start timer to retry later */
+			peer->close_state.in_progress = true;
+			start_update_timer(peer);
+		}
+	} else {
+		status_debug("Not starting close negotiation yet - waiting for shutdowns");
+	}
+}
+
+/*~ Calculate fee for eltoo close transaction based on weight and feerate.
+ * Eltoo close tx has:
+ * - 1 taproot key-path input: ~57 vbytes
+ * - 1-2 outputs: ~43 vbytes each (P2WPKH) or ~34 vbytes (P2TR)
+ * Total ~100-186 vbytes depending on output types
+ */
+static struct amount_sat calc_eltoo_close_fee(u32 feerate_per_kw,
+					      const u8 *local_scriptpubkey,
+					      const u8 *remote_scriptpubkey)
+{
+	size_t weight;
+
+	/* Base: 4 (version) + 1 (marker) + 1 (flag) + 4 (locktime) = 10 */
+	/* Input: 41 (outpoint+sequence) + 1 (scriptsig len) + 1 (witness items) + 64 (sig) = 107 */
+	/* But witness is 1/4 weight, so input ~= 41 + 1 + (1+64)/4 ~= 58 vbytes */
+	weight = 4 * 10;  /* Non-witness */
+	weight += 4 * 41 + 1 + 1 + 64;  /* Input with witness */
+
+	/* Outputs - assume P2WPKH for now (34 bytes each) */
+	if (tal_count(local_scriptpubkey) > 0)
+		weight += 4 * (8 + 1 + tal_count(local_scriptpubkey));
+	if (tal_count(remote_scriptpubkey) > 0)
+		weight += 4 * (8 + 1 + tal_count(remote_scriptpubkey));
+
+	return amount_tx_fee(feerate_per_kw, weight);
+}
+
+/*~ Begin closing negotiation - called when both shutdowns sent and no pending HTLCs */
+static bool begin_closing_negotiation(struct eltoo_peer *peer)
+{
+	struct amount_sat fee;
+	u32 feerate_per_kw;
+	u8 *remote_script;
+
+	/* Already started closing negotiation? */
+	if (amount_sat_greater(peer->close_state.last_sent_fee, AMOUNT_SAT(0))) {
+		status_debug("Closing negotiation already started, skipping");
+		return true;
+	}
+
+	status_debug("Beginning eltoo close negotiation");
+
+	/* Use a reasonable feerate - for now use 1000 sat/kw as a starting point.
+	 * In a full implementation, this would be based on current mempool conditions. */
+	feerate_per_kw = 1000;
+
+	/* Get remote shutdown script - use their shutdown_eltoo script.
+	 * This should always be set since we received their shutdown_eltoo before getting here. */
+	remote_script = peer->close_state.remote_shutdown_script;
+	if (!remote_script) {
+		status_debug("No remote shutdown script - cannot start close negotiation");
+		return false;
+	}
+
+	/* Calculate initial fee based on tx weight */
+	fee = calc_eltoo_close_fee(feerate_per_kw,
+				   peer->final_scriptpubkey,
+				   remote_script);
+
+	/* Send our initial closing offer */
+	send_eltoo_closing_offer(peer, fee);
+	return true;
+}
+
+/*~ Send our closing offer with partial signature */
+static void send_eltoo_closing_offer(struct eltoo_peer *peer, struct amount_sat fee)
+{
+	struct bitcoin_tx *close_tx;
+	struct amount_sat to_local, to_remote, funding_sats;
+	struct amount_msat local_msat, remote_msat;
+	u8 *msg;
+	const u8 *hsmd_msg;
+	struct tlv_closing_signed_eltoo_tlvs *tlvs;
+	struct musig_keyagg_cache cache;
+	u8 *remote_script;
+
+	status_debug("Sending eltoo closing offer with fee %s",
+		     fmt_amount_sat(tmpctx, fee));
+
+	/* Get current balances */
+	local_msat = peer->channel->view[LOCAL].owed[LOCAL];
+	remote_msat = peer->channel->view[LOCAL].owed[REMOTE];
+	funding_sats = peer->channel->funding_sats;
+
+	/* Convert to sats, rounding down */
+	if (!amount_msat_to_sat(&to_local, local_msat))
+		to_local = AMOUNT_SAT(0);
+	if (!amount_msat_to_sat(&to_remote, remote_msat))
+		to_remote = AMOUNT_SAT(0);
+
+	/* Subtract fee from the party with the larger balance.
+	 * Both parties calculate this the same way to ensure they create identical txs.
+	 * This is deterministic since both parties know both balances. */
+	if (amount_sat_greater_eq(to_local, to_remote)) {
+		/* Local has more, subtract from local */
+		if (!amount_sat_sub(&to_local, to_local, fee)) {
+			/* Local can't afford, try remote */
+			if (!amount_sat_sub(&to_remote, to_remote, fee)) {
+				status_debug("Cannot afford close fee!");
+				return;
+			}
+		}
+	} else {
+		/* Remote has more, subtract from remote */
+		if (!amount_sat_sub(&to_remote, to_remote, fee)) {
+			/* Remote can't afford, try local */
+			if (!amount_sat_sub(&to_local, to_local, fee)) {
+				status_debug("Cannot afford close fee!");
+				return;
+			}
+		}
+	}
+
+	/* Get remote shutdown script from their shutdown_eltoo message */
+	remote_script = peer->close_state.remote_shutdown_script;
+	if (!remote_script) {
+		status_debug("No remote shutdown script in send_eltoo_closing_offer");
+		return;
+	}
+
+	/* Create the close transaction */
+	close_tx = create_eltoo_close_tx(tmpctx,
+					 chainparams,
+					 &peer->channel->funding,
+					 funding_sats,
+					 &peer->channel->eltoo_keyset.self_funding_key,
+					 &peer->channel->eltoo_keyset.other_funding_key,
+					 peer->final_scriptpubkey,
+					 remote_script,
+					 to_local,
+					 to_remote);
+
+	if (!close_tx) {
+		status_debug("Failed to create close tx - both outputs below dust?");
+		return;
+	}
+
+	/* Get partial signature from HSM */
+	hsmd_msg = hsm_req(tmpctx,
+			   towire_hsmd_psign_eltoo_close_tx(tmpctx,
+				   &peer->channel_id,
+				   close_tx,
+				   &peer->channel->eltoo_keyset.other_funding_key,
+				   &peer->close_state.other_close_nonce,
+				   &peer->close_state.self_close_nonce));
+
+	if (!fromwire_hsmd_psign_eltoo_close_tx_reply(hsmd_msg,
+						     &peer->close_state.self_close_psig,
+						     &peer->close_state.close_session,
+						     &peer->close_state.self_close_nonce,
+						     &peer->close_state.close_inner_pubkey,
+						     &cache)) {
+		peer_failed_warn(peer->pps, &peer->channel_id,
+				 "HSM failed to sign close tx");
+		return;
+	}
+
+	peer->close_state.close_cache = cache;
+
+	/* Build TLVs with our nonce and partial sig - TLV fields are pointers */
+	tlvs = tlv_closing_signed_eltoo_tlvs_new(tmpctx);
+	tlvs->nonces = tal_dup(tlvs, struct nonce, &peer->close_state.self_close_nonce);
+	tlvs->partial_sig = tal_dup(tlvs, struct partial_sig, &peer->close_state.self_close_psig);
+
+	/* Set fee range for quick close - accept any reasonable fee */
+	tlvs->fee_range = tal(tlvs, struct tlv_closing_signed_eltoo_tlvs_fee_range);
+	tlvs->fee_range->min_fee_satoshis = AMOUNT_SAT(250);  /* Minimum relay fee */
+	tlvs->fee_range->max_fee_satoshis = amount_sat(fee.satoshis * 10);  /* Up to 10x our proposed fee */
+
+	peer->close_state.our_fee_range = tal_dup(peer, struct tlv_closing_signed_eltoo_tlvs_fee_range, tlvs->fee_range);
+	peer->close_state.last_sent_fee = fee;
+
+	msg = towire_closing_signed_eltoo(tmpctx, &peer->channel_id,
+					  fee, tlvs);
+
+	peer_write(peer->pps, take(msg));
+
+	status_debug("Sent closing_signed_eltoo with fee=%s, psig=%s",
+		     fmt_amount_sat(tmpctx, fee),
+		     fmt_partial_sig(tmpctx, &peer->close_state.self_close_psig));
+}
+
+/*~ Handle incoming closing_signed_eltoo message */
+static void handle_peer_closing_signed_eltoo(struct eltoo_peer *peer, const u8 *msg)
+{
+	struct channel_id channel_id;
+	struct amount_sat their_fee;
+	struct tlv_closing_signed_eltoo_tlvs *tlvs;
+
+	if (!fromwire_closing_signed_eltoo(tmpctx, msg, &channel_id, &their_fee, &tlvs))
+		peer_failed_warn(peer->pps, &peer->channel_id,
+				 "Bad closing_signed_eltoo %s", tal_hex(peer, msg));
+
+	if (!channel_id_eq(&channel_id, &peer->channel_id))
+		peer_failed_err(peer->pps, &channel_id,
+				"Wrong closing_signed_eltoo channel_id");
+
+	/* TLVs are required for eltoo */
+	if (!tlvs || !tlvs->nonces || !tlvs->partial_sig)
+		peer_failed_warn(peer->pps, &peer->channel_id,
+				 "closing_signed_eltoo missing required TLVs");
+
+	status_debug("Received closing_signed_eltoo with fee=%s",
+		     fmt_amount_sat(tmpctx, their_fee));
+
+	/* Store their partial sig (made with current/shutdown nonces) */
+	peer->close_state.other_close_psig = *tlvs->partial_sig;
+
+	/* Store their NEXT nonce separately - don't overwrite the current signing nonce yet.
+	 * The partial_sig was made using their shutdown nonce, so we need to keep that
+	 * for combining. The new nonce in the TLV is for a potential next round. */
+	peer->close_state.other_next_close_nonce = *tlvs->nonces;
+	peer->close_state.have_other_next_nonce = true;
+	peer->close_state.last_received_fee = their_fee;
+
+	/* Store their fee range if provided */
+	if (tlvs->fee_range) {
+		peer->close_state.their_fee_range = tal_dup(peer,
+			struct tlv_closing_signed_eltoo_tlvs_fee_range, tlvs->fee_range);
+	}
+
+	/* Check if fee ranges overlap for quick close */
+	if (peer->close_state.our_fee_range && peer->close_state.their_fee_range) {
+		struct amount_sat our_min = peer->close_state.our_fee_range->min_fee_satoshis;
+		struct amount_sat our_max = peer->close_state.our_fee_range->max_fee_satoshis;
+		struct amount_sat their_min = peer->close_state.their_fee_range->min_fee_satoshis;
+		struct amount_sat their_max = peer->close_state.their_fee_range->max_fee_satoshis;
+
+		/* If ranges overlap, use their proposed fee (within overlap) */
+		if (amount_sat_less_eq(our_min, their_max) &&
+		    amount_sat_less_eq(their_min, our_max)) {
+			/* Use their proposed fee if it's in our range */
+			if (amount_sat_greater_eq(their_fee, our_min) &&
+			    amount_sat_less_eq(their_fee, our_max)) {
+				status_debug("Fee ranges overlap, accepting their fee %s",
+					     fmt_amount_sat(tmpctx, their_fee));
+				finalize_eltoo_close(peer, their_fee);
+				return;
+			}
+		}
+	}
+
+	/* If we haven't sent an offer yet, send one */
+	if (!amount_sat_greater(peer->close_state.last_sent_fee, AMOUNT_SAT(0))) {
+		/* Accept their fee if it's reasonable */
+		send_eltoo_closing_offer(peer, their_fee);
+	} else {
+		/* Simple fee negotiation: accept if close to our offer */
+		struct amount_sat diff = AMOUNT_SAT(0);
+		bool ok;
+		if (amount_sat_greater(their_fee, peer->close_state.last_sent_fee))
+			ok = amount_sat_sub(&diff, their_fee, peer->close_state.last_sent_fee);
+		else
+			ok = amount_sat_sub(&diff, peer->close_state.last_sent_fee, their_fee);
+		(void)ok;
+
+		/* If within 10% or 1000 sats, accept their fee */
+		if (diff.satoshis < 1000 ||
+		    diff.satoshis * 10 < peer->close_state.last_sent_fee.satoshis) {
+			finalize_eltoo_close(peer, their_fee);
+		} else {
+			/* Split the difference */
+			struct amount_sat new_fee;
+			if (!amount_sat_add(&new_fee, their_fee, peer->close_state.last_sent_fee))
+				new_fee = their_fee;
+			new_fee.satoshis /= 2;
+			send_eltoo_closing_offer(peer, new_fee);
+		}
+	}
+}
+
+/*~ Finalize the close - combine signatures and tell master */
+static void finalize_eltoo_close(struct eltoo_peer *peer, struct amount_sat fee)
+{
+	struct bitcoin_tx *close_tx;
+	struct amount_sat to_local, to_remote, funding_sats;
+	struct amount_msat local_msat, remote_msat;
+	const u8 *hsmd_msg;
+	struct bip340sig combined_sig;
+	u8 **witness;
+	u8 *remote_script;
+
+	status_debug("Finalizing eltoo close with fee %s",
+		     fmt_amount_sat(tmpctx, fee));
+
+	/* Recreate the close transaction at the agreed fee */
+	local_msat = peer->channel->view[LOCAL].owed[LOCAL];
+	remote_msat = peer->channel->view[LOCAL].owed[REMOTE];
+	funding_sats = peer->channel->funding_sats;
+
+	if (!amount_msat_to_sat(&to_local, local_msat))
+		to_local = AMOUNT_SAT(0);
+	if (!amount_msat_to_sat(&to_remote, remote_msat))
+		to_remote = AMOUNT_SAT(0);
+
+	/* Subtract fee from the party with the larger balance.
+	 * Both parties calculate this the same way to ensure they create identical txs.
+	 * This is deterministic since both parties know both balances. */
+	if (amount_sat_greater_eq(to_local, to_remote)) {
+		/* Local has more, subtract from local */
+		if (!amount_sat_sub(&to_local, to_local, fee)) {
+			/* Local can't afford, try remote */
+			if (!amount_sat_sub(&to_remote, to_remote, fee)) {
+				peer_failed_warn(peer->pps, &peer->channel_id,
+						 "Cannot afford final close fee");
+				return;
+			}
+		}
+	} else {
+		/* Remote has more, subtract from remote */
+		if (!amount_sat_sub(&to_remote, to_remote, fee)) {
+			/* Remote can't afford, try local */
+			if (!amount_sat_sub(&to_local, to_local, fee)) {
+				peer_failed_warn(peer->pps, &peer->channel_id,
+						 "Cannot afford final close fee");
+				return;
+			}
+		}
+	}
+
+	/* Get remote shutdown script from their shutdown_eltoo message */
+	remote_script = peer->close_state.remote_shutdown_script;
+	if (!remote_script) {
+		peer_failed_warn(peer->pps, &peer->channel_id,
+				 "No remote shutdown script in finalize_eltoo_close");
+		return;
+	}
+
+	close_tx = create_eltoo_close_tx(tmpctx,
+					 chainparams,
+					 &peer->channel->funding,
+					 funding_sats,
+					 &peer->channel->eltoo_keyset.self_funding_key,
+					 &peer->channel->eltoo_keyset.other_funding_key,
+					 peer->final_scriptpubkey,
+					 remote_script,
+					 to_local,
+					 to_remote);
+
+	if (!close_tx) {
+		peer_failed_warn(peer->pps, &peer->channel_id,
+				 "Failed to create final close tx");
+		return;
+	}
+
+	/* Combine partial signatures via HSM using close-specific message
+	 * (uses SIGHASH_ALL key-path, not ANYPREVOUT script-path like update tx) */
+	hsmd_msg = hsm_req(tmpctx,
+			   towire_hsmd_combine_eltoo_close_psig(tmpctx,
+				   &peer->channel_id,
+				   &peer->close_state.self_close_psig,
+				   &peer->close_state.other_close_psig,
+				   &peer->close_state.close_session,
+				   close_tx,
+				   &peer->close_state.close_inner_pubkey));
+
+	if (!fromwire_hsmd_combine_eltoo_close_psig_reply(hsmd_msg, &combined_sig)) {
+		peer_failed_warn(peer->pps, &peer->channel_id,
+				 "HSM failed to combine close tx signatures");
+		return;
+	}
+
+	/* Apply signature to transaction - for key-path spend, witness is just the signature.
+	 * SIGHASH_ALL uses 0x01 appended to signature (not SIGHASH_DEFAULT which omits it). */
+	witness = tal_arr(tmpctx, u8 *, 1);
+	witness[0] = tal_arr(witness, u8, sizeof(combined_sig.u8) + 1);
+	memcpy(witness[0], combined_sig.u8, sizeof(combined_sig.u8));
+	witness[0][sizeof(combined_sig.u8)] = SIGHASH_ALL;
+	bitcoin_tx_input_set_witness(close_tx, 0, witness);
+
+	status_debug("Close tx ready: %s",
+		     fmt_bitcoin_tx(tmpctx, close_tx));
+
+	/* Tell master the close is complete */
+	wire_sync_write(MASTER_FD,
+			take(towire_channeld_eltoo_close_complete(NULL, close_tx)));
+
+	/* Master will broadcast and we'll exit */
+	exit(0);
 }
 
 static void handle_unexpected_reestablish(struct eltoo_peer *peer, const u8 *msg)
@@ -1681,7 +2205,9 @@ static void peer_in(struct eltoo_peer *peer, const u8 *msg)
 		handle_peer_fail_malformed_htlc(peer, msg);
 		return;
 	case WIRE_SHUTDOWN:
-		handle_peer_shutdown(peer, msg);
+		/* For eltoo channels, we use shutdown_eltoo, not shutdown */
+		peer_failed_warn(peer->pps, &peer->channel_id,
+				 "Received non-eltoo shutdown on eltoo channel");
 		return;
     case WIRE_UPDATE_NOOP:
 		/* 
@@ -1740,16 +2266,20 @@ static void peer_in(struct eltoo_peer *peer, const u8 *msg)
 	case WIRE_WARNING:
 	case WIRE_ERROR:
 	case WIRE_ONION_MESSAGE:
-    /* Eltoo stuff */
+    /* Eltoo stuff - channel establishment messages shouldn't arrive here */
     case WIRE_OPEN_CHANNEL_ELTOO:
     case WIRE_ACCEPT_CHANNEL_ELTOO:
     case WIRE_FUNDING_CREATED_ELTOO:
     case WIRE_FUNDING_SIGNED_ELTOO:
-    case WIRE_SHUTDOWN_ELTOO:
-    case WIRE_CLOSING_SIGNED_ELTOO:
-    /* Eltoo stuff ends */
-
 		abort();
+
+	/* Eltoo close messages */
+    case WIRE_SHUTDOWN_ELTOO:
+		handle_peer_shutdown(peer, msg);
+		return;
+    case WIRE_CLOSING_SIGNED_ELTOO:
+		handle_peer_closing_signed_eltoo(peer, msg);
+		return;
 	}
 
 	peer_failed_warn(peer->pps, &peer->channel_id,
@@ -2448,8 +2978,13 @@ static void handle_shutdown_cmd(struct eltoo_peer *peer, const u8 *inmsg)
 	tal_free(peer->final_scriptpubkey);
 	peer->final_scriptpubkey = local_shutdown_script;
 
-	/* We can't send this until commit (if any) is done, so start timer. */
+	/* We can't send this until commit (if any) is done, so start timer.
+	 * However, if there are no pending updates, we can send shutdown immediately. */
 	peer->send_shutdown = true;
+	if (!pending_updates(peer->channel, LOCAL, false) &&
+	    !pending_updates(peer->channel, REMOTE, false)) {
+		maybe_send_shutdown(peer);
+	}
 	start_update_timer(peer);
 }
 
@@ -2640,6 +3175,7 @@ static void req_in(struct eltoo_peer *peer, const u8 *msg)
 	case WIRE_CHANNELD_RESENDING_UPDATESIG:
 	case WIRE_CHANNELD_RESENDING_UPDATESIG_REPLY:
 	case WIRE_CHANNELD_INIT_ELTOO:
+	case WIRE_CHANNELD_ELTOO_CLOSE_COMPLETE:
 		break;
 	}
 	master_badmsg(-1, msg);
@@ -2885,6 +3421,10 @@ int main(int argc, char *argv[])
 	peer->last_update_timestamp = 0;
 	peer->last_empty_commitment = 0;
 	peer->sent_uncommitted_removals = false;
+	/* Initialize close state */
+	peer->close_state.shutdown_nonces_received = false;
+	peer->close_state.in_progress = false;
+	peer->close_state.complete = false;
 #ifdef EXPERIMENTAL_FEATURES
 	peer->stfu = false;
 	peer->stfu_sent[LOCAL] = peer->stfu_sent[REMOTE] = false;

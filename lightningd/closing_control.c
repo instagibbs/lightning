@@ -78,7 +78,9 @@ resolve_one_close_command(struct close_command *cc, bool cooperative,
 	else
 		json_add_string(result, "type", "unilateral");
 
+	log_info(cc->channel->log, "resolve_one_close_command: calling command_success");
 	was_pending(command_success(cc->cmd, result));
+	log_info(cc->channel->log, "resolve_one_close_command: command_success returned");
 }
 
 const char *cmd_id_from_close_command(const tal_t *ctx,
@@ -100,12 +102,20 @@ void resolve_close_command(struct lightningd *ld, struct channel *channel,
 {
 	struct close_command *cc;
 	struct close_command *n;
+	int found = 0;
 
+	log_info(channel->log, "resolve_close_command: looking for channel");
 	list_for_each_safe(&ld->close_commands, cc, n, list) {
-		if (cc->channel != channel)
+		if (cc->channel != channel) {
+			log_info(channel->log, "resolve_close_command: skipping different channel");
 			continue;
+		}
+		log_info(channel->log, "resolve_close_command: found matching channel, resolving");
 		resolve_one_close_command(cc, cooperative, close_txs);
+		found++;
 	}
+	if (!found)
+		log_info(channel->log, "resolve_close_command: no close command found");
 }
 
 /* Destroy the close command structure in reaction to the

@@ -173,13 +173,15 @@ bool channel_rcvd_update(struct channel *channel,
 			 const struct htlc ***htlcs);
 
 /**
- * channel_sending_sign_ack: commit changed when sending ACK
+ * channel_sending_sign_ack: advance REMOVING HTLCs when sending ACK.
  * @channel: the channel
  * @htlcs: initially-empty tal_arr() for htlcs which changed state.
  *
+ * Note: Only advances RCVD_REMOVE_UPDATE states, not RCVD_ADD_UPDATE.
+ * ADDING HTLCs stay at UPDATE state until master sends fulfill/fail.
  */
-//bool channel_sending_sign_ack(struct channel *channel,
-//             const struct htlc ***htlcs):
+bool channel_sending_sign_ack(struct channel *channel,
+			      const struct htlc ***htlcs);
 
 /**
  * num_channel_htlcs: how many (live) HTLCs at all in channel?

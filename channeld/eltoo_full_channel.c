@@ -740,20 +740,37 @@ bool channel_rcvd_update(struct channel *channel, const struct htlc ***htlcs)
 	return true;
 }
 
-/*
+/* When sending ack, we advance REMOVING HTLCs to final state, but NOT
+ * ADDING HTLCs - those need to stay at UPDATE state until master sends
+ * fulfill/fail command. */
 bool channel_sending_sign_ack(struct channel *channel, const struct htlc ***htlcs)
 {
 	int change;
-	const enum htlc_state states[] = {RCVD_REMOVE_UPDATE,
-					   RCVD_ADD_UPDATE};
+	/* Only advance REMOVE states, not ADD states */
+	const enum htlc_state states[] = {RCVD_REMOVE_UPDATE};
+	struct htlc_map_iter it;
+	const struct htlc *h;
 
-	status_debug("Sending Signed ACK");
+	status_debug("Sending Signed ACK (advancing removes only), looking for state %d (%s)",
+		     RCVD_REMOVE_UPDATE, htlc_state_name(RCVD_REMOVE_UPDATE));
+
+	/* Debug: list all HTLCs and their states */
+	for (h = htlc_map_first(channel->htlcs, &it);
+	     h;
+	     h = htlc_map_next(channel->htlcs, &it)) {
+		status_debug("  HTLC %"PRIu64" state=%d (%s)",
+			     h->id, h->state, htlc_state_name(h->state));
+	}
+
 	change = change_htlcs(channel, states, ARRAY_SIZE(states),
 			      htlcs, "sending_sign_ack");
-	if (!change)
+	if (!change) {
+		status_debug("channel_sending_sign_ack: no changes found");
 		return false;
-}
-*/	
+	}
+	status_debug("channel_sending_sign_ack: found changes");
+	return true;
+}	
 
 bool channel_rcvd_update_sign_ack(struct channel *channel,
 				 const struct htlc ***htlcs)
@@ -833,6 +850,10 @@ bool pending_updates(const struct channel *channel,
 	     htlc;
 	     htlc = htlc_map_next(channel->htlcs, &it)) {
 		int flags = eltoo_htlc_state_flags(htlc->state);
+
+		/* Skip dead HTLCs - they're fully resolved */
+		if (htlc_is_dead(htlc))
+			continue;
 
 		/* If it's still being added, its owner added it. */
 		if (flags & HTLC_ADDING) {

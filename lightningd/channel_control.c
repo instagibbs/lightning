@@ -1340,6 +1340,76 @@ static void peer_got_shutdown(struct channel *channel, const u8 *msg)
 	wallet_channel_save(ld->wallet, channel);
 }
 
+/* Eltoo shutdown handling - similar to regular shutdown but includes nonce */
+static void peer_got_shutdown_eltoo(struct channel *channel, const u8 *msg)
+{
+	u8 *scriptpubkey;
+	struct nonce their_nonce;
+	struct lightningd *ld = channel->peer->ld;
+
+	if (!fromwire_channeld_got_shutdown_eltoo(channel, msg, &scriptpubkey,
+						 &their_nonce)) {
+		channel_internal_error(channel, "bad channel_got_shutdown_eltoo %s",
+				       tal_hex(msg, msg));
+		return;
+	}
+
+	log_debug(channel->log, "Got eltoo shutdown with scriptpubkey %s",
+		  tal_hex(tmpctx, scriptpubkey));
+
+	/* Store the remote shutdown scriptpubkey */
+	tal_free(channel->shutdown_scriptpubkey[REMOTE]);
+	channel->shutdown_scriptpubkey[REMOTE] = scriptpubkey;
+
+	/* If we weren't already shutting down, we are now */
+	if (channel->state != CHANNELD_SHUTTING_DOWN)
+		channel_set_state(channel,
+				  channel->state,
+				  CHANNELD_SHUTTING_DOWN,
+				  REASON_REMOTE,
+				  "Peer closes eltoo channel");
+
+	wallet_channel_save(ld->wallet, channel);
+}
+
+/* Eltoo close complete - channeld has the final signed close tx */
+static void handle_eltoo_close_complete(struct channel *channel, const u8 *msg)
+{
+	struct bitcoin_tx *close_tx;
+	struct lightningd *ld = channel->peer->ld;
+	struct bitcoin_txid txid;
+	const struct bitcoin_tx **close_txs;
+
+	if (!fromwire_channeld_eltoo_close_complete(tmpctx, msg, &close_tx)) {
+		channel_internal_error(channel, "bad channeld_eltoo_close_complete %s",
+				       tal_hex(msg, msg));
+		return;
+	}
+
+	bitcoin_txid(close_tx, &txid);
+	log_info(channel->log, "Eltoo mutual close complete, txid %s",
+		 fmt_bitcoin_txid(tmpctx, &txid));
+
+	/* Broadcast the close transaction */
+	broadcast_tx(channel, ld->topology, channel, close_tx, NULL, false, 0,
+		     NULL, NULL, NULL);
+
+	/* Set channel state to closing complete */
+	channel_set_state(channel,
+			  channel->state,
+			  CLOSINGD_COMPLETE,
+			  REASON_LOCAL,
+			  "Eltoo mutual close complete");
+
+	/* Resolve the close command - this completes the close RPC */
+	close_txs = tal_arr(tmpctx, const struct bitcoin_tx *, 1);
+	close_txs[0] = close_tx;
+	resolve_close_command(ld, channel, true, close_txs);
+
+	/* Watch for the close tx confirmation */
+	channel_watch_funding(ld, channel);
+}
+
 void channel_fallen_behind(struct channel *channel)
 {
 	channel->has_future_per_commitment_point = true;
@@ -1660,7 +1730,12 @@ static unsigned channel_msg(struct subd *sd, const u8 *msg, const int *fds)
 		peer_sending_updatesig(sd->channel, msg);
 		break;
 	case WIRE_CHANNELD_GOT_SHUTDOWN_ELTOO:
-		/* FIXME: handle eltoo shutdown properly */
+		/* Handle eltoo shutdown - store scriptpubkey and nonce for close */
+		peer_got_shutdown_eltoo(sd->channel, msg);
+		break;
+	case WIRE_CHANNELD_ELTOO_CLOSE_COMPLETE:
+		/* Eltoo mutual close is complete - broadcast and cleanup */
+		handle_eltoo_close_complete(sd->channel, msg);
 		break;
 	case WIRE_CHANNELD_RESENDING_UPDATESIG:
 		/* Channeld is resending an update after reestablishment.
@@ -1756,7 +1831,8 @@ bool peer_start_eltoo_channeld(struct channel *channel,
 				  | HSM_PERM_ECDH
 				  | HSM_PERM_COMMITMENT_POINT
 				  | HSM_PERM_SIGN_REMOTE_TX
-				  | HSM_PERM_SIGN_ONCHAIN_TX);
+				  | HSM_PERM_SIGN_ONCHAIN_TX
+				  | HSM_PERM_SIGN_CLOSING_TX);
 	if (hsmfd < 0) {
 		log_broken(channel->log, "Could not get hsm fd: %s",
 			   strerror(errno));

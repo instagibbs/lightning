@@ -1622,7 +1622,7 @@ static void eltoo_handle_mutual_close(struct tracked_output **outs,
      * In the case of a mutual close, a node need not do anything else, as it has
      * already agreed to the output, which is sent to its specified `scriptpubkey`
      */
-    resolved_by_other(outs[0], &tx->txid, MUTUAL_CLOSE);
+    resolved_by_other(outs[0], &tx->txid, ELTOO_MUTUAL_CLOSE);
     wait_for_mutual_resolved(outs);
 }
 
@@ -1822,7 +1822,7 @@ int main(int argc, char *argv[])
     /* Tracking funding output which is spent already */
     new_tracked_output(&outs, &funding,
                0, /* We don't care about funding blockheight */
-               FUNDING_TRANSACTION,
+               ELTOO_FUNDING_TRANSACTION,
                funding_sats,
                FUNDING_OUTPUT,
 			   NULL /* scriptPubKey*/,

@@ -625,3 +625,31 @@ msgdata,hsmd_regen_nonce,channel_id,channel_id,
 msgtype,hsmd_regen_nonce_reply,198
 msgdata,hsmd_regen_nonce_reply,pubnonce,nonce,
 
+# Eltoo mutual close - create partial signature for close tx
+# Uses SIGHASH_ALL (not ANYPREVOUT) and key-path spend
+msgtype,hsmd_psign_eltoo_close_tx,215
+msgdata,hsmd_psign_eltoo_close_tx,channel_id,channel_id,
+msgdata,hsmd_psign_eltoo_close_tx,close_tx,bitcoin_tx,
+msgdata,hsmd_psign_eltoo_close_tx,remote_funding_key,pubkey,
+msgdata,hsmd_psign_eltoo_close_tx,remote_nonce,nonce,
+msgdata,hsmd_psign_eltoo_close_tx,local_nonce,nonce,
+
+msgtype,hsmd_psign_eltoo_close_tx_reply,216
+msgdata,hsmd_psign_eltoo_close_tx_reply,close_psig,partial_sig,
+msgdata,hsmd_psign_eltoo_close_tx_reply,session,musig_session,
+msgdata,hsmd_psign_eltoo_close_tx_reply,next_nonce,nonce,
+msgdata,hsmd_psign_eltoo_close_tx_reply,inner_pubkey,pubkey,
+msgdata,hsmd_psign_eltoo_close_tx_reply,cache,musig_keyagg_cache,
+
+# Combine partial signatures for eltoo close tx (key-path SIGHASH_ALL)
+msgtype,hsmd_combine_eltoo_close_psig,217
+msgdata,hsmd_combine_eltoo_close_psig,channel_id,channel_id,
+msgdata,hsmd_combine_eltoo_close_psig,p_sig_1,partial_sig,
+msgdata,hsmd_combine_eltoo_close_psig,p_sig_2,partial_sig,
+msgdata,hsmd_combine_eltoo_close_psig,session,musig_session,
+msgdata,hsmd_combine_eltoo_close_psig,close_tx,bitcoin_tx,
+msgdata,hsmd_combine_eltoo_close_psig,inner_pubkey,pubkey,
+
+msgtype,hsmd_combine_eltoo_close_psig_reply,218
+msgdata,hsmd_combine_eltoo_close_psig_reply,combined_sig,bip340sig,
+

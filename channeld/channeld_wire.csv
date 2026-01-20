@@ -508,3 +508,7 @@ msgdata,channeld_resending_updatesig,session,musig_session,
 
 # Wait for reply, to make sure it's on disk before we send commit.
 msgtype,channeld_resending_updatesig_reply,1185
+
+# Eltoo mutual close complete - channeld has the final signed close tx
+msgtype,channeld_eltoo_close_complete,1086
+msgdata,channeld_eltoo_close_complete,close_tx,bitcoin_tx,

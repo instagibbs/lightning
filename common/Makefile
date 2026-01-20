@@ -23,6 +23,7 @@ COMMON_SRC_NOGEN :=				\
 	common/channel_type.c			\
 	common/clock_time.c			\
 	common/close_tx.c			\
+	common/eltoo_close_tx.c			\
 	common/codex32.c			\
 	common/coin_mvt.c			\
 	common/configdir.c			\

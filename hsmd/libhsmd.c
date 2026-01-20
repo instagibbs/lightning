@@ -179,6 +179,8 @@ bool hsmd_check_client_capabilities(struct hsmd_client *client,
 		return (client->capabilities & HSM_PERM_SIGN_REMOTE_TX) != 0;
 
 	case WIRE_HSMD_SIGN_MUTUAL_CLOSE_TX:
+	case WIRE_HSMD_PSIGN_ELTOO_CLOSE_TX:
+	case WIRE_HSMD_COMBINE_ELTOO_CLOSE_PSIG:
 		return (client->capabilities & HSM_PERM_SIGN_CLOSING_TX) != 0;
 
 	case WIRE_HSMD_SIGN_OPTION_WILL_FUND_OFFER:
@@ -261,6 +263,8 @@ bool hsmd_check_client_capabilities(struct hsmd_client *client,
     case WIRE_HSMD_REGEN_NONCE_REPLY:
     case WIRE_HSMD_MIGRATE_NONCE_REPLY:
     case WIRE_HSMD_SIGN_ELTOO_TX_REPLY:
+    case WIRE_HSMD_PSIGN_ELTOO_CLOSE_TX_REPLY:
+    case WIRE_HSMD_COMBINE_ELTOO_CLOSE_PSIG_REPLY:
 		break;
 	}
 	return false;
@@ -1711,6 +1715,238 @@ static u8 *handle_psign_update_tx(struct hsmd_client *c, const u8 *msg_in)
 	return towire_hsmd_psign_update_tx_reply(NULL, &p_sig, &session, &local_nonce, &inner_pubkey, &cache);
 }
 
+/*~ Eltoo mutual close transaction signing.
+ * Unlike update tx signing which uses ANYPREVOUT for rebinding,
+ * close transactions use SIGHASH_ALL and key-path spend.
+ * This is simpler - no script-path, just aggregate the MuSig2 key.
+ */
+static u8 *handle_psign_eltoo_close_tx(struct hsmd_client *c, const u8 *msg_in)
+{
+	struct pubkey remote_funding_pubkey, local_funding_pubkey;
+	struct secret channel_seed;
+	struct bitcoin_tx *close_tx;
+	struct partial_sig p_sig;
+	struct secrets secrets;
+	struct nonce remote_nonce, local_nonce;
+	struct channel_id channel_id;
+	struct musig_session session;
+
+	/* MuSig stuff */
+	struct pubkey inner_pubkey;
+	struct musig_keyagg_cache cache;
+	const struct pubkey *pubkey_ptrs[2];
+	const secp256k1_musig_pubnonce *pubnonce_ptrs[2];
+	struct sha256_double hash_out;
+	struct musig_state *musig_state_lookup;
+
+	int i;
+
+	if (!fromwire_hsmd_psign_eltoo_close_tx(tmpctx, msg_in,
+					       &channel_id,
+					       &close_tx,
+					       &remote_funding_pubkey,
+					       &remote_nonce,
+					       &local_nonce))
+		return hsmd_status_malformed_request(c, msg_in);
+
+	close_tx->chainparams = c->chainparams;
+
+	/* Basic sanity checks - close tx has 1 input and 1-2 outputs */
+	if (close_tx->wtx->num_inputs != 1)
+		return hsmd_status_bad_request(c, msg_in,
+					       "close tx must have 1 input");
+
+	if (close_tx->wtx->num_outputs < 1 || close_tx->wtx->num_outputs > 2)
+		return hsmd_status_bad_request_fmt(c, msg_in,
+						   "close tx must have 1 or 2 outputs, got %zu",
+						   close_tx->wtx->num_outputs);
+
+	get_channel_seed(&c->id, c->dbid, &channel_seed);
+	derive_basepoints(&channel_seed,
+			  &local_funding_pubkey, NULL, &secrets, NULL);
+
+	/* Derive MuSig2 aggregate key WITH the same taproot tweak used for funding.
+	 * The eltoo funding output uses script-path tweak (with update tapscript merkle root).
+	 * For key-path spending, the signature verifies against this tweaked key Q. */
+	printf("psign_eltoo_close close_tx: %s\n", fmt_bitcoin_tx(tmpctx, close_tx));
+
+	pubkey_ptrs[0] = &remote_funding_pubkey;
+	pubkey_ptrs[1] = &local_funding_pubkey;
+
+	/* Compute the same merkle root used in the funding output.
+	 * The funding output was created with the update tapscript in its tree. */
+	{
+		struct pubkey inner_pk_unused;
+		unsigned char tap_tweak[32];
+		struct sha256 tap_merkle_root;
+		u8 *update_tapscript[1];
+
+		/* Create the update tapscript that's in the funding output's script tree */
+		update_tapscript[0] = make_eltoo_funding_update_script(tmpctx);
+
+		/* Compute merkle root of the script tree (single leaf) */
+		compute_taptree_merkle_root(&tap_merkle_root, update_tapscript, 1);
+
+		/* Use the merkle root to get the same tweaked pubkey as the funding output */
+		bipmusig_finalize_keys(&inner_pubkey,  /* output_pk = Q (tweaked with merkle root) */
+			   &cache.cache,
+			   pubkey_ptrs,
+			   /* n_pubkeys */ 2,
+			   &tap_merkle_root,            /* same merkle root as funding output */
+			   tap_tweak,
+			   &inner_pk_unused);
+	}
+	printf("psign_eltoo_close output_pubkey (Q): %s\n", fmt_pubkey(tmpctx, &inner_pubkey));
+
+	/* For key-path spending with SIGHASH_ALL:
+	 * - No script path, just the tweaked aggregate key
+	 * - Standard taproot key-path spend signature */
+	bitcoin_tx_taproot_hash_for_sig(close_tx, /* input_index */ 0, SIGHASH_ALL,
+		/* tapscript */ NULL, /* annex */ NULL, &hash_out);
+
+	printf("psign_eltoo_close Sighash: ");
+	for (i = 0; i < 32; i++)
+	{
+		printf("%02X", hash_out.sha.u.u8[i]);
+	}
+	printf("\n");
+
+	pubnonce_ptrs[0] = &remote_nonce.nonce;
+	pubnonce_ptrs[1] = &local_nonce.nonce;
+
+	/* Find secnonce in map */
+	musig_state_lookup = musig_state_map_get(secretstuff.musig_map, &channel_id);
+	if (!musig_state_lookup) {
+		return hsmd_status_bad_request(c, msg_in,
+					       "No secret nonce found for this eltoo close request");
+	}
+
+	bipmusig_partial_sign(&secrets.funding_privkey,
+		   &musig_state_lookup->sec_nonce,
+		   pubnonce_ptrs,
+		   /* num_signers */ 2,
+		   &hash_out,
+		   &cache.cache,
+		   &session.session,
+		   &p_sig.p_sig);
+
+	/* Debug: print session bytes at signing time */
+	printf("psign_eltoo_close session bytes: ");
+	for (i = 0; i < 133; i++) {
+		printf("%02X", session.session.data[i]);
+	}
+	printf("\n");
+
+	/* Refill and return own next_nonce, using RNG+extra stuff for more security */
+	bipmusig_gen_nonce(&musig_state_lookup->sec_nonce,
+		   &local_nonce.nonce,
+		   &secrets.funding_privkey,
+		   &local_funding_pubkey,
+		   &cache.cache,
+		   hash_out.sha.u.u8);
+
+	return towire_hsmd_psign_eltoo_close_tx_reply(NULL, &p_sig, &session, &local_nonce, &inner_pubkey, &cache);
+}
+
+/*~ Combine partial signatures for eltoo close tx.
+ *  Unlike update tx which uses script-path ANYPREVOUT, close uses key-path SIGHASH_ALL.
+ */
+static u8 *handle_combine_eltoo_close_psig(struct hsmd_client *c, const u8 *msg_in)
+{
+	struct channel_id channel_id;
+	struct bitcoin_tx *close_tx;
+	struct partial_sig p_sig_1, p_sig_2;
+	struct sha256_double hash_out;
+	struct bip340sig sig;
+	struct pubkey inner_pubkey;
+	const secp256k1_musig_partial_sig *p_sig_ptrs[2];
+	struct musig_session session;
+	int i;
+
+	if (!fromwire_hsmd_combine_eltoo_close_psig(tmpctx, msg_in,
+						   &channel_id,
+						   &p_sig_1,
+						   &p_sig_2,
+						   &session,
+						   &close_tx,
+						   &inner_pubkey)) {
+		return hsmd_status_malformed_request(c, msg_in);
+	}
+
+	close_tx->chainparams = c->chainparams;
+
+	p_sig_ptrs[0] = &p_sig_1.p_sig;
+	p_sig_ptrs[1] = &p_sig_2.p_sig;
+
+	printf("combine_eltoo_close close_tx: %s\n", fmt_bitcoin_tx(tmpctx, close_tx));
+
+	/* For key-path spending with SIGHASH_ALL:
+	 * - No tapscript (pass NULL)
+	 * - Use SIGHASH_ALL (not ANYPREVOUT) */
+	bitcoin_tx_taproot_hash_for_sig(close_tx, /* input_index */ 0, SIGHASH_ALL,
+					/* tapscript */ NULL, /* annex */ NULL, &hash_out);
+
+	printf("combine_eltoo_close Sighash: ");
+	for (i = 0; i < 32; i++) {
+		printf("%02X", hash_out.sha.u.u8[i]);
+	}
+	printf("\n");
+
+	/* For key-path spending, verify against the inner pubkey */
+	printf("combine_eltoo_close inner_pubkey: %s\n", fmt_pubkey(tmpctx, &inner_pubkey));
+
+	/* Debug: print session bytes */
+	printf("combine_eltoo_close session bytes: ");
+	for (i = 0; i < 133; i++) {
+		printf("%02X", session.session.data[i]);
+	}
+	printf("\n");
+
+	/* Try combining without verification first to see what signature we get */
+	{
+		int ret;
+		secp256k1_xonly_pubkey xonly_pk;
+
+		ret = secp256k1_xonly_pubkey_from_pubkey(secp256k1_ctx,
+			&xonly_pk, NULL, &inner_pubkey.pubkey);
+		printf("combine_eltoo_close xonly_from_pubkey ret=%d\n", ret);
+
+		ret = secp256k1_musig_partial_sig_agg(secp256k1_ctx,
+			sig.u8, &session.session, p_sig_ptrs, 2);
+		printf("combine_eltoo_close partial_sig_agg ret=%d\n", ret);
+
+		if (ret) {
+			printf("combine_eltoo_close combined sig before verify: ");
+			for (i = 0; i < 64; i++) {
+				printf("%02X", sig.u8[i]);
+			}
+			printf("\n");
+
+			ret = secp256k1_schnorrsig_verify(secp256k1_ctx,
+				sig.u8, hash_out.sha.u.u8, 32, &xonly_pk);
+			printf("combine_eltoo_close schnorrsig_verify ret=%d\n", ret);
+		}
+	}
+
+	if (!bipmusig_partial_sigs_combine_verify(p_sig_ptrs,
+						 /* num_signers */ 2,
+						 &inner_pubkey,
+						 &session.session,
+						 &hash_out,
+						 &sig)) {
+		return hsmd_status_bad_request(c, msg_in,
+					       "Failed to verify combined close psigs");
+	}
+
+	printf("combine_eltoo_close verified OK, sig: ");
+	for (i = 0; i < 64; i++) {
+		printf("%02X", sig.u8[i]);
+	}
+	printf("\n");
+
+	return towire_hsmd_combine_eltoo_close_psig_reply(NULL, &sig);
+}
+
 /* Should only be used if nonce for funded channel exists and new one will be sent to co-signer
  * e.g., during channel reestblishment
  */
@@ -2139,6 +2375,10 @@ u8 *hsmd_handle_client_message(const tal_t *ctx, struct hsmd_client *client,
 		return handle_sign_withdrawal_tx(client, msg);
 	case WIRE_HSMD_SIGN_MUTUAL_CLOSE_TX:
 		return handle_sign_mutual_close_tx(client, msg);
+	case WIRE_HSMD_PSIGN_ELTOO_CLOSE_TX:
+		return handle_psign_eltoo_close_tx(client, msg);
+	case WIRE_HSMD_COMBINE_ELTOO_CLOSE_PSIG:
+		return handle_combine_eltoo_close_psig(client, msg);
 	case WIRE_HSMD_SIGN_LOCAL_HTLC_TX:
 		return handle_sign_local_htlc_tx(client, msg);
 	case WIRE_HSMD_SIGN_REMOTE_HTLC_TX:
@@ -2274,6 +2514,8 @@ u8 *hsmd_handle_client_message(const tal_t *ctx, struct hsmd_client *client,
     case WIRE_HSMD_REGEN_NONCE_REPLY:
     case WIRE_HSMD_MIGRATE_NONCE_REPLY:
     case WIRE_HSMD_SIGN_ELTOO_TX_REPLY:
+    case WIRE_HSMD_PSIGN_ELTOO_CLOSE_TX_REPLY:
+    case WIRE_HSMD_COMBINE_ELTOO_CLOSE_PSIG_REPLY:
 		break;
 	}
 	return hsmd_status_bad_request(client, msg, "Unknown request");

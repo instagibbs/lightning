@@ -6655,6 +6655,7 @@ static void req_in(struct peer *peer, const u8 *msg)
     case WIRE_CHANNELD_RESENDING_UPDATESIG_REPLY:
     case WIRE_CHANNELD_INIT_ELTOO:
     case WIRE_CHANNELD_GOT_ACK_REPLY:
+    case WIRE_CHANNELD_ELTOO_CLOSE_COMPLETE:
 		break;
 	}
 	master_badmsg(-1, msg);
