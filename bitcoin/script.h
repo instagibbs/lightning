@@ -204,23 +204,29 @@ u8 *bitcoin_spk_ephemeral_anchor(const tal_t *ctx);
 /* Check if a scriptpubkey is an ephemeral anchor (BIP-431) */
 bool is_ephemeral_anchor(const u8 *scriptpubkey, size_t scriptpubkey_len);
 
+/* Create an OP_RETURN output script with given data */
+u8 *scriptpubkey_op_return(const tal_t *ctx, const u8 *data, size_t data_len);
+
+/* Check if scriptpubkey is OP_RETURN (extract data if not NULL) */
+bool is_op_return(const u8 *script, size_t script_len, const u8 **data, size_t *data_len);
+
 /* to_node balance output script with anti-pinning 1 block CSV */
 u8 *bitcoin_tapscript_to_node(const tal_t *ctx, const struct pubkey *settlement_pubkey);
 
 /* Computes taproot merkle root from list of up to two scripts in depth 1 tree, in order */
 void compute_taptree_merkle_root(struct sha256 *hash_out, u8 **scripts, size_t num_scripts);
 
-/* Compute merkle root via annex hint from invalidated update tx */
-void compute_taptree_merkle_root_with_hint(struct sha256 *update_merkle_root, const u8 *update_tapscript, const u8 *invalidated_annex_hint);
+/* Compute merkle root via OP_RETURN hint from invalidated update tx */
+void compute_taptree_merkle_root_with_hint(struct sha256 *update_merkle_root, const u8 *update_tapscript, const u8 *invalidated_opreturn_hint);
 
 /* Computes control block for a spend from a taptree of size two, depth of 1, tops. other_script is NULL if only one script is committed.
  * Returns the control block array.
  * @other_script: The script that needs to be hashed and put in control block
- * @annex_hint: ... or if @other_script is NULL, must supply annex hint from the posted update tx
+ * @opreturn_hint: ... or if @other_script is NULL, must supply 32-byte hash from OP_RETURN output
  * @inner_pubkey: Inner pubkey for taproot control block
  * @parity_bit: Parity of outer taproot pubkey
  */
-u8 *compute_control_block(const tal_t *ctx, const u8 *other_script, const u8 *annex_hint, const struct pubkey *inner_pubkey, int parity_bit);
+u8 *compute_control_block(const tal_t *ctx, const u8 *other_script, const u8 *opreturn_hint, const struct pubkey *inner_pubkey, int parity_bit);
 
 /* Creates tapscript that makes a sig-in-script ANYPREVOUTANYSCRIPT covenant
  * which commits to the tx argument:

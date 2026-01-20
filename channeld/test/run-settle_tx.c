@@ -98,7 +98,24 @@ static struct secret secret_from_hex(const char *hex)
 	return s;
 }
 
-static struct bip340sig musig_sign(struct bitcoin_tx *update_tx, u8 *annex, struct privkey *alice_privkey, struct privkey *bob_privkey, struct pubkey *inner_pubkey, secp256k1_musig_keyagg_cache *keyagg_cache)
+/* Extract 32-byte settlement hash from OP_RETURN output of an update tx */
+static u8 *extract_opreturn_hint(const tal_t *ctx, const struct bitcoin_tx *tx)
+{
+    for (size_t i = 0; i < tx->wtx->num_outputs; i++) {
+        const struct wally_tx_output *out = &tx->wtx->outputs[i];
+        const u8 *data;
+        size_t data_len;
+
+        if (is_op_return(out->script, out->script_len, &data, &data_len)) {
+            if (data_len == 32) {
+                return tal_dup_arr(ctx, u8, data, data_len, 0);
+            }
+        }
+    }
+    return NULL;
+}
+
+static struct bip340sig musig_sign(struct bitcoin_tx *update_tx, struct privkey *alice_privkey, struct privkey *bob_privkey, struct pubkey *inner_pubkey, secp256k1_musig_keyagg_cache *keyagg_cache)
 {
     const secp256k1_musig_pubnonce *pubnonce_ptrs[2];
     struct sha256_double msg_out;
@@ -127,9 +144,10 @@ static struct bip340sig musig_sign(struct bitcoin_tx *update_tx, u8 *annex, stru
         /* For script-path spending with ANYPREVOUTANYSCRIPT:
          * - Pass the actual tapscript being executed to signal script-path (ext_flag=1)
          * - tapleaf_hash is NOT included (because ANYPREVOUTANYSCRIPT)
-         * - But key_version (0x01) and codesep_position ARE included */
+         * - But key_version (0x01) and codesep_position ARE included
+         * - No annex since settlement hash is now in OP_RETURN output */
         u8 *update_tapscript = make_eltoo_funding_update_script(tmpctx);
-        bitcoin_tx_taproot_hash_for_sig(update_tx, /* input_index */ 0, SIGHASH_ANYPREVOUTANYSCRIPT|SIGHASH_SINGLE, update_tapscript, annex, &msg_out);
+        bitcoin_tx_taproot_hash_for_sig(update_tx, /* input_index */ 0, SIGHASH_ANYPREVOUTANYSCRIPT|SIGHASH_SINGLE, update_tapscript, /* annex */ NULL, &msg_out);
         bipmusig_partial_sign((i == 0) ? alice_privkey : bob_privkey,
                &secnonce[i],
                pubnonce_ptrs,
@@ -520,7 +538,7 @@ static int test_invalid_update_tx(void)
     int i;
 
     /* MuSig signing stuff */
-    u8 *annex_0, *annex_1;
+    u8 *opreturn_hint_0;
     struct bip340sig sig;
 
     /* Test initial settlement tx */
@@ -591,9 +609,12 @@ static int test_invalid_update_tx(void)
                      update_output_sats,
                      &inner_pubkey);
 
-    /* Signing happens next */
-    annex_0 = make_eltoo_annex(tmpctx, tx);
-    sig = musig_sign(update_tx, annex_0, &alice_funding_privkey, &bob_funding_privkey, &inner_pubkey, keyagg_cache);
+    /* Signing happens next - no annex, settlement hash is in OP_RETURN output */
+    sig = musig_sign(update_tx, &alice_funding_privkey, &bob_funding_privkey, &inner_pubkey, keyagg_cache);
+
+    /* Extract OP_RETURN hint from update_tx for later rebinding */
+    opreturn_hint_0 = extract_opreturn_hint(tmpctx, update_tx);
+    assert(opreturn_hint_0 && tal_count(opreturn_hint_0) == 32);
 
     /* Re-bind, add final script/tapscript info into PSBT */
     bind_tx_to_funding_outpoint(update_tx,
@@ -635,9 +656,8 @@ static int test_invalid_update_tx(void)
                      update_output_sats,
                      &inner_pubkey);
 
-    /* Authorize this next state update */
-    annex_1 = make_eltoo_annex(tmpctx, settle_tx_1);
-    sig = musig_sign(update_tx_1_A, annex_1, &alice_funding_privkey, &bob_funding_privkey, &inner_pubkey, keyagg_cache);
+    /* Authorize this next state update - no annex, settlement hash is in OP_RETURN output */
+    sig = musig_sign(update_tx_1_A, &alice_funding_privkey, &bob_funding_privkey, &inner_pubkey, keyagg_cache);
 
     /* This can RBF the first update tx */
     bind_tx_to_funding_outpoint(update_tx_1_A,
@@ -655,7 +675,7 @@ static int test_invalid_update_tx(void)
                     settle_tx_1,
                     &update_output, /* FIXME should be update_tx's first output */
                     &eltoo_keyset,
-                    annex_0, /* annex you see on chain */
+                    opreturn_hint_0, /* OP_RETURN hint from old update tx on chain */
                     obscured_update_number - 1, /* locktime you see on old update tx */
                     &inner_pubkey,
                     &sig);
@@ -690,7 +710,6 @@ static int test_initial_settlement_tx(void)
 
     /* MuSig signing stuff */
     struct pubkey inner_pubkey;
-    u8 *annex;
     struct bip340sig sig;
 
     /* Test initial settlement tx */
@@ -764,9 +783,8 @@ static int test_initial_settlement_tx(void)
     psbt_b64 = fmt_wally_psbt(tmpctx, update_tx->psbt);
     printf("Unbound update psbt: %s\n", psbt_b64);
 
-    /* Signing happens next */
-    annex = make_eltoo_annex(tmpctx, tx);
-    sig = musig_sign(update_tx, annex, &alice_funding_privkey, &bob_funding_privkey, &inner_pubkey, keyagg_cache);
+    /* Signing happens next - no annex, settlement hash is in OP_RETURN output */
+    sig = musig_sign(update_tx, &alice_funding_privkey, &bob_funding_privkey, &inner_pubkey, keyagg_cache);
 
     /* We want to close the channel without cooperation... time to rebind and finalize */
 
@@ -793,11 +811,11 @@ static int test_htlc_output_creation(void)
     u8 *htlc_timeout_script;
     u8 *tapleaf_scripts[2];
     u8 *taproot_script;
-	u8 *success_annex;
+	struct sha256 success_hash;
     /* 0-value hash image */
     struct ripemd160 invoice_hash;
 	memset(invoice_hash.u.u8, 0, sizeof(invoice_hash.u.u8));
-    struct sha256 tap_merkle_root, tap_merkle_root_annex;
+    struct sha256 tap_merkle_root, tap_merkle_root_opreturn;
     struct pubkey inner_pubkey;
     secp256k1_xonly_pubkey xonly_inner_pubkey;
     unsigned char inner_pubkey_bytes[32];
@@ -837,11 +855,9 @@ static int test_htlc_output_creation(void)
 
 	/* Cross-check merkle root calculations between functions */
     compute_taptree_merkle_root(&tap_merkle_root, tapleaf_scripts, /* num_scripts */ 2);
-	success_annex = make_annex_from_script(tmpctx, htlc_success_script);
-	assert(tal_count(success_annex) == 34); /* annex prefix plus hash length plus TapLeaf hash + */
-	assert(success_annex[0] == 0x50);
-	compute_taptree_merkle_root_with_hint(&tap_merkle_root_annex, htlc_timeout_script, success_annex);
-	assert(memcmp(tap_merkle_root.u.u8, tap_merkle_root_annex.u.u8, sizeof(tap_merkle_root.u.u8)) == 0);
+	make_settlement_hash(htlc_success_script, &success_hash);
+	compute_taptree_merkle_root_with_hint(&tap_merkle_root_opreturn, htlc_timeout_script, success_hash.u.u8);
+	assert(memcmp(tap_merkle_root.u.u8, tap_merkle_root_opreturn.u.u8, sizeof(tap_merkle_root.u.u8)) == 0);
 
     bipmusig_finalize_keys(&agg_pubkey, &keyagg_cache, pubkey_ptrs, /* n_pubkeys */ 1,
            &tap_merkle_root, tap_tweak_out, NULL);

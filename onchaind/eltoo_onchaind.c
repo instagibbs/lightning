@@ -34,12 +34,40 @@
 /* Should make this a reusable thing */
 static bool bipmusig_partial_sigs_combine_state(const struct eltoo_sign *state,
            struct bip340sig *sig)
-{   
+{
     const secp256k1_musig_partial_sig *p_sigs[2];
     p_sigs[0] = &state->self_psig.p_sig;
     p_sigs[1] = &state->other_psig.p_sig;
     return bipmusig_partial_sigs_combine(p_sigs, 2 /* num_signers */, &state->session.session, sig);
-}  
+}
+
+/* Extract the 32-byte settlement hash from the OP_RETURN output of an update tx */
+static u8 *extract_opreturn_hint(const tal_t *ctx, const struct tx_parts *tx)
+{
+    status_unusual("extract_opreturn_hint: tx has %zu outputs", tal_count(tx->outputs));
+    for (size_t i = 0; i < tal_count(tx->outputs); i++) {
+        const struct wally_tx_output *out = tx->outputs[i];
+        const u8 *data;
+        size_t data_len;
+
+        if (!out) {
+            status_unusual("  output[%zu]: NULL", i);
+            continue;
+        }
+
+        status_unusual("  output[%zu]: script_len=%zu, satoshi=%"PRIu64", script=%s",
+                     i, out->script_len, out->satoshi,
+                     tal_hexstr(tmpctx, out->script, out->script_len));
+
+        if (is_op_return(out->script, out->script_len, &data, &data_len)) {
+            status_unusual("    is OP_RETURN, data_len=%zu", data_len);
+            if (data_len == 32) {
+                return tal_dup_arr(ctx, u8, data, data_len, 0);
+            }
+        }
+    }
+    return NULL;
+}
 
 /* Used as one-way latch to detect when the state ordering is being settled */
 static bool update_phase;
@@ -1095,6 +1123,20 @@ static void eltoo_handle_cached_preimages(struct tracked_output **outs,
     tal_free(cached_preimages);
 }
 
+/* Find the state output in an update transaction.
+ * With OP_RETURN layout: output[0]=anchor(0), output[1]=OP_RETURN(0), output[2]=state(non-zero)
+ * The state output is the only one with non-zero value. */
+static int state_output_index(const struct tx_parts *tx)
+{
+    for (size_t i = 0; i < tal_count(tx->outputs); i++) {
+        if (tx->outputs[i] && tx->outputs[i]->satoshi > 0) {
+            return i;
+        }
+    }
+    /* Should never happen - update tx always has a state output */
+    status_failed(STATUS_FAIL_INTERNAL_ERROR, "No state output found in update tx");
+}
+
 /* An output has been spent: see if it resolves something we care about. */
 static void output_spent(struct tracked_output ***outs,
 			 const struct tx_parts *tx_parts,
@@ -1136,25 +1178,29 @@ static void output_spent(struct tracked_output ***outs,
         } else if (locktime != out->locktime && update_phase) {
         /* (2) Update transaction*/
 
-            /* New state output will be on same index as tx input spending state */
+            /* Find the state output (non-zero value) - NOT at the same index as input! */
             struct bitcoin_outpoint outpoint;
             struct amount_asset asset;
             struct amount_sat amt;
             struct tracked_output *new_state_out;
+            int state_idx = state_output_index(tx_parts);
 
-            asset = wally_tx_output_get_amount(tx_parts->outputs[input_num]);
+            status_unusual("Update branch: locktime=%u, out->locktime=%u, complete_update_tx locktime=%u, tx_parts outputs=%zu, state_idx=%d",
+                          locktime, out->locktime, complete_update_tx->wtx->locktime, tal_count(tx_parts->outputs), state_idx);
+
+            asset = wally_tx_output_get_amount(tx_parts->outputs[state_idx]);
             amt = amount_asset_to_sat(&asset);
             outpoint.txid = tx_parts->txid;
-            outpoint.n = input_num;
+            outpoint.n = state_idx;
 
-            new_state_out = new_tracked_output(outs, &outpoint, tx_blockheight, ELTOO_UPDATE, amt, DELAYED_OUTPUT_TO_US, tx_parts->outputs[input_num]->script, locktime,
+            new_state_out = new_tracked_output(outs, &outpoint, tx_blockheight, ELTOO_UPDATE, amt, DELAYED_OUTPUT_TO_US, tx_parts->outputs[state_idx]->script, locktime,
                 NULL /* htlcs */, NULL /* htlc_success_tapscript */, NULL /* htlc_timeout_tapscript */);
 
             if (locktime == complete_update_tx->wtx->locktime) {
-                bind_settle_tx(tx_parts->txid, input_num, complete_settle_tx);
+                bind_settle_tx(tx_parts->txid, state_idx, complete_settle_tx);
                 propose_resolution(new_state_out, complete_settle_tx,  complete_settle_tx->wtx->inputs[0].sequence /* depth_required */, ELTOO_SETTLE);
             } else if (committed_update_tx && locktime == committed_update_tx->wtx->locktime) {
-                bind_settle_tx(tx_parts->txid, input_num, committed_settle_tx);
+                bind_settle_tx(tx_parts->txid, state_idx, committed_settle_tx);
                 propose_resolution(new_state_out, committed_settle_tx, committed_settle_tx->wtx->inputs[0].sequence /* depth_required */, ELTOO_SETTLE);
             } else if ((committed_update_tx && locktime > committed_update_tx->wtx->locktime) ||
                 (!committed_update_tx && locktime > complete_update_tx->wtx->locktime)) {
@@ -1162,18 +1208,27 @@ static void output_spent(struct tracked_output ***outs,
                 /* FIXME Should we give up after a long time? */
                 status_debug("Uh-oh, update from the future!");
             } else {
-                /* FIXME probably should assert something here even though we checked for index already? */
-                struct wally_tx_witness_stack *wit_stack = tx_parts->inputs[input_num]->witness;
-                u8 *invalidated_annex_hint = wit_stack->items[wit_stack->num_items - 1].witness;  /* Annex is last witness item! */
+                /* Extract settlement hash from OP_RETURN output of invalidated update tx */
+                status_unusual("output_spent else branch: locktime=%u, complete=%u, committed=%s, tx_parts outputs=%zu",
+                              locktime, complete_update_tx->wtx->locktime,
+                              committed_update_tx ? tal_fmt(tmpctx, "%u", committed_update_tx->wtx->locktime) : "none",
+                              tal_count(tx_parts->outputs));
+                u8 *invalidated_opreturn_hint = extract_opreturn_hint(tmpctx, tx_parts);
                 struct bip340sig sig;
                 u32 invalidated_update_num = locktime - 500000000;
+
+                if (!invalidated_opreturn_hint) {
+                    status_failed(STATUS_FAIL_INTERNAL_ERROR,
+                        "Could not find OP_RETURN output in invalidated update tx (locktime=%u)", locktime);
+                }
+
                 bipmusig_partial_sigs_combine_state(&keyset->last_complete_state, &sig);
                 /* Need to propose our last complete update */
                 bind_update_tx_to_update_outpoint(complete_update_tx,
                             complete_settle_tx,
                             &outpoint,
                             keyset,
-                            invalidated_annex_hint,
+                            invalidated_opreturn_hint,
                             invalidated_update_num,
                             &keyset->inner_pubkey,
                             &sig);
@@ -1182,7 +1237,7 @@ static void output_spent(struct tracked_output ***outs,
                 /* Inform master of latest known state output to rebind to over RPC responses
                  * We don't send complete/committed_tx state outputs or future ones */
                 wire_sync_write(REQ_FD,
-                        take(towire_eltoo_onchaind_new_state_output(out, &outpoint, invalidated_update_num, invalidated_annex_hint)));
+                        take(towire_eltoo_onchaind_new_state_output(out, &outpoint, invalidated_update_num, invalidated_opreturn_hint)));
             }
         } else {
             /* (3) Any transaction after settlement */
@@ -1584,8 +1639,10 @@ static void handle_unilateral(const struct tx_parts *tx,
     const struct pubkey *funding_pubkey_ptrs[2];
     secp256k1_musig_keyagg_cache keyagg_cache;
 
-    /* State output will match index */
-    int state_index = funding_input_num(outs, tx);
+    /* Find the input that spends the funding output (for annotation) */
+    int input_index = funding_input_num(outs, tx);
+    /* Find the state output (non-zero value output) - NOT at the same index as input! */
+    int state_index = state_output_index(tx);
 
     outpoint.txid = tx->txid;
     outpoint.n = state_index;
@@ -1596,7 +1653,7 @@ static void handle_unilateral(const struct tx_parts *tx,
 	/* HTLCs have to be stored until program termination */
     htlcs_info = eltoo_init_reply(outs, "Tracking update transactions");
 
-    onchain_annotate_txin(&tx->txid, state_index, TX_CHANNEL_UNILATERAL);
+    onchain_annotate_txin(&tx->txid, input_index, TX_CHANNEL_UNILATERAL);
 
     resolved_by_other(outs[0], &tx->txid, ELTOO_UPDATE);
 
@@ -1642,18 +1699,26 @@ static void handle_unilateral(const struct tx_parts *tx,
         /* If we get lucky the settle transaction will hit chain and we can get balance back */
         status_debug("Uh-oh, update from the future!");
     } else {
-        /* FIXME probably should assert something here even though we checked for index already? */
-        struct wally_tx_witness_stack *wit_stack = tx->inputs[state_index]->witness;
-        u8 *invalidated_annex_hint = wit_stack->items[wit_stack->num_items - 1].witness;  /* Annex is last witness item! */
+        /* Extract settlement hash from OP_RETURN output of invalidated update tx */
+        status_unusual("handle_unilateral else branch: locktime=%u, complete=%u, committed=%s",
+                      locktime, complete_update_tx->wtx->locktime,
+                      committed_update_tx ? tal_fmt(tmpctx, "%u", committed_update_tx->wtx->locktime) : "none");
+        u8 *invalidated_opreturn_hint = extract_opreturn_hint(tmpctx, tx);
         struct bip340sig sig;
         u32 invalidated_update_num = locktime - 500000000;
+
+        if (!invalidated_opreturn_hint) {
+            status_failed(STATUS_FAIL_INTERNAL_ERROR,
+                "Could not find OP_RETURN output in invalidated update tx (locktime=%u)", locktime);
+        }
+
         bipmusig_partial_sigs_combine_state(&keyset->last_complete_state, &sig);
         /* Need to propose our last complete update */
         bind_update_tx_to_update_outpoint(complete_update_tx,
                     complete_settle_tx,
                     &outpoint,
                     keyset,
-                    invalidated_annex_hint,
+                    invalidated_opreturn_hint,
                     invalidated_update_num,
                     &keyset->inner_pubkey,
                     &sig);
@@ -1662,7 +1727,7 @@ static void handle_unilateral(const struct tx_parts *tx,
         /* Inform master of latest known state output to rebind to over RPC responses
          * We don't send complete/committed_tx state outputs or future ones */
         wire_sync_write(REQ_FD,
-                take(towire_eltoo_onchaind_new_state_output(out, &outpoint, invalidated_update_num, invalidated_annex_hint)));
+                take(towire_eltoo_onchaind_new_state_output(out, &outpoint, invalidated_update_num, invalidated_opreturn_hint)));
 
     }
 

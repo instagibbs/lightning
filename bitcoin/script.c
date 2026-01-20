@@ -1086,6 +1086,35 @@ bool is_ephemeral_anchor(const u8 *scriptpubkey, size_t scriptpubkey_len)
 			 ephemeral_anchor_spk, sizeof(ephemeral_anchor_spk));
 }
 
+u8 *scriptpubkey_op_return(const tal_t *ctx, const u8 *data, size_t data_len)
+{
+	u8 *script = tal_arr(ctx, u8, 0);
+	add_op(&script, OP_RETURN);
+	script_push_bytes(&script, data, data_len);
+	return script;
+}
+
+bool is_op_return(const u8 *script, size_t script_len, const u8 **data, size_t *data_len)
+{
+	/* OP_RETURN + push opcode + data */
+	if (script_len < 2 || script[0] != OP_RETURN)
+		return false;
+
+	/* For data length < 76, push opcode is OP_PUSHBYTES(len) */
+	if (script[1] < 76) {
+		size_t len = script[1];
+		if (script_len != 2 + len)
+			return false;
+		if (data)
+			*data = script + 2;
+		if (data_len)
+			*data_len = len;
+		return true;
+	}
+	/* For larger data, would need OP_PUSHDATA1/2/4 handling */
+	return false;
+}
+
 u8 *bitcoin_tapscript_to_node(const tal_t *ctx, const struct pubkey *settlement_pubkey)
 {
 	u8 *script = tal_arr(ctx, u8, 0);
@@ -1200,7 +1229,7 @@ void compute_taptree_merkle_root(struct sha256 *hash_out, u8 **scripts, size_t n
     }
 }
 
-void compute_taptree_merkle_root_with_hint(struct sha256 *update_merkle_root, const u8 *update_tapscript, const u8 *invalidated_annex_hint)
+void compute_taptree_merkle_root_with_hint(struct sha256 *update_merkle_root, const u8 *update_tapscript, const u8 *invalidated_opreturn_hint)
 {
     int ok;
     unsigned char leaf_version = 0xc0;
@@ -1210,7 +1239,8 @@ void compute_taptree_merkle_root_with_hint(struct sha256 *update_merkle_root, co
     size_t script_len = tal_count(update_tapscript);
     unsigned char *p = tag_hash_buf;
 
-    assert(tal_count(invalidated_annex_hint) == 34 && invalidated_annex_hint[0] == 0x50);
+    /* OP_RETURN hint is raw 32-byte tapleaf hash - no tal_count() check since
+     * caller may pass a non-tal pointer (like sha256.u.u8) */
 
     /* Let k0 = hashTapLeaf(v || compact_size(size of s) || s); also call it the tapleaf hash. */
     p[0] = leaf_version;
@@ -1223,7 +1253,7 @@ void compute_taptree_merkle_root_with_hint(struct sha256 *update_merkle_root, co
     assert(ok == WALLY_OK);
 
     /* Put invalidated hint in place as a tapleaf hash directly */
-    memcpy(tap_hashes + 32, invalidated_annex_hint + 2, 32);
+    memcpy(tap_hashes + 32, invalidated_opreturn_hint, 32);
 
     /* If kj ≥ ej: kj+1 = hashTapBranch(ej || kj), swap them*/
     if (memcmp(tap_hashes, tap_hashes + 32, 32) >= 0) {
@@ -1235,11 +1265,11 @@ void compute_taptree_merkle_root_with_hint(struct sha256 *update_merkle_root, co
     assert(ok == WALLY_OK);
 }
 
-u8 *compute_control_block(const tal_t *ctx, const u8 *other_script, const u8 *annex_hint, const struct pubkey *inner_pubkey, int parity_bit)
+u8 *compute_control_block(const tal_t *ctx, const u8 *other_script, const u8 *opreturn_hint, const struct pubkey *inner_pubkey, int parity_bit)
 {
     int ok;
     u8 *control_block_cursor;
-    u8 *control_block = tal_arr(ctx, u8, (other_script || annex_hint) ? 33 + 32 : 33);
+    u8 *control_block = tal_arr(ctx, u8, (other_script || opreturn_hint) ? 33 + 32 : 33);
     secp256k1_xonly_pubkey xonly_inner_pubkey;
 
     ok = secp256k1_xonly_pubkey_from_pubkey(
@@ -1250,8 +1280,8 @@ u8 *compute_control_block(const tal_t *ctx, const u8 *other_script, const u8 *an
 
     assert(ok);
 
-    /* other_script and annex_hint are mutually exclusive args */
-    assert(!(other_script && annex_hint));
+    /* other_script and opreturn_hint are mutually exclusive args */
+    assert(!(other_script && opreturn_hint));
 
     control_block_cursor = control_block;
 
@@ -1297,11 +1327,10 @@ u8 *compute_control_block(const tal_t *ctx, const u8 *other_script, const u8 *an
         fprintf(stderr, "\n");
 
         control_block_cursor += 32;
-    } else if (annex_hint) {
-        assert(tal_count(annex_hint) == 34);
-        assert(annex_hint[0] == 0x50);
-        assert(annex_hint[1] == 32);
-        memcpy(control_block_cursor, annex_hint + 2, 32);
+    } else if (opreturn_hint) {
+        /* OP_RETURN hint is raw 32-byte tapleaf hash - no tal_count() check since
+         * caller may pass a non-tal pointer (like sha256.u.u8) */
+        memcpy(control_block_cursor, opreturn_hint, 32);
         control_block_cursor += 32;
     }
     return control_block;

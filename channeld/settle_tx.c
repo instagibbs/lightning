@@ -65,8 +65,8 @@ static void add_eltoo_htlc_out(struct bitcoin_tx *tx,
     struct pubkey taproot_pubkey;
     unsigned char tap_tweak_out[32];
 	/* Double-checking calculation */
-	u8 *success_annex;
-    struct sha256 tap_merkle_root_annex;
+	struct sha256 success_hash;
+    struct sha256 tap_merkle_root_opreturn;
 
     if (sender_side == REMOTE) {
         receiver_pubkey = &(eltoo_keyset->self_settle_key);
@@ -85,9 +85,9 @@ static void add_eltoo_htlc_out(struct bitcoin_tx *tx,
     htlc_scripts[0] = make_eltoo_htlc_success_script(tx, receiver_pubkey, &ripemd);
     htlc_scripts[1] = make_eltoo_htlc_timeout_script(tx, sender_pubkey, htlc->expiry.locktime);
     compute_taptree_merkle_root(&tap_merkle_root, htlc_scripts, /* num_scripts */ 2);
-    success_annex = make_annex_from_script(tx, htlc_scripts[0]);
-    compute_taptree_merkle_root_with_hint(&tap_merkle_root_annex, htlc_scripts[1], success_annex);
-	assert(memcmp(tap_merkle_root.u.u8, tap_merkle_root_annex.u.u8, sizeof(tap_merkle_root.u.u8)) == 0);
+    make_settlement_hash(htlc_scripts[0], &success_hash);
+    compute_taptree_merkle_root_with_hint(&tap_merkle_root_opreturn, htlc_scripts[1], success_hash.u.u8);
+	assert(memcmp(tap_merkle_root.u.u8, tap_merkle_root_opreturn.u.u8, sizeof(tap_merkle_root.u.u8)) == 0);
 
     bipmusig_finalize_keys(&taproot_pubkey, &keyagg_cache, funding_pubkey_ptrs, /* n_pubkeys */ 2,
            &tap_merkle_root, tap_tweak_out, NULL);

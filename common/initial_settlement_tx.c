@@ -74,7 +74,7 @@ void add_settlement_input(struct bitcoin_tx *tx, const struct bitcoin_outpoint *
 		   NULL);
 
     parity_bit = pubkey_parity(&update_agg_pk);
-    control_block = compute_control_block(tmpctx, settle_and_update_tapscripts[1], /* annex_hint */ NULL, inner_pubkey, parity_bit);
+    control_block = compute_control_block(tmpctx, settle_and_update_tapscripts[1], /* opreturn_hint */ NULL, inner_pubkey, parity_bit);
 
     /* Create scriptPubKey directly from the already-tweaked pubkey.
      * Do NOT use scriptpubkey_p2tr() as it applies another tweak!

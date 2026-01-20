@@ -1537,7 +1537,6 @@ static u8 *handle_combine_psig(struct hsmd_client *c, const u8 *msg_in)
 	struct bitcoin_tx *update_tx, *settle_tx;
 	struct partial_sig p_sig_1, p_sig_2;
     struct sha256_double hash_out;
-    u8 *annex;
     struct bip340sig sig;
     struct pubkey inner_pubkey;
     const secp256k1_musig_partial_sig *p_sig_ptrs[2];
@@ -1561,12 +1560,12 @@ static u8 *handle_combine_psig(struct hsmd_client *c, const u8 *msg_in)
     printf("combine settle_tx: %s\n", fmt_bitcoin_tx(tmpctx, settle_tx));
     printf("combine update_tx: %s\n", fmt_bitcoin_tx(tmpctx, update_tx));
 
-    annex = make_eltoo_annex(tmpctx, settle_tx);
     /* For script-path spending with ANYPREVOUTANYSCRIPT:
-     * Pass the actual tapscript to signal script-path (ext_flag=1) */
+     * Pass the actual tapscript to signal script-path (ext_flag=1)
+     * No annex - settlement hash is now in OP_RETURN output */
     {
         u8 *update_tapscript = make_eltoo_funding_update_script(tmpctx);
-        bitcoin_tx_taproot_hash_for_sig(update_tx, /* input_index */ 0, SIGHASH_ANYPREVOUTANYSCRIPT|SIGHASH_SINGLE, update_tapscript, annex, &hash_out);
+        bitcoin_tx_taproot_hash_for_sig(update_tx, /* input_index */ 0, SIGHASH_ANYPREVOUTANYSCRIPT|SIGHASH_SINGLE, update_tapscript, /* annex */ NULL, &hash_out);
     }
     printf("validate taproot Sighash: ");
     for (i = 0; i < 32; i++)
@@ -1616,7 +1615,6 @@ static u8 *handle_psign_update_tx(struct hsmd_client *c, const u8 *msg_in)
     struct musig_keyagg_cache cache;
     const struct pubkey *pubkey_ptrs[2];
     const secp256k1_musig_pubnonce *pubnonce_ptrs[2];
-    u8 *annex;
     struct sha256_double hash_out;
     struct musig_state *musig_state_lookup;
 
@@ -1639,9 +1637,9 @@ static u8 *handle_psign_update_tx(struct hsmd_client *c, const u8 *msg_in)
 		return hsmd_status_bad_request(c, msg_in,
 					       "update tx must have 1 input");
 
-	if (update_tx->wtx->num_outputs != 2)
+	if (update_tx->wtx->num_outputs != 3)
 		return hsmd_status_bad_request_fmt(c, msg_in,
-						   "update tx must have 2 outputs");
+						   "update tx must have 3 outputs (P2A anchor, OP_RETURN, state)");
 
 	get_channel_seed(&c->id, c->dbid, &channel_seed);
 	derive_basepoints(&channel_seed,
@@ -1652,11 +1650,6 @@ static u8 *handle_psign_update_tx(struct hsmd_client *c, const u8 *msg_in)
     printf("psign settle_tx: %s\n", fmt_bitcoin_tx(tmpctx, settle_tx));
     printf("psign update_tx: %s\n", fmt_bitcoin_tx(tmpctx, update_tx));
 
-    annex = make_eltoo_annex(tmpctx, settle_tx);
-    printf("psign annex (%zu bytes): ", tal_count(annex));
-    for (i = 0; i < (int)tal_count(annex); i++)
-        printf("%02X", annex[i]);
-    printf("\n");
     pubkey_ptrs[0] = &remote_funding_pubkey;
     pubkey_ptrs[1] = &local_funding_pubkey;
 
@@ -1674,11 +1667,12 @@ static u8 *handle_psign_update_tx(struct hsmd_client *c, const u8 *msg_in)
     /* For script-path spending with ANYPREVOUTANYSCRIPT:
      * - Pass the actual tapscript being executed to signal script-path (ext_flag=1)
      * - tapleaf_hash is NOT included (because ANYPREVOUTANYSCRIPT)
-     * - But key_version (0x01) and codesep_position ARE included */
+     * - But key_version (0x01) and codesep_position ARE included
+     * - No annex - settlement hash is now in OP_RETURN output */
     {
         u8 *update_tapscript = make_eltoo_funding_update_script(tmpctx);
         bitcoin_tx_taproot_hash_for_sig(update_tx, /* input_index */ 0, SIGHASH_ANYPREVOUTANYSCRIPT|SIGHASH_SINGLE,
-            update_tapscript, annex, &hash_out);
+            update_tapscript, /* annex */ NULL, &hash_out);
     }
     printf("sign taproot Sighash: ");
     for (i = 0; i < 32; i++)

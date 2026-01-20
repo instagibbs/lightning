@@ -15,11 +15,11 @@ int tx_add_state_output(struct bitcoin_tx *update_tx, const struct bitcoin_tx *s
 
 void tx_update_add_ephemeral_anchor(struct bitcoin_tx *tx);
 
-/* Generates TapLeaf hash of script, with annex byte prepended */
-u8 *make_annex_from_script(const tal_t *ctx, const u8 *script);
+/* Generates TapLeaf hash of script (raw 32-byte hash for settlement script recovery) */
+void make_settlement_hash(const u8 *script, struct sha256 *hash_out);
 
-/* Eltoo-specific wrapper for make_annex_from_script */
-u8 *make_eltoo_annex(const tal_t *ctx, const struct bitcoin_tx *settle_tx);
+/* Create OP_RETURN scriptpubkey containing settlement script tapleaf hash */
+u8 *make_eltoo_settlement_opreturn_script(const tal_t *ctx, const struct bitcoin_tx *settle_tx);
 
 /* Appends a tx input to the update transaction, without
  * binding it to a particular outpoint or script */
@@ -74,7 +74,7 @@ struct bitcoin_tx **bind_txs_to_funding_outpoint(const struct bitcoin_tx *update
 struct bitcoin_tx **bind_txs_to_update_outpoint(const struct bitcoin_tx *update_tx,
                              const struct bitcoin_outpoint *latest_outpoint,
                              const struct bitcoin_tx *settle_tx,
-                             const u8 *invalidated_annex_hint,
+                             const u8 *invalidated_opreturn_hint,
                              u32 invalidated_update_num,
                              const struct partial_sig *psig1,
                              const struct partial_sig *psig2,
@@ -90,8 +90,8 @@ struct bitcoin_tx **bind_txs_to_update_outpoint(const struct bitcoin_tx *update_
  * @settle_tx: The corresponding settlement transaction, also re-binded
  * @funding_outpoint: The outpoint to be spend on chain
  * @eltoo_keyset: Set of keys to derive inner public key
- * @invalidated_annex_hint: The annex data of the update transaction
- *   which is having its outpoint spent by @update_tx
+ * @invalidated_opreturn_hint: The 32-byte hash from OP_RETURN output of
+ *   the update transaction being replaced (tapleaf hash of settlement script)
  * @invalidated_update_number: The locktime of the update transaction
  *   which is having its outpoint spent by @update_tx
  * @psbt_inner_pubkey: Inner pubkey for the state input
@@ -101,7 +101,7 @@ void bind_update_tx_to_update_outpoint(struct bitcoin_tx *update_tx,
                     struct bitcoin_tx *settle_tx,
                     const struct bitcoin_outpoint *outpoint,
                     const struct eltoo_keyset *eltoo_keyset,
-                    const u8 *invalidated_annex_hint,
+                    const u8 *invalidated_opreturn_hint,
                     u32 invalidated_update_number,
                     struct pubkey *psbt_inner_pubkey,
                     const struct bip340sig *sig);

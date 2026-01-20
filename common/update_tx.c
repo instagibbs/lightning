@@ -30,15 +30,12 @@ int tx_add_state_output(struct bitcoin_tx *update_tx, const struct bitcoin_tx *s
         update_tx, settle_tx->psbt->inputs[0].witness_utxo->script, /* wscript */ NULL, amount /* FIXME pass in psbt fields for tap outputs */);
 }
 
-u8 *make_annex_from_script(const tal_t *ctx, const u8 *script)
+void make_settlement_hash(const u8 *script, struct sha256 *hash_out)
 {
     int ok;
-    struct sha256 result;
     u8 *preimage_cursor;
     u64 tapscript_len = tal_count(script);
-    u8 *tapleaf_preimage = tal_arr(ctx, u8, 1 + varint_size(tapscript_len) + tapscript_len);
-    /* Enough space for annex flag plus hash length and one hash we want published */
-    u8 *annex = tal_arr(ctx, u8, 1 + 1 + sizeof(result.u.u8));
+    u8 *tapleaf_preimage = tal_arr(tmpctx, u8, 1 + varint_size(tapscript_len) + tapscript_len);
 
     preimage_cursor = tapleaf_preimage;
     preimage_cursor[0] = 0xC0;
@@ -48,19 +45,16 @@ u8 *make_annex_from_script(const tal_t *ctx, const u8 *script)
     preimage_cursor += tapscript_len;
 
     assert(tal_count(tapleaf_preimage) == preimage_cursor - tapleaf_preimage);
-    ok = wally_bip340_tagged_hash(tapleaf_preimage, tal_count(tapleaf_preimage), "TapLeaf", result.u.u8, sizeof(result.u.u8));
+    ok = wally_bip340_tagged_hash(tapleaf_preimage, tal_count(tapleaf_preimage), "TapLeaf", hash_out->u.u8, sizeof(hash_out->u.u8));
     assert(ok == WALLY_OK);
-
-    annex[0] = 0x50; /* annex flag */
-	annex[1] = 32; /* payload length */
-    memcpy(annex + 2, result.u.u8, sizeof(result));
-    return annex;
 }
 
-u8 *make_eltoo_annex(const tal_t *ctx, const struct bitcoin_tx *settle_tx)
+u8 *make_eltoo_settlement_opreturn_script(const tal_t *ctx, const struct bitcoin_tx *settle_tx)
 {
-    u8 *settle_tapscript = make_eltoo_settle_script(ctx, settle_tx, /* input_num */ 0);
-	return make_annex_from_script(ctx, settle_tapscript);
+    struct sha256 settlement_hash;
+    u8 *settle_tapscript = make_eltoo_settle_script(tmpctx, settle_tx, /* input_num */ 0);
+    make_settlement_hash(settle_tapscript, &settlement_hash);
+    return scriptpubkey_op_return(ctx, settlement_hash.u.u8, sizeof(settlement_hash.u.u8));
 }
 
 void tx_add_unbound_input(struct bitcoin_tx *update_tx, struct amount_sat funding_sats, const struct pubkey *inner_pubkey)
@@ -157,16 +151,11 @@ void bind_tx_to_funding_outpoint(struct bitcoin_tx *update_tx,
                  /* scriptSig */ NULL, funding_sats, script_pubkey, /* input_wscript */ NULL, /* inner_pubkey */ NULL, /* tap_tree */ NULL);
     assert(input_num == 0);
 
-    /* Witness stack, bottom to top:  MuSig2 sig + tapscript + control block + Annex data */
-    update_witness = tal_arr(tmpctx, u8 *, 4);
+    /* Witness stack, bottom to top:  MuSig2 sig + tapscript + control block (no annex) */
+    update_witness = tal_arr(tmpctx, u8 *, 3);
     update_witness[0] = final_sig;
     update_witness[1] = update_tapscript[0];
-    update_witness[2] = compute_control_block(tmpctx, /* other_script */ NULL, /* annex_hint */ NULL, psbt_inner_pubkey, pubkey_parity(&taproot_pk));
-    update_witness[3] = make_eltoo_annex(tmpctx, settle_tx);
-    fprintf(stderr, "DEBUG bind_tx: annex (%zu bytes): ", tal_count(update_witness[3]));
-    for (size_t j = 0; j < tal_count(update_witness[3]); j++)
-        fprintf(stderr, "%02X", update_witness[3][j]);
-    fprintf(stderr, "\n");
+    update_witness[2] = compute_control_block(tmpctx, /* other_script */ NULL, /* opreturn_hint */ NULL, psbt_inner_pubkey, pubkey_parity(&taproot_pk));
     fprintf(stderr, "DEBUG bind_tx: sig (%zu bytes): ", tal_count(update_witness[0]));
     for (size_t j = 0; j < tal_count(update_witness[0]); j++)
         fprintf(stderr, "%02X", update_witness[0][j]);
@@ -187,7 +176,7 @@ void bind_update_tx_to_update_outpoint(struct bitcoin_tx *update_tx,
                     struct bitcoin_tx *settle_tx,
                     const struct bitcoin_outpoint *outpoint,
                     const struct eltoo_keyset *eltoo_keyset,
-                    const u8 *invalidated_annex_hint,
+                    const u8 *invalidated_opreturn_hint,
                     u32 invalidated_update_number,
                     struct pubkey *psbt_inner_pubkey,
                     const struct bip340sig *sig)
@@ -225,7 +214,7 @@ void bind_update_tx_to_update_outpoint(struct bitcoin_tx *update_tx,
      */
     update_tapscript = make_eltoo_update_script(tmpctx, invalidated_update_number + 1);
 
-    compute_taptree_merkle_root_with_hint(&psbt_tap_merkle_root, update_tapscript, invalidated_annex_hint);
+    compute_taptree_merkle_root_with_hint(&psbt_tap_merkle_root, update_tapscript, invalidated_opreturn_hint);
 
     bipmusig_finalize_keys(&taproot_pk,
            &unused_coop_cache,
@@ -262,19 +251,18 @@ void bind_update_tx_to_update_outpoint(struct bitcoin_tx *update_tx,
 
     /* FIXME we can now rebind settle_tx's prevout */
 
-    /* Witness stack, bottom to top:  MuSig2 sig + tapscript + control block + Annex data */
-    update_witness = tal_arr(tmpctx, u8 *, 4);
+    /* Witness stack, bottom to top:  MuSig2 sig + tapscript + control block (no annex) */
+    update_witness = tal_arr(tmpctx, u8 *, 3);
     update_witness[0] = final_sig;
     update_witness[1] = update_tapscript;
-    update_witness[2] = compute_control_block(tmpctx, /* other_script */ NULL, invalidated_annex_hint, psbt_inner_pubkey, pubkey_parity(&taproot_pk));
-    update_witness[3] = make_eltoo_annex(tmpctx, settle_tx);
+    update_witness[2] = compute_control_block(tmpctx, /* other_script */ NULL, invalidated_opreturn_hint, psbt_inner_pubkey, pubkey_parity(&taproot_pk));
     bitcoin_tx_input_set_witness(update_tx, /* input_num */ 0, update_witness);
 }
 
 struct bitcoin_tx **bind_txs_to_update_outpoint(const struct bitcoin_tx *update_tx,
                              const struct bitcoin_outpoint *latest_outpoint,
                              const struct bitcoin_tx *settle_tx,
-                             const u8 *invalidated_annex_hint,
+                             const u8 *invalidated_opreturn_hint,
                              u32 invalidated_update_num,
                              const struct partial_sig *psig1,
                              const struct partial_sig *psig2,
@@ -336,7 +324,7 @@ struct bitcoin_tx **bind_txs_to_update_outpoint(const struct bitcoin_tx *update_
         bound_settle_tx,
         latest_outpoint,
         &keyset_copy,
-        invalidated_annex_hint,
+        invalidated_opreturn_hint,
         invalidated_update_num,
         &inner_pubkey,
         &sig);
@@ -445,15 +433,21 @@ struct bitcoin_tx *unbound_update_tx(const tal_t *ctx,
 	struct bitcoin_tx *update_tx;
     int pos;
 
-    /* 1 input 1 output tx */
-    update_tx = bitcoin_tx(ctx, chainparams, 1, 2, 0);
+    /* 1 input 3 outputs tx: P2A anchor, OP_RETURN (settlement hash), state output */
+    update_tx = bitcoin_tx(ctx, chainparams, 1, 3, 0);
 
-    /* Add output */
+    /* Add ephemeral anchor first (will be sorted to front due to 0 value) */
+    tx_update_add_ephemeral_anchor(update_tx);
+
+    /* Add OP_RETURN output with settlement script tapleaf hash */
+    {
+        u8 *opreturn_script = make_eltoo_settlement_opreturn_script(tmpctx, settle_tx);
+        bitcoin_tx_add_output(update_tx, opreturn_script, /* wscript */ NULL, AMOUNT_SAT(0));
+    }
+
+    /* Add state output */
     pos = tx_add_state_output(update_tx, settle_tx);
-    assert(pos == 0);
-
-	/* Add ephemeral anchor */
-	tx_update_add_ephemeral_anchor(update_tx);
+    assert(pos == 2);
 
     /* Add unsigned, un-bound funding input */
     tx_add_unbound_input(update_tx, funding_sats, inner_pubkey);
