@@ -2179,6 +2179,14 @@ static void peer_reconnect(struct eltoo_peer *peer,
 	 * as it's our turn) */
 	maybe_send_uncommitted_removals(peer);
 
+	/* If we have the turn but nothing pending, yield to peer.
+	 * This prevents stall when peer has pending work but doesn't have turn. */
+	if (is_our_turn(peer) && !pending_updates(peer->channel, LOCAL, false)) {
+		peer_write(peer->pps,
+			   take(towire_yield(NULL, &peer->channel_id)));
+		change_turn(peer, REMOTE);
+	}
+
     /* We allow peer to send us tx-sigs, until funding locked received */
     peer->tx_sigs_allowed = true;
     peer_billboard(true, "Reconnected, and reestablished.");
