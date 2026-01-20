@@ -21,10 +21,10 @@ int tx_add_to_node_output(struct bitcoin_tx *tx, const struct eltoo_keyset *elto
             amount_msat_to_sat_round_down(pay));
 }
 
-void tx_add_ephemeral_anchor_output(struct bitcoin_tx *tx)
+void tx_add_ephemeral_anchor_output(struct bitcoin_tx *tx, struct amount_sat amt)
 {
 	u8 *spk = bitcoin_spk_ephemeral_anchor(tmpctx);
-	bitcoin_tx_add_output(tx, spk, /* wscript */ NULL, AMOUNT_SAT(0));
+	bitcoin_tx_add_output(tx, spk, /* wscript */ NULL, amt);
 }
 
 void add_settlement_input(struct bitcoin_tx *tx, const struct bitcoin_outpoint *update_outpoint,
@@ -123,6 +123,7 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
 	size_t output_index, num_untrimmed;
 	bool to_local, to_remote;
 	struct amount_msat total_pay;
+	struct amount_msat trimmed_msat = AMOUNT_MSAT(0);
 	void *dummy_local = (void *)LOCAL, *dummy_remote = (void *)REMOTE;
 	/* There is a direct output and possibly a shared anchor output */
 	const void *output_order[NUM_SIDES + 1];
@@ -187,8 +188,12 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
 		output_order[output_index] = dummy_local;
 		output_index++;
 		to_local = true;
-	} else
+	} else {
 		to_local = false;
+		/* Trimmed to_local goes to anchor */
+		if (!amount_msat_add(&trimmed_msat, trimmed_msat, self_pay))
+			abort();
+	}
 
 	/* BOLT #3:
 	 *
@@ -202,13 +207,19 @@ struct bitcoin_tx *initial_settlement_tx(const tal_t *ctx,
 		output_order[output_index] = dummy_remote;
 		output_index++;
 		to_remote = true;
-	} else
+	} else {
 		to_remote = false;
+		/* Trimmed to_remote goes to anchor */
+		if (!amount_msat_add(&trimmed_msat, trimmed_msat, other_pay))
+			abort();
+	}
 
-	/* BOLT #???:
+	/* BOLT XX-eltoo-transactions:
+	 * Output value: the sum of all trimmed output values, minimum 0 satoshis
 	 */
     if (to_local || to_remote || num_untrimmed != 0) {
-        tx_add_ephemeral_anchor_output(tx);
+        struct amount_sat trimmed_sat = amount_msat_to_sat_round_down(trimmed_msat);
+        tx_add_ephemeral_anchor_output(tx, trimmed_sat);
         output_order[output_index] = NULL;
         output_index++;
     }

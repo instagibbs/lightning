@@ -850,3 +850,78 @@ def test_eltoo_restart_during_payment(node_factory, bitcoind):
     # Make another payment to verify channel still works
     l1.pay(l2, 50000*SAT)
     wait_for(lambda: l2.rpc.listpeerchannels()['channels'][0]['in_fulfilled_msat'] == Millisatoshi(150000000))
+
+
+def test_eltoo_trimmed_balance_anchor_value(node_factory, bitcoind):
+    """Test that trimmed balance amounts are added to the ephemeral anchor output.
+
+    Per BOLT XX-eltoo-transactions: settlement tx anchor output value should be
+    "the sum of all trimmed output values, minimum 0 satoshis".
+
+    This test verifies that when a to_local or to_remote balance is below the
+    dust limit (330 sat), its value is added to the anchor output rather than
+    being lost.
+    """
+    # Open a channel and pay almost all funds to l2, leaving l1 with < 330 sats
+    l1, l2 = node_factory.line_graph(2,
+                                     opts=[{'may_reconnect': True, 'developer': None},
+                                           {'may_reconnect': True, 'developer': None}])
+
+    # Get channel capacity and calculate payment to leave l1 with exactly 100 sats
+    # Channel capacity is ~1,000,000 sats, we want l1 to have 100 sats (below 330 dust)
+    channel_info = l1.rpc.listpeerchannels(l2.info['id'])['channels'][0]
+    our_amount_msat = channel_info['to_us_msat']
+
+    # Pay l2 enough to leave l1 with only 100 sats (100000 msat)
+    # This is below the 330 sat dust limit
+    REMAINING_MSAT = 100 * SAT  # 100 sats = 100000 msat
+    payment_amount = int(our_amount_msat) - REMAINING_MSAT
+
+    print(f"DEBUG: l1 starting balance = {our_amount_msat}")
+    print(f"DEBUG: payment to l2 = {payment_amount} msat")
+    print(f"DEBUG: l1 remaining = {REMAINING_MSAT} msat = {REMAINING_MSAT // 1000} sats")
+
+    l1.pay(l2, payment_amount)
+
+    # Verify l1 now has only 100 sats
+    channel_info = l1.rpc.listpeerchannels(l2.info['id'])['channels'][0]
+    print(f"DEBUG: l1 balance after payment = {channel_info['to_us_msat']}")
+
+    # Get the settlement transaction
+    settle_tx_hex = channel_info['last_settle_tx']
+    settle_details = bitcoind.rpc.decoderawtransaction(settle_tx_hex)
+
+    # Print all outputs for debugging
+    print(f"DEBUG: settlement tx has {len(settle_details['vout'])} outputs:")
+    for i, vout in enumerate(settle_details['vout']):
+        value_sats = int(vout['value'] * 100000000)
+        print(f"  output[{i}]: {value_sats} sats, scriptPubKey={vout['scriptPubKey']['hex'][:20]}...")
+
+    # Find the ephemeral anchor output (scriptPubKey = 51024e73)
+    anchor_value = None
+    anchor_idx = None
+    for i, vout in enumerate(settle_details['vout']):
+        if vout['scriptPubKey']['hex'] == '51024e73':
+            anchor_value = int(vout['value'] * 100000000)  # Convert BTC to sat
+            anchor_idx = i
+            break
+
+    assert anchor_idx is not None, "No ephemeral anchor found in settlement tx"
+
+    print(f"DEBUG: anchor output index = {anchor_idx}")
+    print(f"DEBUG: anchor value = {anchor_value} sats")
+    print(f"DEBUG: expected trimmed balance = {REMAINING_MSAT // 1000} sats")
+    print(f"DEBUG: dust limit = 330 sats")
+
+    # Since l1's balance (100 sats) is below dust limit (330 sats), it should be trimmed
+    # and added to the anchor output
+    expected_anchor_sats = REMAINING_MSAT // 1000  # 100 sats
+    assert anchor_value == expected_anchor_sats, \
+        f"Expected anchor to have {expected_anchor_sats} sats from trimmed to_local, got {anchor_value}"
+
+    print(f"SUCCESS: Anchor output correctly has {anchor_value} sats from trimmed balance")
+
+    # With l1's balance trimmed, we should have only 2 outputs: to_remote (l2) and anchor
+    # No to_local output since l1's balance is below dust
+    num_outputs = len(settle_details['vout'])
+    assert num_outputs == 2, f"Expected 2 outputs (to_remote, anchor), got {num_outputs}"
