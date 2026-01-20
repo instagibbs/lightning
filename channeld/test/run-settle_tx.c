@@ -502,6 +502,33 @@ static int test_settlement_tx(void)
 
     assert(tx->wtx->num_outputs == 3 + tal_count(htlcs) - 1);
 
+    /* Verify trimmed HTLC amount goes to anchor output.
+     * htlcs[0] has 1000000 msat = 1000 sats, which is trimmed.
+     * The anchor output (P2A = 51024e73) should have this value.
+     */
+    {
+        u64 anchor_value = 0;
+        bool found_anchor = false;
+        for (size_t i = 0; i < tx->wtx->num_outputs; i++) {
+            /* P2A anchor scriptPubKey is 51024e73 (4 bytes) */
+            if (tx->wtx->outputs[i].script_len == 4 &&
+                tx->wtx->outputs[i].script[0] == 0x51 &&
+                tx->wtx->outputs[i].script[1] == 0x02 &&
+                tx->wtx->outputs[i].script[2] == 0x4e &&
+                tx->wtx->outputs[i].script[3] == 0x73) {
+                anchor_value = tx->wtx->outputs[i].satoshi;
+                found_anchor = true;
+                break;
+            }
+        }
+        assert(found_anchor);
+        /* htlcs[0] is trimmed, its 1000 sats should be in anchor */
+        printf("Trimmed HTLC test: anchor_value=%lu, expected=%lu\n",
+               (unsigned long)anchor_value,
+               (unsigned long)(htlcs[0]->amount.millisatoshis/1000));
+        assert(anchor_value == htlcs[0]->amount.millisatoshis/1000);
+    }
+
     /* Do some more interesting testing */
     htlcs = setup_htlcs_1_5_and_6(tmpctx);
     assert(htlcs);
