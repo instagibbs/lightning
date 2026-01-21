@@ -1,6 +1,7 @@
 #include "config.h"
 #include <bitcoin/psbt.h>
 #include <bitcoin/script.h>
+#include <bitcoin/signature.h>
 #include <bitcoin/tx.h>
 #include <ccan/array_size/array_size.h>
 #include <common/update_tx.h>
@@ -52,7 +53,15 @@ void make_settlement_hash(const u8 *script, struct sha256 *hash_out)
 u8 *make_eltoo_settlement_opreturn_script(const tal_t *ctx, const struct bitcoin_tx *settle_tx)
 {
     struct sha256 settlement_hash;
-    u8 *settle_tapscript = make_eltoo_settle_script(tmpctx, settle_tx, /* input_num */ 0);
+    struct sha256 expected_template_hash;
+
+    /* Compute the template hash that the settlement tx will produce */
+    compute_template_hash(settle_tx, /* input_index */ 0, /* annex */ NULL, &expected_template_hash);
+
+    /* Create the settle script with the expected template hash */
+    u8 *settle_tapscript = make_eltoo_settle_script(tmpctx, &expected_template_hash);
+
+    /* Compute the tapleaf hash of the settle script for the OP_RETURN */
     make_settlement_hash(settle_tapscript, &settlement_hash);
     return scriptpubkey_op_return(ctx, settlement_hash.u.u8, sizeof(settlement_hash.u.u8));
 }
@@ -90,11 +99,9 @@ void bind_tx_to_funding_outpoint(struct bitcoin_tx *update_tx,
     unsigned char psbt_tap_tweak[32];
 
 
-    /* Construct bytes of sig with flag */
-    final_sig = tal_arr(tmpctx, u8, sizeof(sig->u8)+1);
+    /* OP_CHECKSIGFROMSTACK takes a pure 64-byte BIP340 signature (no sighash flag) */
+    final_sig = tal_arr(tmpctx, u8, sizeof(sig->u8));
     memcpy(final_sig, sig->u8, sizeof(sig->u8));
-    /* FIXME store signature in PSBT_IN_PARTIAL_SIG */
-    final_sig[tal_count(final_sig)-1] = SIGHASH_ANYPREVOUTANYSCRIPT|SIGHASH_SINGLE;
 
    /* For MuSig aggregation for outputs */
     pubkey_ptrs[0] = &(eltoo_keyset->self_funding_key);
@@ -195,12 +202,9 @@ void bind_update_tx_to_update_outpoint(struct bitcoin_tx *update_tx,
     struct sha256 psbt_tap_merkle_root;
     unsigned char psbt_tap_tweak[32];
 
-    /* Construct bytes of sig with flag */
-    final_sig = tal_arr(tmpctx, u8, sizeof(sig->u8)+1);
+    /* OP_CHECKSIGFROMSTACK takes a pure 64-byte BIP340 signature (no sighash flag) */
+    final_sig = tal_arr(tmpctx, u8, sizeof(sig->u8));
     memcpy(final_sig, sig->u8, sizeof(sig->u8));
-    /* FIXME store signature in PSBT_IN_PARTIAL_SIG */
-    final_sig[tal_count(final_sig)-1] = SIGHASH_ANYPREVOUTANYSCRIPT|SIGHASH_SINGLE;
-
 
    /* For MuSig aggregation for outputs */
     pubkey_ptrs[0] = &(eltoo_keyset->self_funding_key);

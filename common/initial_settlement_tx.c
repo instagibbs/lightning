@@ -1,5 +1,6 @@
 #include "config.h"
 #include <bitcoin/script.h>
+#include <bitcoin/signature.h>
 #include <bitcoin/tx.h>
 #include <ccan/array_size/array_size.h>
 #include <common/initial_settlement_tx.h>
@@ -44,18 +45,23 @@ void add_settlement_input(struct bitcoin_tx *tx, const struct bitcoin_outpoint *
 
     /*
      * We do not know what scriptPubKey, tap_tree look like yet because we're computing
-     * a sighash to then put into the input script. We use a P2TR scriptpubkey from the
-     * inner_pubkey here; SIGHASH_ANYPREVOUTANYSCRIPT excludes the scriptPubkey from
-     * the sighash so any valid P2TR script works.
+     * a template hash to then build the settlement script. We use a P2TR scriptpubkey from the
+     * inner_pubkey here; OP_TEMPLATEHASH excludes prevouts/scriptPubKeys/amounts from
+     * the hash so any valid P2TR script works as a placeholder.
      */
     dummy_script = scriptpubkey_p2tr(tmpctx, inner_pubkey);
 	input_num = bitcoin_tx_add_input(tx, update_outpoint, shared_delay,
 			     /* scriptSig */ NULL, update_outpoint_sats, dummy_script, /* input_wscript */ NULL, inner_pubkey, /* tap_tree */ NULL);
     assert(input_num == 0);
 
-    /* Now the the transaction itself is determined, we must compute the APO sighash to inject it
-      into the inputs' tapscript, then attach the information to the PSBT */
-    settle_and_update_tapscripts[0] = make_eltoo_settle_script(tmpctx, tx, input_num);
+    /* Now the transaction itself is determined, we compute the template hash
+     * of this settlement tx. The settle script uses OP_TEMPLATEHASH to verify
+     * that the spending tx matches this expected template. */
+    {
+        struct sha256 expected_template_hash;
+        compute_template_hash(tx, input_num, /* annex */ NULL, &expected_template_hash);
+        settle_and_update_tapscripts[0] = make_eltoo_settle_script(tmpctx, &expected_template_hash);
+    }
 
     /* update number is one more for the update path, which isn't being taken */
     settle_and_update_tapscripts[1] = make_eltoo_update_script(tmpctx, obscured_update_number + 1);

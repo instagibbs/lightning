@@ -228,11 +228,13 @@ void compute_taptree_merkle_root_with_hint(struct sha256 *update_merkle_root, co
  */
 u8 *compute_control_block(const tal_t *ctx, const u8 *other_script, const u8 *opreturn_hint, const struct pubkey *inner_pubkey, int parity_bit);
 
-/* Creates tapscript that makes a sig-in-script ANYPREVOUTANYSCRIPT covenant
- * which commits to the tx argument:
- * CovSig(n) 1_G OP_CHECKSIG
+/* Creates settlement tapscript using OP_TEMPLATEHASH equality:
+ * OP_TEMPLATEHASH <expected_hash> OP_EQUAL
+ *
+ * No signature needed - the settlement tx structure is the authorization.
+ * @expected_template_hash: the template hash of the expected settlement transaction
  */
-u8 *make_eltoo_settle_script(const tal_t *ctx, const struct bitcoin_tx *settle_tx, size_t input_index);
+u8 *make_eltoo_settle_script(const tal_t *ctx, const struct sha256 *expected_template_hash);
 
 /* Creates the update path tapscript for eltoo, which commits to the masked update number */
 u8 *make_eltoo_update_script(const tal_t *ctx, u32 update_num);

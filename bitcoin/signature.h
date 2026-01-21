@@ -385,4 +385,23 @@ void create_keypair_of_one(secp256k1_keypair *G_pair);
 /* Compute an output script for funding output */
 u8 *scriptpubkey_eltoo_funding(const tal_t *ctx, const struct pubkey *pubkey1, const struct pubkey *pubkey2);
 
+/**
+ * compute_template_hash - compute OP_TEMPLATEHASH value for a transaction
+ *
+ * This computes the template hash used by OP_TEMPLATEHASH opcode.
+ * It commits to: nVersion, nLockTime, sha_sequences, sha_outputs,
+ * annex_present, input_index, and sha_annex (if present).
+ *
+ * It EXCLUDES (enabling rebinding): sha_prevouts, sha_scriptpubkeys, sha_amounts
+ *
+ * @tx: the transaction to compute hash for
+ * @input_index: the input index being spent
+ * @annex: optional annex data (NULL if none)
+ * @dest: output hash
+ */
+void compute_template_hash(const struct bitcoin_tx *tx,
+                          unsigned int input_index,
+                          const u8 *annex,
+                          struct sha256 *dest);
+
 #endif /* LIGHTNING_BITCOIN_SIGNATURE_H */
