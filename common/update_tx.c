@@ -331,8 +331,7 @@ struct bitcoin_tx **bind_txs_to_update_outpoint(const struct bitcoin_tx *update_
 
     bitcoin_txid(bound_update_tx, &update_txid);
     bind_settle_tx(update_txid,
-        0 /* output_index: we can't know for sure until update tx confirms, this is
-        for ease of use */,
+        2 /* output_index: state output, after anchor(0) and OP_RETURN(1) */,
         bound_settle_tx);
 
     bound_update_and_settle_txs[0] = bound_update_tx;
@@ -415,8 +414,7 @@ struct bitcoin_tx **bind_txs_to_funding_outpoint(const struct bitcoin_tx *update
 
     bitcoin_txid(bound_update_tx, &update_txid);
     bind_settle_tx(update_txid,
-        0 /* output_index: we can't know for sure until update tx confirms, this is
-        for ease of use */,
+        2 /* output_index: state output, after anchor(0) and OP_RETURN(1) */,
         bound_settle_tx);
 
     bound_update_and_settle_txs[0] = bound_update_tx;
