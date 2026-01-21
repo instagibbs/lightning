@@ -1,6 +1,7 @@
 #include "config.h"
 #include <bitcoin/privkey.h>
 #include <bitcoin/script.h>
+#include <bitcoin/signature.h>
 #include <bitcoin/tx.h>
 #include <ccan/array_size/array_size.h>
 #include <ccan/crypto/hkdf_sha256/hkdf_sha256.h>
@@ -1564,14 +1565,16 @@ static u8 *handle_combine_psig(struct hsmd_client *c, const u8 *msg_in)
     printf("combine settle_tx: %s\n", fmt_bitcoin_tx(tmpctx, settle_tx));
     printf("combine update_tx: %s\n", fmt_bitcoin_tx(tmpctx, update_tx));
 
-    /* For script-path spending with ANYPREVOUTANYSCRIPT:
-     * Pass the actual tapscript to signal script-path (ext_flag=1)
-     * No annex - settlement hash is now in OP_RETURN output */
+    /* For OP_TEMPLATEHASH + OP_CHECKSIGFROMSTACK:
+     * The message being verified is the template hash of the update tx.
+     * Template hash excludes prevouts/scriptpubkeys/amounts, enabling rebinding. */
     {
-        u8 *update_tapscript = make_eltoo_funding_update_script(tmpctx);
-        bitcoin_tx_taproot_hash_for_sig(update_tx, /* input_index */ 0, SIGHASH_ANYPREVOUTANYSCRIPT|SIGHASH_SINGLE, update_tapscript, /* annex */ NULL, &hash_out);
+        struct sha256 template_hash;
+        compute_template_hash(update_tx, /* input_index */ 0, /* annex */ NULL, &template_hash);
+        /* Wrap sha256 in sha256_double for MuSig2 API compatibility */
+        memcpy(hash_out.sha.u.u8, template_hash.u.u8, sizeof(template_hash.u.u8));
     }
-    printf("validate taproot Sighash: ");
+    printf("validate template hash: ");
     for (i = 0; i < 32; i++)
     {
         printf("%02X", hash_out.sha.u.u8[i]);
@@ -1668,17 +1671,17 @@ static u8 *handle_psign_update_tx(struct hsmd_client *c, const u8 *msg_in)
            /* n_pubkeys */ 2);
     printf("psign inner_pubkey for signing: %s\n", fmt_pubkey(tmpctx, &inner_pubkey));
 
-    /* For script-path spending with ANYPREVOUTANYSCRIPT:
-     * - Pass the actual tapscript being executed to signal script-path (ext_flag=1)
-     * - tapleaf_hash is NOT included (because ANYPREVOUTANYSCRIPT)
-     * - But key_version (0x01) and codesep_position ARE included
-     * - No annex - settlement hash is now in OP_RETURN output */
+    /* For OP_TEMPLATEHASH + OP_CHECKSIGFROMSTACK:
+     * The message being signed is the template hash of the update tx.
+     * Template hash excludes prevouts/scriptpubkeys/amounts, enabling rebinding.
+     * No sighash flag is needed - the template hash IS the message. */
     {
-        u8 *update_tapscript = make_eltoo_funding_update_script(tmpctx);
-        bitcoin_tx_taproot_hash_for_sig(update_tx, /* input_index */ 0, SIGHASH_ANYPREVOUTANYSCRIPT|SIGHASH_SINGLE,
-            update_tapscript, /* annex */ NULL, &hash_out);
+        struct sha256 template_hash;
+        compute_template_hash(update_tx, /* input_index */ 0, /* annex */ NULL, &template_hash);
+        /* Wrap sha256 in sha256_double for MuSig2 API compatibility */
+        memcpy(hash_out.sha.u.u8, template_hash.u.u8, sizeof(template_hash.u.u8));
     }
-    printf("sign taproot Sighash: ");
+    printf("sign template hash: ");
     for (i = 0; i < 32; i++)
     {
         printf("%02X", hash_out.sha.u.u8[i]);

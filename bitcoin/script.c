@@ -13,6 +13,11 @@
 
 #include <stdio.h>
 
+/* New OP_TEMPLATEHASH opcodes (bitcoin-inquisition) */
+#define OP_INTERNALKEY              0xcb
+#define OP_CHECKSIGFROMSTACK        0xcc
+#define OP_TEMPLATEHASH             0xce
+
 /* To push 0-75 bytes onto stack. */
 #define OP_PUSHBYTES(val) (val)
 
@@ -1336,79 +1341,28 @@ u8 *compute_control_block(const tal_t *ctx, const u8 *other_script, const u8 *op
     return control_block;
 }
 
-u8 *make_eltoo_settle_script(const tal_t *ctx, const struct bitcoin_tx *settle_tx, size_t input_index)
+u8 *make_eltoo_settle_script(const tal_t *ctx, const struct sha256 *expected_template_hash)
 {
-    int ok;
-    enum sighash_type sh_type = SIGHASH_ANYPREVOUTANYSCRIPT|SIGHASH_ALL;
-	u8 *script = tal_arr(ctx, u8, 0);
-    struct sha256_double sighash;
-    struct bip340sig sig;
-    unsigned char sig_with_flag[65];
-    secp256k1_keypair G_pair;
-    secp256k1_xonly_pubkey G;
-    struct privkey g;
-    unsigned char one_G_bytes[33];
-
-    /* For SIGHASH_ANYPREVOUTANYSCRIPT, the tapleaf_hash is NOT committed,
-     * BUT we still need to include key_version and codesep_position in
-     * the sighash (they are part of "tapscript extensions").
+    /* EXPR_SETTLE with OP_TEMPLATEHASH:
      *
-     * libwally's bip341_signature_hash skips ALL tapscript extensions if
-     * tapleaf_script is NULL, so we must pass a non-NULL placeholder.
-     * The actual content doesn't matter since the tapleaf_hash is skipped
-     * for ANYPREVOUTANYSCRIPT anyway.
+     * OP_TEMPLATEHASH <expected_hash> OP_EQUAL
      *
-     * Use a 1-byte placeholder script (OP_1) since libwally validates
-     * that non-NULL scripts have length > 0.
+     * When settlement tx spends via this script path:
+     * 1. OP_TEMPLATEHASH computes hash of the spending tx's template
+     * 2. Expected hash is pushed from the script
+     * 3. OP_EQUAL verifies they match
+     *
+     * No signature needed! The settlement tx structure itself is the authorization.
      */
-    u8 *dummy_tapscript = tal_arr(tmpctx, u8, 1);
-    dummy_tapscript[0] = 0x51; /* OP_1 */
-    bitcoin_tx_taproot_hash_for_sig(settle_tx,
-                 input_index,
-                 sh_type,
-                 dummy_tapscript,
-                 /* annex */ NULL,
-                 &sighash);
+    u8 *script = tal_arr(ctx, u8, 0);
+    add_op(&script, OP_TEMPLATEHASH);
+    script_push_bytes(&script, expected_template_hash->u.u8, sizeof(expected_template_hash->u.u8));
+    add_op(&script, OP_EQUAL);
 
-    fprintf(stderr, "make_eltoo_settle_script: sighash=%s, sighash_type=%02x, num_outputs=%zu, locktime=%u\n",
-            tal_hexstr(tmpctx, &sighash, sizeof(sighash)),
-            sh_type,
-            settle_tx->wtx->num_outputs,
-            settle_tx->wtx->locktime);
+    fprintf(stderr, "make_eltoo_settle_script: expected_hash=%s script=%s\n",
+            tal_hexstr(tmpctx, expected_template_hash->u.u8, sizeof(expected_template_hash->u.u8)),
+            tal_hex(tmpctx, script));
 
-
-    /* Should directly take keypair instead of extracting but... */
-    create_keypair_of_one(&G_pair);
-    ok = secp256k1_keypair_sec(
-        secp256k1_ctx,
-        g.secret.data,
-        &G_pair);
-    assert(ok);
-
-    bip340_sign_hash(&g,
-           &sighash,
-           &sig);
-
-    /* 0x01-prefixed G for APOAS pubkey */
-    ok = secp256k1_keypair_xonly_pub(
-        secp256k1_ctx,
-        &G,
-        /* pk_parity */ NULL,
-        &G_pair);
-    assert(ok);
-    one_G_bytes[0] = 0x01;
-    ok = secp256k1_xonly_pubkey_serialize(
-        secp256k1_ctx,
-        one_G_bytes+1,
-        &G);
-
-    memcpy(sig_with_flag, sig.u8, sizeof(sig.u8));
-    sig_with_flag[64] = sh_type;
-
-    /* Build the script */
-    script_push_bytes(&script, sig_with_flag, sizeof(sig_with_flag));
-    script_push_bytes(&script, one_G_bytes, sizeof(one_G_bytes));
-	add_op(&script, OP_CHECKSIG);
     return script;
 }
 
@@ -1417,11 +1371,18 @@ u8 *make_eltoo_update_script(const tal_t *ctx, u32 update_num)
     /* TL(n) = `500000000+o+n`
      * where EXPR_UPDATE(n) =
      *
-     *`<1> OP_CHECKSIGVERIFY <TL(n)> OP_CHECKLOCKTIMEVERIFY` if `n > 0`
+     * OP_TEMPLATEHASH OP_INTERNALKEY OP_CHECKSIGFROMSTACK OP_VERIFY <TL(n)> OP_CHECKLOCKTIMEVERIFY if n > 0
+     *
+     * Stack after OP_TEMPLATEHASH: [template_hash]
+     * Stack after OP_INTERNALKEY: [template_hash, internal_key]
+     * OP_CHECKSIGFROMSTACK pops: sig (from witness), msg (template_hash), pk (internal_key)
+     * OP_VERIFY ensures the signature was valid
      */
 	u8 *script = tal_arr(ctx, u8, 0);
-	add_op(&script, OP_1);
-	add_op(&script, OP_CHECKSIGVERIFY);
+	add_op(&script, OP_TEMPLATEHASH);
+	add_op(&script, OP_INTERNALKEY);
+	add_op(&script, OP_CHECKSIGFROMSTACK);
+	add_op(&script, OP_VERIFY);
     add_number(&script, 500000000 + update_num);
     add_op(&script, OP_CHECKLOCKTIMEVERIFY);
     return script;
@@ -1431,11 +1392,16 @@ u8 *make_eltoo_funding_update_script(const tal_t *ctx)
 {
     /* where EXPR_UPDATE(n) =
      *
-     *`<1> OP_CHECKSIG`, in the case of `n == 0`
+     * OP_TEMPLATEHASH OP_INTERNALKEY OP_CHECKSIGFROMSTACK, in the case of n == 0
+     *
+     * Stack after OP_TEMPLATEHASH: [template_hash]
+     * Stack after OP_INTERNALKEY: [template_hash, internal_key]
+     * OP_CHECKSIGFROMSTACK pops: sig (from witness), msg (template_hash), pk (internal_key)
      */
 	u8 *script = tal_arr(ctx, u8, 0);
-	add_op(&script, OP_1);
-	add_op(&script, OP_CHECKSIG);
+	add_op(&script, OP_TEMPLATEHASH);
+	add_op(&script, OP_INTERNALKEY);
+	add_op(&script, OP_CHECKSIGFROMSTACK);
     return script;
 }
 

@@ -929,3 +929,99 @@ u8 *scriptpubkey_eltoo_funding(const tal_t *ctx, const struct pubkey *pubkey1, c
 
     return result;
 }
+
+/* Compute OP_TEMPLATEHASH value for a transaction.
+ *
+ * Template hash commits to:
+ * - nVersion (4 bytes LE)
+ * - nLockTime (4 bytes LE)
+ * - sha_sequences (32 bytes) - SHA256 of all input nSequence values
+ * - sha_outputs (32 bytes) - SHA256 of serialized outputs
+ * - annex_present (1 byte)
+ * - input_index (4 bytes LE)
+ * - sha_annex (32 bytes, only if annex present)
+ *
+ * EXCLUDES (enabling rebinding): sha_prevouts, sha_scriptpubkeys, sha_amounts
+ */
+void compute_template_hash(const struct bitcoin_tx *tx,
+                          unsigned int input_index,
+                          const u8 *annex,
+                          struct sha256 *dest)
+{
+    struct sha256_ctx sctx;
+    struct sha256 sha_sequences, sha_outputs;
+    le32 version_le, locktime_le, input_index_le;
+    u8 annex_present;
+    size_t i;
+
+    /* Compute sha_sequences: SHA256 of all input nSequence values (4 bytes each, LE) */
+    sha256_init(&sctx);
+    for (i = 0; i < tx->wtx->num_inputs; i++) {
+        le32 seq_le = cpu_to_le32(tx->wtx->inputs[i].sequence);
+        sha256_update(&sctx, &seq_le, sizeof(seq_le));
+    }
+    sha256_done(&sctx, &sha_sequences);
+
+    /* Compute sha_outputs: SHA256 of serialized outputs */
+    sha256_init(&sctx);
+    for (i = 0; i < tx->wtx->num_outputs; i++) {
+        le64 amount_le = cpu_to_le64(tx->wtx->outputs[i].satoshi);
+        sha256_update(&sctx, &amount_le, sizeof(amount_le));
+
+        /* scriptPubKey is serialized as compact_size(len) || script */
+        u8 script_len_varint[9];
+        size_t varint_len = varint_put(script_len_varint, tx->wtx->outputs[i].script_len);
+        sha256_update(&sctx, script_len_varint, varint_len);
+        sha256_update(&sctx, tx->wtx->outputs[i].script, tx->wtx->outputs[i].script_len);
+    }
+    sha256_done(&sctx, &sha_outputs);
+
+    /* Build the template hash preimage using tagged hash */
+    {
+        struct sha256 taghash;
+        const char *tag = "TemplateHash";
+
+        /* Compute tagged hash: SHA256(SHA256(tag) || SHA256(tag) || data) */
+        sha256(&taghash, tag, strlen(tag));
+
+        sha256_init(&sctx);
+        sha256_update(&sctx, &taghash, sizeof(taghash));
+        sha256_update(&sctx, &taghash, sizeof(taghash));
+
+        /* nVersion (4 bytes LE) */
+        version_le = cpu_to_le32(tx->wtx->version);
+        sha256_update(&sctx, &version_le, sizeof(version_le));
+
+        /* nLockTime (4 bytes LE) */
+        locktime_le = cpu_to_le32(tx->wtx->locktime);
+        sha256_update(&sctx, &locktime_le, sizeof(locktime_le));
+
+        /* sha_sequences (32 bytes) */
+        sha256_update(&sctx, &sha_sequences, sizeof(sha_sequences));
+
+        /* sha_outputs (32 bytes) */
+        sha256_update(&sctx, &sha_outputs, sizeof(sha_outputs));
+
+        /* annex_present (1 byte) */
+        annex_present = annex ? 1 : 0;
+        sha256_update(&sctx, &annex_present, sizeof(annex_present));
+
+        /* input_index (4 bytes LE) */
+        input_index_le = cpu_to_le32(input_index);
+        sha256_update(&sctx, &input_index_le, sizeof(input_index_le));
+
+        /* sha_annex (32 bytes, only if present) */
+        if (annex) {
+            struct sha256 sha_annex;
+            sha256(&sha_annex, annex, tal_count(annex));
+            sha256_update(&sctx, &sha_annex, sizeof(sha_annex));
+        }
+
+        sha256_done(&sctx, dest);
+    }
+
+    fprintf(stderr, "DEBUG compute_template_hash: version=%u locktime=%u input_index=%u annex=%s hash=%s\n",
+            tx->wtx->version, tx->wtx->locktime, input_index,
+            annex ? "present" : "none",
+            tal_hexstr(tmpctx, dest->u.u8, sizeof(dest->u.u8)));
+}
