@@ -1453,8 +1453,11 @@ def test_eltoo_force_close_rpc_with_htlc(node_factory, bitcoind, executor):
     2. HTLC timeout resolution happens correctly
     3. Funds (including HTLC) are recovered to wallet
     """
+    # Use dev-disable-commit-after on l1 to prevent it from completing the HTLC fulfillment
+    # This ensures the HTLC remains pending when we force close
     l1, l2 = node_factory.line_graph(2,
-                                     opts=[{'may_reconnect': True, 'developer': None},
+                                     opts=[{'may_reconnect': True, 'developer': None,
+                                            'dev-disable-commit-after': 1},  # l1 won't complete fulfill
                                            {'may_reconnect': True, 'developer': None}])
 
     # Fund l2 so it has wallet funds for CPFP during force close
@@ -1533,8 +1536,22 @@ def test_eltoo_force_close_rpc_with_htlc(node_factory, bitcoind, executor):
     # Mine settle tx
     bitcoind.generate_block(1)
 
-    # Mine enough blocks for onchaind to complete
-    # (HTLC timeout handling is not yet implemented for eltoo)
+    # Now we need to mine past the HTLC's CLTV expiry for timeout to be possible
+    # The CLTV expiry is typically current_height + cltv_delta (default ~34 blocks)
+    # Mine enough blocks to pass the CLTV expiry
+    bitcoind.generate_block(40)
+
+    # l2 should broadcast HTLC timeout to recover their HTLC amount
+    # l2 has OUR_HTLC (outgoing) so they can timeout after CLTV expiry
+    l2.wait_for_onchaind_broadcast('ELTOO_HTLC_TIMEOUT',
+                                   'ELTOO_SETTLE/OUR_HTLC')
+
+    wait_for(lambda: bitcoind.rpc.getmempoolinfo()['size'] >= 1)
+
+    # Mine HTLC timeout tx
+    bitcoind.generate_block(1)
+
+    # Mine enough blocks for onchaind to complete (100 blocks maturity)
     bitcoind.generate_block(100)
 
     l2.daemon.wait_for_log('onchaind complete, forgetting peer')
@@ -1546,4 +1563,16 @@ def test_eltoo_force_close_rpc_with_htlc(node_factory, bitcoind, executor):
     channels = l2.rpc.listpeerchannels()['channels']
     assert len(channels) == 0, f"Channel should be forgotten after onchaind complete, but found: {channels}"
 
-    print("SUCCESS: Eltoo force close via RPC with HTLC completed")
+    # Verify l2 recovered funds including the HTLC amount they timed out
+    l2_funds = l2.rpc.listfunds()['outputs']
+    l2_total_msat = sum(o['amount_msat'] for o in l2_funds)
+    print(f"DEBUG: l2 wallet after HTLC timeout = {l2_total_msat}")
+
+    # l2 should have their channel balance back plus the HTLC amount they recovered
+    # l2 had 100k sat from l1's payment, then sent 50k HTLC to l1
+    # After force close: balance output (50k) + HTLC timeout output (50k - fees)
+    # Total should be close to 100k sat minus HTLC timeout tx fee
+    # We check for >= 95k sat to allow for fees
+    assert l2_total_msat > 95000000, f"l2 should have recovered funds including HTLC (~99k sat expected), got {l2_total_msat}"
+
+    print("SUCCESS: Eltoo force close via RPC with HTLC timeout completed")

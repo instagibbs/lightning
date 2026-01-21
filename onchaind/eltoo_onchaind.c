@@ -117,6 +117,10 @@ struct resolution {
 	struct bitcoin_txid txid;
 	unsigned int depth;
 	enum eltoo_tx_type tx_type;
+	/* For outputs we create (HTLC timeout/success), track for wallet */
+	struct amount_sat output_amount;
+	u8 *output_scriptpubkey;
+	u32 tx_blockheight;
 };
 
 struct tracked_output {
@@ -486,6 +490,10 @@ static void ignore_output(struct tracked_output *out)
 	out->resolved->txid = out->outpoint.txid;
 	out->resolved->depth = 0;
 	out->resolved->tx_type = ELTOO_SELF;
+	/* No wallet tracking for ignored outputs */
+	out->resolved->output_amount = AMOUNT_SAT(0);
+	out->resolved->output_scriptpubkey = NULL;
+	out->resolved->tx_blockheight = 0;
 }
 
 static enum wallet_tx_type onchain_txtype_to_wallet_txtype(enum eltoo_tx_type t)
@@ -699,7 +707,8 @@ static bool input_similar(const struct wally_tx_input *i1,
 
 /* This simple case: true if this was resolved by our proposal. */
 static bool resolved_by_proposal(struct tracked_output *out,
-				 const struct tx_parts *tx_parts)
+				 const struct tx_parts *tx_parts,
+				 u32 tx_blockheight)
 {
 	/* If there's no TX associated, it's not us. */
 	if (!out->proposal->tx)
@@ -726,6 +735,26 @@ static bool resolved_by_proposal(struct tracked_output *out,
 
 	out->resolved->depth = 0;
 	out->resolved->tx_type = out->proposal->tx_type;
+	out->resolved->tx_blockheight = tx_blockheight;
+
+	/* For HTLC timeout/success, store output details for wallet tracking */
+	if (out->proposal->tx_type == ELTOO_HTLC_TIMEOUT ||
+	    out->proposal->tx_type == ELTOO_HTLC_SUCCESS) {
+		const struct bitcoin_tx *tx = out->proposal->tx;
+		struct amount_asset asset = bitcoin_tx_output_get_amount(tx, 0);
+		const struct wally_tx_output *wout = &tx->wtx->outputs[0];
+		out->resolved->output_amount = amount_asset_to_sat(&asset);
+		out->resolved->output_scriptpubkey = tal_dup_arr(out->resolved, u8,
+			wout->script, wout->script_len, 0);
+		status_debug("Stored output for wallet: amount=%s script=%s blockheight=%u",
+			     fmt_amount_sat(tmpctx, out->resolved->output_amount),
+			     tal_hex(tmpctx, out->resolved->output_scriptpubkey),
+			     tx_blockheight);
+	} else {
+		out->resolved->output_amount = AMOUNT_SAT(0);
+		out->resolved->output_scriptpubkey = NULL;
+	}
+
 	return true;
 }
 
@@ -738,6 +767,10 @@ static void resolved_by_other(struct tracked_output *out,
 	out->resolved->txid = *txid;
 	out->resolved->depth = 0;
 	out->resolved->tx_type = tx_type;
+	/* Not our tx, no wallet tracking needed */
+	out->resolved->output_amount = AMOUNT_SAT(0);
+	out->resolved->output_scriptpubkey = NULL;
+	out->resolved->tx_blockheight = 0;
 
 	status_debug("Resolved %s/%s by %s (%s)",
 		     eltoo_tx_type_name(out->tx_type),
@@ -1175,7 +1208,7 @@ static void output_spent(struct tracked_output ***outs,
 			continue;
 
         /* This output spend was either ours, or someone else's. Output is resolved either way */
-        if (!resolved_by_proposal(out, tx_parts)) {
+        if (!resolved_by_proposal(out, tx_parts, tx_blockheight)) {
             ignore_output(out);
         }
 
@@ -1343,6 +1376,24 @@ static void eltoo_update_resolution_depth(struct tracked_output *out, u32 depth)
 			     depth);
 		msg = towire_onchaind_htlc_timeout(out, &out->htlc);
 		wire_sync_write(REQ_FD, take(msg));
+
+		/* Add the HTLC timeout output to the wallet */
+		if (out->resolved->output_scriptpubkey) {
+			struct bitcoin_outpoint htlc_outpoint;
+			htlc_outpoint.txid = out->resolved->txid;
+			htlc_outpoint.n = 0; /* HTLC timeout tx has single output */
+			status_debug("Adding HTLC timeout output to wallet: %s:%u amount=%s",
+				     fmt_bitcoin_txid(tmpctx, &htlc_outpoint.txid),
+				     htlc_outpoint.n,
+				     fmt_amount_sat(tmpctx, out->resolved->output_amount));
+			wire_sync_write(REQ_FD,
+				take(towire_onchaind_add_utxo(NULL, &htlc_outpoint,
+					NULL, /* per_commit_point not needed for eltoo */
+					out->resolved->output_amount,
+					out->resolved->tx_blockheight,
+					out->resolved->output_scriptpubkey,
+					0 /* csv_lock - no CSV for P2WPKH output */)));
+		}
 	}
 	out->resolved->depth = depth;
 }
