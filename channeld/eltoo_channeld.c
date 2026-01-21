@@ -187,13 +187,14 @@ struct eltoo_peer {
 		struct nonce other_next_close_nonce;
 		bool have_other_next_nonce;
 
-		/* Fee negotiation state */
-		struct amount_sat last_sent_fee;
-		struct amount_sat last_received_fee;
+		/* Initiator pays all: the agreed fee (set by initiator) */
+		struct amount_sat agreed_fee;
 
-		/* Fee ranges for quick close negotiation */
-		struct tlv_closing_signed_eltoo_tlvs_fee_range *our_fee_range;
-		struct tlv_closing_signed_eltoo_tlvs_fee_range *their_fee_range;
+		/* True if we initiated the close (sent closing_signed_eltoo first) */
+		bool we_are_initiator;
+
+		/* True once we've sent closing_signed_eltoo */
+		bool sent_closing_signed;
 
 		/* Partial signatures for close tx */
 		struct partial_sig self_close_psig;
@@ -222,7 +223,8 @@ struct eltoo_peer {
 
 /* Forward declarations for eltoo close handling */
 static void handle_peer_closing_signed_eltoo(struct eltoo_peer *peer, const u8 *msg);
-static void send_eltoo_closing_offer(struct eltoo_peer *peer, struct amount_sat fee);
+static void send_eltoo_closing_offer(struct eltoo_peer *peer, struct amount_sat fee,
+				     bool we_are_initiator);
 static void finalize_eltoo_close(struct eltoo_peer *peer, struct amount_sat fee);
 static bool begin_closing_negotiation(struct eltoo_peer *peer);
 
@@ -1648,20 +1650,28 @@ static struct amount_sat calc_eltoo_close_fee(u32 feerate_per_kw,
 	return amount_tx_fee(feerate_per_kw, weight);
 }
 
-/*~ Begin closing negotiation - called when both shutdowns sent and no pending HTLCs */
+/*~ Begin closing negotiation - called when both shutdowns sent and no pending HTLCs.
+ * Initiator pays all fees (option_simple_close model).
+ * Channel opener is always the close initiator and pays the fee. */
 static bool begin_closing_negotiation(struct eltoo_peer *peer)
 {
 	struct amount_sat fee;
 	u32 feerate_per_kw;
 	u8 *remote_script;
+	bool we_are_initiator;
 
 	/* Already started closing negotiation? */
-	if (amount_sat_greater(peer->close_state.last_sent_fee, AMOUNT_SAT(0))) {
+	if (peer->close_state.sent_closing_signed) {
 		status_debug("Closing negotiation already started, skipping");
 		return true;
 	}
 
-	status_debug("Beginning eltoo close negotiation");
+	/* Channel opener is the close initiator and pays the fee.
+	 * This is deterministic - both nodes know who opened the channel. */
+	we_are_initiator = (peer->channel->opener == LOCAL);
+
+	status_debug("Beginning eltoo close negotiation (we_are_initiator=%d, opener=%s)",
+		     we_are_initiator, side_to_str(peer->channel->opener));
 
 	/* Use a reasonable feerate - for now use 1000 sat/kw as a starting point.
 	 * In a full implementation, this would be based on current mempool conditions. */
@@ -1680,13 +1690,16 @@ static bool begin_closing_negotiation(struct eltoo_peer *peer)
 				   peer->final_scriptpubkey,
 				   remote_script);
 
-	/* Send our initial closing offer */
-	send_eltoo_closing_offer(peer, fee);
+	/* Send our closing offer with deterministic initiator status */
+	send_eltoo_closing_offer(peer, fee, we_are_initiator);
 	return true;
 }
 
-/*~ Send our closing offer with partial signature */
-static void send_eltoo_closing_offer(struct eltoo_peer *peer, struct amount_sat fee)
+/*~ Send our closing offer with partial signature.
+ * Initiator pays all fees (option_simple_close model).
+ * @we_are_initiator: true if we're initiating the close, false if responding */
+static void send_eltoo_closing_offer(struct eltoo_peer *peer, struct amount_sat fee,
+				     bool we_are_initiator)
 {
 	struct bitcoin_tx *close_tx;
 	struct amount_sat to_local, to_remote, funding_sats;
@@ -1697,8 +1710,8 @@ static void send_eltoo_closing_offer(struct eltoo_peer *peer, struct amount_sat 
 	struct musig_keyagg_cache cache;
 	u8 *remote_script;
 
-	status_debug("Sending eltoo closing offer with fee %s",
-		     fmt_amount_sat(tmpctx, fee));
+	status_debug("Sending eltoo closing offer with fee %s (we_are_initiator=%d)",
+		     fmt_amount_sat(tmpctx, fee), we_are_initiator);
 
 	/* Get current balances */
 	local_msat = peer->channel->view[LOCAL].owed[LOCAL];
@@ -1711,24 +1724,27 @@ static void send_eltoo_closing_offer(struct eltoo_peer *peer, struct amount_sat 
 	if (!amount_msat_to_sat(&to_remote, remote_msat))
 		to_remote = AMOUNT_SAT(0);
 
-	/* Subtract fee from the party with the larger balance.
-	 * Both parties calculate this the same way to ensure they create identical txs.
-	 * This is deterministic since both parties know both balances. */
-	if (amount_sat_greater_eq(to_local, to_remote)) {
-		/* Local has more, subtract from local */
+	/* Initiator (channel opener) pays all fees (option_simple_close model).
+	 * If initiator can't afford it, responder pays.
+	 * If we're the initiator, subtract from our (local) balance.
+	 * If we're the responder, subtract from their (remote) balance. */
+	if (we_are_initiator) {
+		/* We're initiator, we pay the fee if we can */
 		if (!amount_sat_sub(&to_local, to_local, fee)) {
-			/* Local can't afford, try remote */
+			/* We can't afford it, responder pays */
+			status_debug("Initiator can't afford fee, responder pays");
 			if (!amount_sat_sub(&to_remote, to_remote, fee)) {
-				status_debug("Cannot afford close fee!");
+				status_debug("Neither party can afford close fee!");
 				return;
 			}
 		}
 	} else {
-		/* Remote has more, subtract from remote */
+		/* We're responder, they (remote/initiator) pay the fee if they can */
 		if (!amount_sat_sub(&to_remote, to_remote, fee)) {
-			/* Remote can't afford, try local */
+			/* They can't afford it, we pay */
+			status_debug("Initiator can't afford fee, responder pays");
 			if (!amount_sat_sub(&to_local, to_local, fee)) {
-				status_debug("Cannot afford close fee!");
+				status_debug("Neither party can afford close fee!");
 				return;
 			}
 		}
@@ -1780,18 +1796,15 @@ static void send_eltoo_closing_offer(struct eltoo_peer *peer, struct amount_sat 
 
 	peer->close_state.close_cache = cache;
 
-	/* Build TLVs with our nonce and partial sig - TLV fields are pointers */
+	/* Build TLVs with our nonce and partial sig - no fee_range needed */
 	tlvs = tlv_closing_signed_eltoo_tlvs_new(tmpctx);
 	tlvs->nonces = tal_dup(tlvs, struct nonce, &peer->close_state.self_close_nonce);
 	tlvs->partial_sig = tal_dup(tlvs, struct partial_sig, &peer->close_state.self_close_psig);
 
-	/* Set fee range for quick close - accept any reasonable fee */
-	tlvs->fee_range = tal(tlvs, struct tlv_closing_signed_eltoo_tlvs_fee_range);
-	tlvs->fee_range->min_fee_satoshis = AMOUNT_SAT(250);  /* Minimum relay fee */
-	tlvs->fee_range->max_fee_satoshis = amount_sat(fee.satoshis * 10);  /* Up to 10x our proposed fee */
-
-	peer->close_state.our_fee_range = tal_dup(peer, struct tlv_closing_signed_eltoo_tlvs_fee_range, tlvs->fee_range);
-	peer->close_state.last_sent_fee = fee;
+	/* Track our state */
+	peer->close_state.we_are_initiator = we_are_initiator;
+	peer->close_state.sent_closing_signed = true;
+	peer->close_state.agreed_fee = fee;
 
 	msg = towire_closing_signed_eltoo(tmpctx, &peer->channel_id,
 					  fee, tlvs);
@@ -1803,12 +1816,15 @@ static void send_eltoo_closing_offer(struct eltoo_peer *peer, struct amount_sat 
 		     fmt_partial_sig(tmpctx, &peer->close_state.self_close_psig));
 }
 
-/*~ Handle incoming closing_signed_eltoo message */
+/*~ Handle incoming closing_signed_eltoo message.
+ * Initiator pays all fees (option_simple_close model).
+ * Channel opener is always the close initiator and pays the fee. */
 static void handle_peer_closing_signed_eltoo(struct eltoo_peer *peer, const u8 *msg)
 {
 	struct channel_id channel_id;
 	struct amount_sat their_fee;
 	struct tlv_closing_signed_eltoo_tlvs *tlvs;
+	bool we_are_initiator;
 
 	if (!fromwire_closing_signed_eltoo(tmpctx, msg, &channel_id, &their_fee, &tlvs))
 		peer_failed_warn(peer->pps, &peer->channel_id,
@@ -1826,73 +1842,41 @@ static void handle_peer_closing_signed_eltoo(struct eltoo_peer *peer, const u8 *
 	status_debug("Received closing_signed_eltoo with fee=%s",
 		     fmt_amount_sat(tmpctx, their_fee));
 
-	/* Store their partial sig (made with current/shutdown nonces) */
+	/* Store their partial sig */
 	peer->close_state.other_close_psig = *tlvs->partial_sig;
 
-	/* Store their NEXT nonce separately - don't overwrite the current signing nonce yet.
-	 * The partial_sig was made using their shutdown nonce, so we need to keep that
-	 * for combining. The new nonce in the TLV is for a potential next round. */
+	/* Store their nonce for potential future use */
 	peer->close_state.other_next_close_nonce = *tlvs->nonces;
 	peer->close_state.have_other_next_nonce = true;
-	peer->close_state.last_received_fee = their_fee;
 
-	/* Store their fee range if provided */
-	if (tlvs->fee_range) {
-		peer->close_state.their_fee_range = tal_dup(peer,
-			struct tlv_closing_signed_eltoo_tlvs_fee_range, tlvs->fee_range);
-	}
+	/* Channel opener is the close initiator and pays the fee. */
+	we_are_initiator = (peer->channel->opener == LOCAL);
 
-	/* Check if fee ranges overlap for quick close */
-	if (peer->close_state.our_fee_range && peer->close_state.their_fee_range) {
-		struct amount_sat our_min = peer->close_state.our_fee_range->min_fee_satoshis;
-		struct amount_sat our_max = peer->close_state.our_fee_range->max_fee_satoshis;
-		struct amount_sat their_min = peer->close_state.their_fee_range->min_fee_satoshis;
-		struct amount_sat their_max = peer->close_state.their_fee_range->max_fee_satoshis;
+	if (!peer->close_state.sent_closing_signed) {
+		/* We haven't sent yet - send our closing_signed now.
+		 * Use their fee (both should calculate the same). */
+		peer->close_state.agreed_fee = their_fee;
+		peer->close_state.we_are_initiator = we_are_initiator;
 
-		/* If ranges overlap, use their proposed fee (within overlap) */
-		if (amount_sat_less_eq(our_min, their_max) &&
-		    amount_sat_less_eq(their_min, our_max)) {
-			/* Use their proposed fee if it's in our range */
-			if (amount_sat_greater_eq(their_fee, our_min) &&
-			    amount_sat_less_eq(their_fee, our_max)) {
-				status_debug("Fee ranges overlap, accepting their fee %s",
-					     fmt_amount_sat(tmpctx, their_fee));
-				finalize_eltoo_close(peer, their_fee);
-				return;
-			}
-		}
-	}
+		/* Send our closing_signed */
+		send_eltoo_closing_offer(peer, their_fee, we_are_initiator);
 
-	/* If we haven't sent an offer yet, send one */
-	if (!amount_sat_greater(peer->close_state.last_sent_fee, AMOUNT_SAT(0))) {
-		/* Accept their fee if it's reasonable */
-		send_eltoo_closing_offer(peer, their_fee);
+		/* Now finalize - we have both partial sigs */
+		finalize_eltoo_close(peer, their_fee);
 	} else {
-		/* Simple fee negotiation: accept if close to our offer */
-		struct amount_sat diff = AMOUNT_SAT(0);
-		bool ok;
-		if (amount_sat_greater(their_fee, peer->close_state.last_sent_fee))
-			ok = amount_sat_sub(&diff, their_fee, peer->close_state.last_sent_fee);
-		else
-			ok = amount_sat_sub(&diff, peer->close_state.last_sent_fee, their_fee);
-		(void)ok;
+		/* We already sent - now we have their partial sig.
+		 * Both nodes know who the opener is, so the transactions
+		 * and signatures should match. */
+		status_debug("Both sent closing_signed, finalizing with we_are_initiator=%d (opener=%s)",
+			     we_are_initiator, side_to_str(peer->channel->opener));
 
-		/* If within 10% or 1000 sats, accept their fee */
-		if (diff.satoshis < 1000 ||
-		    diff.satoshis * 10 < peer->close_state.last_sent_fee.satoshis) {
-			finalize_eltoo_close(peer, their_fee);
-		} else {
-			/* Split the difference */
-			struct amount_sat new_fee;
-			if (!amount_sat_add(&new_fee, their_fee, peer->close_state.last_sent_fee))
-				new_fee = their_fee;
-			new_fee.satoshis /= 2;
-			send_eltoo_closing_offer(peer, new_fee);
-		}
+		/* Finalize with our agreed fee (both should be the same) */
+		finalize_eltoo_close(peer, peer->close_state.agreed_fee);
 	}
 }
 
-/*~ Finalize the close - combine signatures and tell master */
+/*~ Finalize the close - combine signatures and tell master.
+ * Initiator pays all fees (option_simple_close model). */
 static void finalize_eltoo_close(struct eltoo_peer *peer, struct amount_sat fee)
 {
 	struct bitcoin_tx *close_tx;
@@ -1903,8 +1887,8 @@ static void finalize_eltoo_close(struct eltoo_peer *peer, struct amount_sat fee)
 	u8 **witness;
 	u8 *remote_script;
 
-	status_debug("Finalizing eltoo close with fee %s",
-		     fmt_amount_sat(tmpctx, fee));
+	status_debug("Finalizing eltoo close with fee %s (we_are_initiator=%d)",
+		     fmt_amount_sat(tmpctx, fee), peer->close_state.we_are_initiator);
 
 	/* Recreate the close transaction at the agreed fee */
 	local_msat = peer->channel->view[LOCAL].owed[LOCAL];
@@ -1916,26 +1900,29 @@ static void finalize_eltoo_close(struct eltoo_peer *peer, struct amount_sat fee)
 	if (!amount_msat_to_sat(&to_remote, remote_msat))
 		to_remote = AMOUNT_SAT(0);
 
-	/* Subtract fee from the party with the larger balance.
-	 * Both parties calculate this the same way to ensure they create identical txs.
-	 * This is deterministic since both parties know both balances. */
-	if (amount_sat_greater_eq(to_local, to_remote)) {
-		/* Local has more, subtract from local */
+	/* Initiator (channel opener) pays all fees (option_simple_close model).
+	 * If initiator can't afford it, responder pays.
+	 * If we're the initiator, subtract from our (local) balance.
+	 * If we're the responder, subtract from their (remote) balance. */
+	if (peer->close_state.we_are_initiator) {
+		/* We're initiator, we pay the fee if we can */
 		if (!amount_sat_sub(&to_local, to_local, fee)) {
-			/* Local can't afford, try remote */
+			/* We can't afford it, responder pays */
+			status_debug("Initiator can't afford fee, responder pays");
 			if (!amount_sat_sub(&to_remote, to_remote, fee)) {
 				peer_failed_warn(peer->pps, &peer->channel_id,
-						 "Cannot afford final close fee");
+						 "Neither party can afford final close fee");
 				return;
 			}
 		}
 	} else {
-		/* Remote has more, subtract from remote */
+		/* We're responder, they (remote/initiator) pay the fee if they can */
 		if (!amount_sat_sub(&to_remote, to_remote, fee)) {
-			/* Remote can't afford, try local */
+			/* They can't afford it, we pay */
+			status_debug("Initiator can't afford fee, responder pays");
 			if (!amount_sat_sub(&to_local, to_local, fee)) {
 				peer_failed_warn(peer->pps, &peer->channel_id,
-						 "Cannot afford final close fee");
+						 "Neither party can afford final close fee");
 				return;
 			}
 		}

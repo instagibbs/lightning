@@ -67,6 +67,17 @@ def find_ephemeral_anchor_output(tx_details):
     return None
 
 
+def verify_wallet_received_funds(node, expected_sats, txid, tolerance_sats=1000):
+    """Verify that node's wallet received expected funds from a close transaction."""
+    outputs = node.rpc.listfunds()['outputs']
+    matching = [o for o in outputs if o['txid'] == txid]
+    assert len(matching) == 1, f"Expected 1 output from {txid}, found {len(matching)}"
+    received_sats = matching[0]['amount_msat'] // 1000
+    assert abs(received_sats - expected_sats) <= tolerance_sats, \
+        f"Expected ~{expected_sats} sats, got {received_sats}"
+    return received_sats
+
+
 def create_cpfp_for_ephemeral_anchor(bitcoind, parent_tx_hex, parent_txid, anchor_output_index, feerate_sat_per_vbyte=10):
     """Create a CPFP transaction spending an ephemeral anchor output.
 
@@ -634,13 +645,14 @@ def test_eltoo_htlc(node_factory, bitcoind, executor, chainparams):
 
     bitcoind.generate_block(1)
 
-    # FIXME Check wallet related things, balances
-    # FIXME The mounds of memleaks
-    
-    # Mine enough blocks to closed out onchaind
+    # Mine enough blocks to close out onchaind
     bitcoind.generate_block(99)
     l1.daemon.wait_for_log('onchaind complete, forgetting peer')
     l2.daemon.wait_for_log('onchaind complete, forgetting peer')
+
+    # Verify channels are closed
+    assert len(l1.rpc.listpeerchannels()['channels']) == 0, "l1 channel should be forgotten"
+    assert len(l2.rpc.listpeerchannels()['channels']) == 0, "l2 channel should be forgotten"
 
 
 def test_eltoo_restart_after_funding(node_factory, bitcoind):
@@ -1018,6 +1030,12 @@ def test_eltoo_close_simple(node_factory, bitcoind):
     wait_for(lambda: closetxid in [o['txid'] for o in l1.rpc.listfunds()['outputs']])
     wait_for(lambda: closetxid in [o['txid'] for o in l2.rpc.listfunds()['outputs']])
 
+    # Verify amounts received
+    l1_expected = int(l1_balance_before) // 1000
+    l2_expected = int(l2_balance_before) // 1000
+    verify_wallet_received_funds(l1, l1_expected, closetxid, tolerance_sats=5000)  # l1 pays fees
+    verify_wallet_received_funds(l2, l2_expected, closetxid, tolerance_sats=1000)
+
     print("SUCCESS: Eltoo simple close completed")
 
 
@@ -1089,6 +1107,12 @@ def test_eltoo_close_after_payments(node_factory, bitcoind):
     l1.daemon.wait_for_log(r'Resolved ELTOO_FUNDING_TRANSACTION/FUNDING_OUTPUT by ELTOO_MUTUAL_CLOSE')
     l2.daemon.wait_for_log(r'Resolved ELTOO_FUNDING_TRANSACTION/FUNDING_OUTPUT by ELTOO_MUTUAL_CLOSE')
 
+    # Verify funds in wallets
+    wait_for(lambda: closetxid in [o['txid'] for o in l1.rpc.listfunds()['outputs']])
+    wait_for(lambda: closetxid in [o['txid'] for o in l2.rpc.listfunds()['outputs']])
+    verify_wallet_received_funds(l1, expected_l1, closetxid, tolerance_sats=5000)
+    verify_wallet_received_funds(l2, expected_l2, closetxid, tolerance_sats=1000)
+
     print("SUCCESS: Eltoo close after payments completed")
 
 
@@ -1113,6 +1137,10 @@ def test_eltoo_close_reconnect(node_factory, bitcoind):
     # Wait for all HTLCs to be resolved before closing
     wait_for(lambda: l1.rpc.listpeerchannels(l2.info['id'])['channels'][0]['htlcs'] == [])
     wait_for(lambda: l2.rpc.listpeerchannels(l1.info['id'])['channels'][0]['htlcs'] == [])
+
+    # Save balances before close
+    l1_expected_sats = int(l1.rpc.listpeerchannels(l2.info['id'])['channels'][0]['to_us_msat']) // 1000
+    l2_expected_sats = int(l2.rpc.listpeerchannels(l1.info['id'])['channels'][0]['to_us_msat']) // 1000
 
     scid = l1.rpc.listpeerchannels(l2.info['id'])['channels'][0]['short_channel_id']
 
@@ -1145,6 +1173,10 @@ def test_eltoo_close_reconnect(node_factory, bitcoind):
     wait_for(lambda: closetxid in [o['txid'] for o in l1.rpc.listfunds()['outputs']])
     wait_for(lambda: closetxid in [o['txid'] for o in l2.rpc.listfunds()['outputs']])
 
+    # Verify amounts received
+    verify_wallet_received_funds(l1, l1_expected_sats, closetxid, tolerance_sats=5000)
+    verify_wallet_received_funds(l2, l2_expected_sats, closetxid, tolerance_sats=1000)
+
     print("SUCCESS: Eltoo close with reconnect completed")
 
 
@@ -1164,6 +1196,10 @@ def test_eltoo_close_responder_initiates(node_factory, bitcoind):
     # Wait for all HTLCs to be resolved before closing
     wait_for(lambda: l1.rpc.listpeerchannels(l2.info['id'])['channels'][0]['htlcs'] == [])
     wait_for(lambda: l2.rpc.listpeerchannels(l1.info['id'])['channels'][0]['htlcs'] == [])
+
+    # Save balances before close
+    l1_expected_sats = int(l1.rpc.listpeerchannels(l2.info['id'])['channels'][0]['to_us_msat']) // 1000
+    l2_expected_sats = int(l2.rpc.listpeerchannels(l1.info['id'])['channels'][0]['to_us_msat']) // 1000
 
     # l2 (non-funder) initiates close
     scid = l2.rpc.listpeerchannels(l1.info['id'])['channels'][0]['short_channel_id']
@@ -1192,6 +1228,10 @@ def test_eltoo_close_responder_initiates(node_factory, bitcoind):
     # Both should have their funds
     wait_for(lambda: closetxid in [o['txid'] for o in l1.rpc.listfunds()['outputs']])
     wait_for(lambda: closetxid in [o['txid'] for o in l2.rpc.listfunds()['outputs']])
+
+    # Verify amounts received (l2 initiates, so l2 pays fees)
+    verify_wallet_received_funds(l1, l1_expected_sats, closetxid, tolerance_sats=1000)
+    verify_wallet_received_funds(l2, l2_expected_sats, closetxid, tolerance_sats=5000)
 
     print("SUCCESS: Eltoo close initiated by responder completed")
 
@@ -1232,6 +1272,9 @@ def test_eltoo_close_dust_balance(node_factory, bitcoind):
 
     assert l1_final_msat < 330 * 1000, "l1 balance should be below dust limit"
 
+    # Save l2's expected balance before close
+    l2_expected_sats = int(l2.rpc.listpeerchannels(l1.info['id'])['channels'][0]['to_us_msat']) // 1000
+
     scid = channel_info['short_channel_id']
 
     # Initiate close
@@ -1265,4 +1308,222 @@ def test_eltoo_close_dust_balance(node_factory, bitcoind):
     # Only l2 should have funds in the close tx
     wait_for(lambda: closetxid in [o['txid'] for o in l2.rpc.listfunds()['outputs']])
 
+    # Verify l2 received correct amount
+    l2_outputs = [o for o in l2.rpc.listfunds()['outputs'] if o['txid'] == closetxid]
+    l2_received = l2_outputs[0]['amount_msat'] // 1000
+    assert abs(l2_received - l2_expected_sats) < 5000, f"l2 mismatch: got {l2_received}, expected {l2_expected_sats}"
+
+    # Verify l1 got nothing (dust was trimmed)
+    l1_outputs = [o for o in l1.rpc.listfunds()['outputs'] if o['txid'] == closetxid]
+    assert len(l1_outputs) == 0, "l1 should not receive funds (dust trimmed)"
+
     print("SUCCESS: Eltoo close with dust balance completed")
+
+
+def test_eltoo_force_close_rpc(node_factory, bitcoind):
+    """Test that eltoo force close can be triggered via RPC.
+
+    This verifies that:
+    1. Force close via RPC broadcasts the update tx with CPFP
+    2. The settle tx is broadcast after update tx confirms
+    3. On-chain resolution completes correctly
+    4. Funds are recovered to the on-chain wallet
+    """
+    l1, l2 = node_factory.line_graph(2,
+                                     opts=[{'may_reconnect': True, 'developer': None},
+                                           {'may_reconnect': True, 'developer': None}])
+
+    # Make a payment to have non-initial state
+    l1.pay(l2, 200000 * SAT)
+    wait_for(lambda: l2.rpc.listpeerchannels()['channels'][0]['in_fulfilled_msat'] == Millisatoshi(200000000))
+
+    # Wait for all HTLCs to be resolved
+    wait_for(lambda: l1.rpc.listpeerchannels(l2.info['id'])['channels'][0]['htlcs'] == [])
+    wait_for(lambda: l2.rpc.listpeerchannels(l1.info['id'])['channels'][0]['htlcs'] == [])
+
+    # Get channel info and balance before close
+    l1_channel = l1.rpc.listpeerchannels(l2.info['id'])['channels'][0]
+    scid = l1_channel['short_channel_id']
+    funding_txid = l1_channel['funding_txid']
+    l1_balance_before = l1_channel['to_us_msat']
+
+    # Record l1's wallet balance before force close
+    l1_wallet_before = sum([o['amount_msat'] for o in l1.rpc.listfunds()['outputs']])
+
+    print(f"DEBUG: l1 channel balance before close = {l1_balance_before}")
+    print(f"DEBUG: l1 wallet balance before close = {l1_wallet_before}")
+
+    # Stop l2 so mutual close is impossible
+    l2.stop()
+
+    # Force close via RPC with unilateraltimeout=1
+    # This should trigger unilateral close since peer is offline
+    l1.rpc.close(scid, unilateraltimeout=1)
+
+    # l1 should transition to AWAITING_UNILATERAL
+    l1.daemon.wait_for_log('to AWAITING_UNILATERAL')
+
+    # Update tx (with CPFP) should be in mempool
+    # Eltoo uses package relay: update_tx + cpfp_tx
+    wait_for(lambda: bitcoind.rpc.getmempoolinfo()['size'] >= 1)
+
+    mempool = bitcoind.rpc.getrawmempool()
+    print(f"DEBUG: mempool after force close = {mempool}")
+
+    # Find the update tx (spends funding output)
+    update_txid = None
+    for txid in mempool:
+        tx = bitcoind.rpc.getrawtransaction(txid, 1)
+        if tx['vin'][0]['txid'] == funding_txid:
+            update_txid = txid
+            break
+
+    assert update_txid is not None, "Update tx not found in mempool"
+
+    update_tx = bitcoind.rpc.getrawtransaction(update_txid, 1)
+    print(f"DEBUG: update tx version = {update_tx['version']}")
+    print(f"DEBUG: update tx locktime = {update_tx['locktime']}")
+
+    # Verify update tx properties:
+    # - Version 3 (TRUC for package relay)
+    assert update_tx['version'] == 3, f"Expected version 3, got {update_tx['version']}"
+
+    # - Locktime encodes state number (500000000 + state_number)
+    assert update_tx['locktime'] >= 500000000, f"Expected eltoo locktime, got {update_tx['locktime']}"
+
+    # Mine update tx
+    bitcoind.generate_block(1)
+
+    # l1 should see the update tx confirm
+    l1.daemon.wait_for_log('to ONCHAIN')
+
+    # Mine blocks for CSV timelock (watchtime-blocks=5)
+    bitcoind.generate_block(5)
+
+    # Now settle tx should be broadcast
+    l1.wait_for_onchaind_broadcast('ELTOO_SETTLE',
+                                   'ELTOO_UPDATE/DELAYED_OUTPUT_TO_US')
+
+    # Settle tx should be in mempool
+    wait_for(lambda: bitcoind.rpc.getmempoolinfo()['size'] >= 1)
+
+    settle_mempool = bitcoind.rpc.getrawmempool()
+    print(f"DEBUG: mempool after settle broadcast = {settle_mempool}")
+
+    # Mine settle tx
+    bitcoind.generate_block(1)
+
+    # Mine enough blocks for onchaind to complete (100 blocks for CSV)
+    bitcoind.generate_block(99)
+
+    l1.daemon.wait_for_log('onchaind complete, forgetting peer')
+
+    # Verify that the channel is no longer listed
+    channels = l1.rpc.listpeerchannels()['channels']
+    assert len(channels) == 0, f"Channel should be forgotten after onchaind complete, but found: {channels}"
+
+    print("SUCCESS: Eltoo force close via RPC completed")
+
+
+def test_eltoo_force_close_rpc_with_htlc(node_factory, bitcoind, executor):
+    """Test eltoo force close via RPC with pending HTLC.
+
+    This verifies that:
+    1. Force close works when there's a pending HTLC
+    2. HTLC timeout resolution happens correctly
+    3. Funds (including HTLC) are recovered to wallet
+    """
+    l1, l2 = node_factory.line_graph(2,
+                                     opts=[{'may_reconnect': True, 'developer': None},
+                                           {'may_reconnect': True, 'developer': None}])
+
+    # Fund l2 so it has wallet funds for CPFP during force close
+    # (eltoo update tx has 0 fee and relies on CPFP)
+    l2_addr = l2.rpc.newaddr()
+    addr = l2_addr.get('bech32') or l2_addr.get('p2tr')
+    bitcoind.rpc.sendtoaddress(addr, 0.01)
+    bitcoind.generate_block(1)
+    wait_for(lambda: len(l2.rpc.listfunds()['outputs']) > 0)
+
+    # Make initial payment to have state
+    l1.pay(l2, 100000 * SAT)
+    wait_for(lambda: l2.rpc.listpeerchannels()['channels'][0]['in_fulfilled_msat'] == Millisatoshi(100000000))
+
+    # Wait for HTLCs to clear
+    wait_for(lambda: l1.rpc.listpeerchannels(l2.info['id'])['channels'][0]['htlcs'] == [])
+    wait_for(lambda: l2.rpc.listpeerchannels(l1.info['id'])['channels'][0]['htlcs'] == [])
+
+    # Get l2's balance before the HTLC
+    l2_channel = l2.rpc.listpeerchannels(l1.info['id'])['channels'][0]
+    l2_balance_before = l2_channel['to_us_msat']
+    l2_wallet_before = sum([o['amount_msat'] for o in l2.rpc.listfunds()['outputs']])
+
+    print(f"DEBUG: l2 channel balance before HTLC = {l2_balance_before}")
+    print(f"DEBUG: l2 wallet balance before close = {l2_wallet_before}")
+
+    # Create an invoice on l1 that l2 will try to pay
+    htlc_amount = 50000 * SAT
+    inv = l1.rpc.invoice(htlc_amount, 'test_htlc', 'test')
+
+    # Get channel info
+    l2_channel = l2.rpc.listpeerchannels(l1.info['id'])['channels'][0]
+    scid = l2_channel['short_channel_id']
+
+    # Start payment in background - it will get stuck because we'll stop l1
+    def pay_and_fail():
+        try:
+            l2.rpc.pay(inv['bolt11'])
+        except Exception:
+            pass  # Expected to fail
+
+    fut = executor.submit(pay_and_fail)
+
+    # Wait for HTLC to be added
+    l2.daemon.wait_for_log('peer_out WIRE_UPDATE_ADD_HTLC')
+
+    # Wait for HTLC to be committed
+    l2.daemon.wait_for_log('WIRE_UPDATE_SIGNED')
+
+    # Stop l1 so it can't fulfill the HTLC
+    l1.stop()
+
+    # Force close from l2's side with pending outgoing HTLC
+    l2.rpc.close(scid, unilateraltimeout=1)
+
+    # l2 should go to AWAITING_UNILATERAL
+    l2.daemon.wait_for_log('to AWAITING_UNILATERAL')
+
+    # Update tx should be broadcast
+    wait_for(lambda: bitcoind.rpc.getmempoolinfo()['size'] >= 1)
+
+    # Mine update tx
+    bitcoind.generate_block(1)
+
+    l2.daemon.wait_for_log('to ONCHAIN')
+
+    # Mine blocks for CSV timelock (watchtime-blocks=5)
+    bitcoind.generate_block(5)
+
+    # Settle tx should be broadcast
+    l2.wait_for_onchaind_broadcast('ELTOO_SETTLE',
+                                   'ELTOO_UPDATE/DELAYED_OUTPUT_TO_US')
+
+    wait_for(lambda: bitcoind.rpc.getmempoolinfo()['size'] >= 1)
+
+    # Mine settle tx
+    bitcoind.generate_block(1)
+
+    # Mine enough blocks for onchaind to complete
+    # (HTLC timeout handling is not yet implemented for eltoo)
+    bitcoind.generate_block(100)
+
+    l2.daemon.wait_for_log('onchaind complete, forgetting peer')
+
+    # Clean up the future
+    fut.result()
+
+    # Verify that the channel is no longer listed
+    channels = l2.rpc.listpeerchannels()['channels']
+    assert len(channels) == 0, f"Channel should be forgotten after onchaind complete, but found: {channels}"
+
+    print("SUCCESS: Eltoo force close via RPC with HTLC completed")

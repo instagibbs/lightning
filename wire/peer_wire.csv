@@ -481,12 +481,9 @@ msgtype,closing_signed_eltoo,32774
 msgdata,closing_signed_eltoo,channel_id,channel_id,
 msgdata,closing_signed_eltoo,fee_satoshis,u64,
 msgdata,closing_signed_eltoo,tlvs,closing_signed_eltoo_tlvs,
-tlvtype,closing_signed_eltoo_tlvs,fee_range,1
-tlvdata,closing_signed_eltoo_tlvs,fee_range,min_fee_satoshis,u64,
-tlvdata,closing_signed_eltoo_tlvs,fee_range,max_fee_satoshis,u64,
-tlvtype,closing_signed_eltoo_tlvs,nonces,2
+tlvtype,closing_signed_eltoo_tlvs,nonces,1
 tlvdata,closing_signed_eltoo_tlvs,nonces,nonce,nonce,
-tlvtype,closing_signed_eltoo_tlvs,partial_sig,3
+tlvtype,closing_signed_eltoo_tlvs,partial_sig,2
 tlvdata,closing_signed_eltoo_tlvs,partial_sig,partial_sig,partial_sig,
 msgtype,update_signed,32775
 msgdata,update_signed,channel_id,channel_id,
