@@ -1850,8 +1850,10 @@ static unsigned int eltoo_onchain_msg(struct subd *sd, const u8 *msg, const int 
 		handle_extracted_preimage(sd->channel, msg);
 		break;
 	case WIRE_ONCHAIND_MISSING_HTLC_OUTPUT:
-	case WIRE_ONCHAIND_ADD_UTXO:
 		/* TODO: implement for eltoo */
+		break;
+	case WIRE_ONCHAIND_ADD_UTXO:
+		onchain_add_utxo(sd->channel, msg);
 		break;
 	case WIRE_ONCHAIND_NOTIFY_PENALTY_ADJ:
 		handle_onchain_log_penalty_adj(sd->channel, msg);

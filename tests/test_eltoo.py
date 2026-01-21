@@ -654,6 +654,17 @@ def test_eltoo_htlc(node_factory, bitcoind, executor, chainparams):
     assert len(l1.rpc.listpeerchannels()['channels']) == 0, "l1 channel should be forgotten"
     assert len(l2.rpc.listpeerchannels()['channels']) == 0, "l2 channel should be forgotten"
 
+    # Verify wallet tracked the settle outputs
+    l1_funds = l1.rpc.listfunds()['outputs']
+    l2_funds = l2.rpc.listfunds()['outputs']
+    l1_total_msat = sum(o['amount_msat'] for o in l1_funds)
+    l2_total_msat = sum(o['amount_msat'] for o in l2_funds)
+    print(f"DEBUG: After unilateral close - l1: {l1_total_msat}, l2: {l2_total_msat}")
+
+    # Both should have recovered funds from on-chain resolution
+    assert l1_total_msat > 0, "l1 should have recovered funds from unilateral close"
+    assert l2_total_msat > 0, "l2 should have recovered funds from unilateral close"
+
 
 def test_eltoo_restart_after_funding(node_factory, bitcoind):
     """Test that eltoo channel state is correctly persisted and restored after node restart.
@@ -1421,6 +1432,15 @@ def test_eltoo_force_close_rpc(node_factory, bitcoind):
     # Verify that the channel is no longer listed
     channels = l1.rpc.listpeerchannels()['channels']
     assert len(channels) == 0, f"Channel should be forgotten after onchaind complete, but found: {channels}"
+
+    # Verify wallet tracked the settle output
+    l1_funds = l1.rpc.listfunds()['outputs']
+    l1_total_msat = sum(o['amount_msat'] for o in l1_funds)
+    print(f"DEBUG: l1 wallet after force close = {l1_total_msat}")
+
+    # l1 should have recovered their channel balance (minus fees)
+    # Channel balance was ~800000000 msat after paying 200000 sat to l2
+    assert l1_total_msat > 700000000, f"l1 should have recovered funds, got {l1_total_msat}"
 
     print("SUCCESS: Eltoo force close via RPC completed")
 

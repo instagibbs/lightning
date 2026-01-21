@@ -1000,6 +1000,21 @@ static void track_settle_outputs(struct tracked_output ***outs,
 		u8 *to_us = scriptpubkey_p2tr(tmpctx, &keyset->self_settle_key);
 		status_debug("to_us script: %s", tal_hex(tmpctx, to_us));
 		if (memcmp(settle_out->script, to_us, tal_count(to_us)) == 0) {
+			/* Our balance output - tell wallet so it can spend it */
+			struct bitcoin_outpoint outpoint;
+			outpoint.txid = tx_parts->txid;
+			outpoint.n = j;
+			status_debug("Found our balance output at %s:%u for %s",
+				fmt_bitcoin_txid(tmpctx, &outpoint.txid),
+				outpoint.n,
+				fmt_amount_sat(tmpctx, satoshis));
+			wire_sync_write(REQ_FD,
+				take(towire_onchaind_add_utxo(NULL, &outpoint,
+					NULL, /* per_commit_point not needed for eltoo */
+					satoshis,
+					tx_blockheight,
+					to_us,
+					0 /* csv_lock - no CSV for balance outputs */)));
 			continue;
 		}
 
