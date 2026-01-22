@@ -8,6 +8,8 @@
 /* Explicit channel types */
 struct channel_type *channel_type_static_remotekey(const tal_t *ctx);
 struct channel_type *channel_type_anchors_zero_fee_htlc(const tal_t *ctx);
+/* BOLT PR #1228: Zero-fee commitment channels */
+struct channel_type *channel_type_zero_fee_commitments(const tal_t *ctx);
 
 /* channel_type variants */
 void channel_type_set_zeroconf(struct channel_type *channel_type);

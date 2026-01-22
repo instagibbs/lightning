@@ -139,6 +139,10 @@ struct feature_set *feature_set_dup(const tal_t *ctx,
 #define OPT_DUAL_FUND 				28
 #define OPT_QUIESCE 				34
 #define OPT_ONION_MESSAGES			38
+/* BOLT PR #1228:
+ * | 40/41 | `option_zero_fee_commitments` | ... IN ...
+ */
+#define OPT_ZERO_FEE_COMMITMENTS		40
 #define OPT_PROVIDE_STORAGE			42
 #define OPT_CHANNEL_TYPE			44
 #define OPT_SCID_ALIAS				46

@@ -1258,6 +1258,19 @@ static char *opt_set_shutdown_wrong_funding(struct lightningd *ld)
 	return NULL;
 }
 
+/* BOLT PR #1228: Zero-fee commitment channels */
+static char *opt_set_zero_fee_commitments(struct lightningd *ld)
+{
+	/* Zero-fee commitments require anchors_zero_fee_htlc_tx */
+	feature_set_or(ld->our_features,
+		       take(feature_set_for_feature(NULL,
+						    OPTIONAL_FEATURE(OPT_ANCHORS_ZERO_FEE_HTLC_TX))));
+	feature_set_or(ld->our_features,
+		       take(feature_set_for_feature(NULL,
+						    OPTIONAL_FEATURE(OPT_ZERO_FEE_COMMITMENTS))));
+	return NULL;
+}
+
 static char *opt_set_peer_storage(struct lightningd *ld)
 {
 	if (!opt_deprecated_ok(ld, "experimental-peer-storage", NULL,
@@ -1480,6 +1493,12 @@ static void register_opts(struct lightningd *ld)
 	opt_register_early_noarg("--experimental-peer-storage",
 				 opt_set_peer_storage, ld,
 				 opt_hidden);
+
+	/* BOLT PR #1228: Zero-fee commitment channels */
+	opt_register_early_noarg("--experimental-zero-fee-channels",
+				 opt_set_zero_fee_commitments, ld,
+				 "experimental: Enable zero-fee commitment channels"
+				 " (requires Bitcoin Core v29+ for v3 transactions)");
 
 	clnopt_noarg("--help|-h", OPT_EXITS,
 		     opt_lightningd_usage, ld, "Print this message.");

@@ -159,6 +159,9 @@ int main(int argc, char *argv[])
 			"static_remotekey/even");
 	assert_names_eq(channel_type_name(tmpctx, channel_type_anchors_zero_fee_htlc(tmpctx)),
 			"static_remotekey/even anchors/even");
+	/* BOLT PR #1228: Zero-fee commitment channels */
+	assert_names_eq(channel_type_name(tmpctx, channel_type_zero_fee_commitments(tmpctx)),
+			"static_remotekey/even anchors/even zero_fee_commitments/even");
 
 	assert(calc_channel_state_max() == CHANNEL_STATE_MAX);
 

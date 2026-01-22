@@ -245,6 +245,38 @@ static void test_feature_trim(void)
 	}
 }
 
+/* Test zero-fee commitment feature bits (BOLT PR #1228) */
+static void test_zero_fee_feature_bits(void)
+{
+	struct feature_set *fset;
+	const char *name;
+
+	/* Create feature set for OPT_ZERO_FEE_COMMITMENTS */
+	fset = feature_set_for_feature(tmpctx,
+				       OPTIONAL_FEATURE(OPT_ZERO_FEE_COMMITMENTS));
+
+	/* Feature should appear in INIT context */
+	assert(feature_offered(fset->bits[INIT_FEATURE],
+			       OPT_ZERO_FEE_COMMITMENTS));
+
+	/* Feature should appear in NODE_ANNOUNCE context */
+	assert(feature_offered(fset->bits[NODE_ANNOUNCE_FEATURE],
+			       OPT_ZERO_FEE_COMMITMENTS));
+
+	/* Feature should NOT appear in CHANNEL context */
+	assert(!feature_offered(fset->bits[CHANNEL_FEATURE],
+				OPT_ZERO_FEE_COMMITMENTS));
+
+	/* Verify feature name is correct */
+	name = feature_name(tmpctx, OPTIONAL_FEATURE(OPT_ZERO_FEE_COMMITMENTS));
+	assert(strstr(name, "zero_fee_commitments") != NULL);
+	assert(strstr(name, "odd") != NULL);
+
+	name = feature_name(tmpctx, COMPULSORY_FEATURE(OPT_ZERO_FEE_COMMITMENTS));
+	assert(strstr(name, "zero_fee_commitments") != NULL);
+	assert(strstr(name, "even") != NULL);
+}
+
 int main(int argc, char *argv[])
 {
 	u8 *bits;
@@ -330,6 +362,7 @@ int main(int argc, char *argv[])
 	test_feature_set_or();
 	test_feature_trim();
 	test_feature_set_sub();
+	test_zero_fee_feature_bits();
 
 	common_shutdown();
 	return 0;

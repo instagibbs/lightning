@@ -73,6 +73,23 @@ struct channel_type *channel_type_anchors_zero_fee_htlc(const tal_t *ctx)
 	return type;
 }
 
+/* BOLT PR #1228: Zero-fee commitment channels
+ * This channel type uses v3/TRUC transactions and P2A anchors.
+ * It includes anchors_zero_fee_htlc_tx and static_remotekey as prerequisites.
+ */
+struct channel_type *channel_type_zero_fee_commitments(const tal_t *ctx)
+{
+	struct channel_type *type = new_channel_type(ctx);
+
+	set_feature_bit(&type->features,
+			COMPULSORY_FEATURE(OPT_ZERO_FEE_COMMITMENTS));
+	set_feature_bit(&type->features,
+			COMPULSORY_FEATURE(OPT_ANCHORS_ZERO_FEE_HTLC_TX));
+	set_feature_bit(&type->features,
+			COMPULSORY_FEATURE(OPT_STATIC_REMOTEKEY));
+	return type;
+}
+
 bool channel_type_has(const struct channel_type *type, int feature)
 {
 	return feature_offered(type->features, feature);
@@ -115,6 +132,7 @@ struct channel_type *channel_type_accept(const tal_t *ctx,
 	proposed.features = tal_dup_talarr(tmpctx, u8, t);
 
 	static const size_t feats[] = {
+		OPT_ZERO_FEE_COMMITMENTS,
 		OPT_ANCHORS_ZERO_FEE_HTLC_TX,
 		OPT_STATIC_REMOTEKEY,
 		OPT_SCID_ALIAS,
@@ -155,7 +173,9 @@ struct channel_type *channel_type_accept(const tal_t *ctx,
 	if (channel_type_eq(&proposed,
 			    channel_type_static_remotekey(tmpctx)) ||
 	    channel_type_eq(&proposed,
-			    channel_type_anchors_zero_fee_htlc(tmpctx))) {
+			    channel_type_anchors_zero_fee_htlc(tmpctx)) ||
+	    channel_type_eq(&proposed,
+			    channel_type_zero_fee_commitments(tmpctx))) {
 		/* At this point we know it matches, and maybe has
 		 * a couple of extra options. So let's just reply
 		 * with their proposal. */
