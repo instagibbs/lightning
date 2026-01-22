@@ -373,8 +373,52 @@ struct bitcoin_tx *commit_tx(const tal_t *ctx,
 	 *      [`to_local_anchor` output]...
 	 *    * if `to_remote` exists or there are untrimmed HTLCs, add a
 	 *      [`to_remote_anchor` output]
+	 *
+	 * BOLT PR #1228: For zero-fee commitments, add a single shared P2A
+	 * anchor instead of two separate anchors. The anchor amount is:
+	 * sum(trimmed_htlcs) + sum(msat_remainders), capped at 240 sats.
 	 */
-	if (option_anchor_outputs || option_anchors_zero_fee_htlc_tx) {
+	if (option_zero_fee_commitments) {
+		/* P2A anchor for zero-fee commitment channels */
+		if (to_local || to_remote || untrimmed != 0) {
+			struct amount_msat trimmed_msat = AMOUNT_MSAT(0);
+			struct amount_sat anchor_amount;
+
+			/* Calculate sum of trimmed HTLC amounts */
+			if (!commit_tx_amount_trimmed(htlcs, feerate_per_kw,
+						      dust_limit,
+						      option_anchor_outputs,
+						      option_anchors_zero_fee_htlc_tx,
+						      side, &trimmed_msat)) {
+				/* Overflow shouldn't happen in practice */
+				trimmed_msat = AMOUNT_MSAT(0);
+			}
+
+			/* Add msat remainders from self_pay and other_pay.
+			 * These are the sub-satoshi amounts that get rounded
+			 * down when converting to satoshi outputs. */
+			if (amount_msat_greater_eq_sat(self_pay, dust_limit)) {
+				struct amount_msat remainder;
+				remainder.millisatoshis = self_pay.millisatoshis % 1000;
+				if (!amount_msat_accumulate(&trimmed_msat, remainder))
+					trimmed_msat = AMOUNT_MSAT(0);
+			}
+			if (amount_msat_greater_eq_sat(other_pay, dust_limit)) {
+				struct amount_msat remainder;
+				remainder.millisatoshis = other_pay.millisatoshis % 1000;
+				if (!amount_msat_accumulate(&trimmed_msat, remainder))
+					trimmed_msat = AMOUNT_MSAT(0);
+			}
+
+			/* Convert to satoshis (rounding down) */
+			anchor_amount = amount_msat_to_sat_round_down(trimmed_msat);
+
+			tx_add_p2a_anchor_output(tx, anchor_amount);
+			/* P2A anchor is shared, no specific owner */
+			(*htlcmap)[n] = NULL;
+			n++;
+		}
+	} else if (option_anchor_outputs || option_anchors_zero_fee_htlc_tx) {
 		if (to_local || untrimmed != 0) {
 			tx_add_anchor_output(tx, local_funding_key);
 			(*htlcmap)[n] = NULL;

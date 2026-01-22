@@ -545,14 +545,16 @@ bool is_known_scripttype(const u8 *script, size_t script_len)
 		|| is_p2wsh(script, script_len, NULL)
 		|| is_p2sh(script, script_len, NULL)
 		|| is_p2pkh(script, script_len, NULL)
-		|| is_p2tr(script, script_len, NULL);
+		|| is_p2tr(script, script_len, NULL)
+		|| is_p2a(script, script_len);
 }
 
 bool is_known_segwit_scripttype(const u8 *script, size_t script_len)
 {
 	return is_p2wpkh(script, script_len, NULL)
 		|| is_p2wsh(script, script_len, NULL)
-		|| is_p2tr(script, script_len, NULL);
+		|| is_p2tr(script, script_len, NULL)
+		|| is_p2a(script, script_len);
 }
 
 u8 **bitcoin_witness_sig_and_element(const tal_t *ctx,
@@ -979,4 +981,31 @@ bool scripteq(const u8 *s1, const u8 *s2)
 	memcheck(s1, s1_len);
 	memcheck(s2, s2_len);
 	return memeq(s1, s1_len, s2, s2_len);
+}
+
+/* BOLT PR #1228:
+ * Pay-to-Anchor (P2A) output for zero-fee commitment channels.
+ * Script: OP_1 <0x4e73>
+ * This is an anyone-can-spend output used solely for CPFP fee bumping.
+ */
+u8 *scriptpubkey_p2a(const tal_t *ctx)
+{
+	/* P2A script: OP_1 (0x51) + PUSH 2 bytes (0x02) + 0x4e73 */
+	static const u8 P2A_SCRIPT[] = { 0x51, 0x02, 0x4e, 0x73 };
+	return tal_dup_arr(ctx, u8, P2A_SCRIPT, sizeof(P2A_SCRIPT), 0);
+}
+
+bool is_p2a(const u8 *script, size_t script_len)
+{
+	if (script_len != BITCOIN_SCRIPTPUBKEY_P2A_LEN)
+		return false;
+	if (script[0] != OP_1)
+		return false;
+	if (script[1] != OP_PUSHBYTES(2))
+		return false;
+	if (script[2] != 0x4e)
+		return false;
+	if (script[3] != 0x73)
+		return false;
+	return true;
 }

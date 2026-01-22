@@ -132,4 +132,15 @@ u8 *to_self_wscript(const tal_t *ctx,
 void tx_add_anchor_output(struct bitcoin_tx *tx,
 			  const struct pubkey *funding_key);
 
+/* BOLT PR #1228:
+ * P2A (Pay-to-Anchor) output for zero-fee commitment channels.
+ * The maximum anchor amount is 240 satoshis (P2A dust limit).
+ */
+#define P2A_MAX_ANCHOR_SAT 240
+
+/* Add a P2A anchor output for zero-fee commitment channels.
+ * The anchor_amount will be capped at P2A_MAX_ANCHOR_SAT. */
+void tx_add_p2a_anchor_output(struct bitcoin_tx *tx,
+			      struct amount_sat anchor_amount);
+
 #endif /* LIGHTNING_COMMON_INITIAL_COMMIT_TX_H */

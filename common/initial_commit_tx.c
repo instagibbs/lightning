@@ -70,6 +70,26 @@ void tx_add_anchor_output(struct bitcoin_tx *tx,
 	bitcoin_tx_add_output(tx, p2wsh, wscript, AMOUNT_SAT(330));
 }
 
+/* BOLT PR #1228:
+ * P2A (Pay-to-Anchor) output for zero-fee commitment channels.
+ * anchor_amount = sum(trimmed_htlcs) + sum(msat_remainders), capped at 240 sats.
+ */
+void tx_add_p2a_anchor_output(struct bitcoin_tx *tx,
+			      struct amount_sat anchor_amount)
+{
+	u8 *p2a_script = scriptpubkey_p2a(tmpctx);
+
+	/* BOLT PR #1228:
+	 * The P2A anchor amount is capped at 240 satoshis (P2A dust limit).
+	 * The anchor can be 0 sats when there's nothing to collect.
+	 */
+	if (amount_sat_greater(anchor_amount, AMOUNT_SAT(P2A_MAX_ANCHOR_SAT)))
+		anchor_amount = AMOUNT_SAT(P2A_MAX_ANCHOR_SAT);
+
+	/* P2A has no witness script, just the scriptpubkey */
+	bitcoin_tx_add_output(tx, p2a_script, NULL, anchor_amount);
+}
+
 struct bitcoin_tx *initial_commit_tx(const tal_t *ctx,
 				     const struct bitcoin_outpoint *funding,
 				     struct amount_sat funding_sats,
@@ -131,8 +151,13 @@ struct bitcoin_tx *initial_commit_tx(const tal_t *ctx,
 	 * transaction, also subtract two times the fixed anchor size
 	 * of 330 sats from the funder (either `to_local` or
 	 * `to_remote`).
+	 *
+	 * BOLT PR #1228: For zero-fee commitments, the anchor is P2A
+	 * with a calculated amount (not fixed 330 sats each), so we
+	 * don't add the 660 sat deduction for zero-fee channels.
 	 */
 	if ((option_anchor_outputs || option_anchors_zero_fee_htlc_tx)
+	    && !option_zero_fee_commitments
 	    && !amount_sat_add(&base_fee, base_fee, AMOUNT_SAT(660))) {
 		*err_reason = "Funder cannot afford anchor outputs";
 		return NULL;
@@ -269,8 +294,41 @@ struct bitcoin_tx *initial_commit_tx(const tal_t *ctx,
 	 *      [`to_local_anchor` output]...
 	 *    * if `to_remote` exists or there are untrimmed HTLCs, add a
 	 *      [`to_remote_anchor` output]
+	 *
+	 * BOLT PR #1228: For zero-fee commitments, add a single shared P2A
+	 * anchor instead of two separate anchors. The anchor amount is:
+	 * sum(trimmed_htlcs) + sum(msat_remainders), capped at 240 sats.
+	 * For initial commit (no HTLCs), only msat remainders contribute.
 	 */
-	if (option_anchor_outputs || option_anchors_zero_fee_htlc_tx) {
+	if (option_zero_fee_commitments) {
+		/* P2A anchor for zero-fee commitment channels */
+		if (to_local || to_remote || untrimmed != 0) {
+			struct amount_msat anchor_msat = AMOUNT_MSAT(0);
+			struct amount_sat anchor_amount;
+
+			/* No trimmed HTLCs in initial commit tx.
+			 * Collect msat remainders from self_pay and other_pay. */
+			if (to_local) {
+				struct amount_msat remainder;
+				remainder.millisatoshis = self_pay.millisatoshis % 1000;
+				if (!amount_msat_accumulate(&anchor_msat, remainder))
+					anchor_msat = AMOUNT_MSAT(0);
+			}
+			if (to_remote) {
+				struct amount_msat remainder;
+				remainder.millisatoshis = other_pay.millisatoshis % 1000;
+				if (!amount_msat_accumulate(&anchor_msat, remainder))
+					anchor_msat = AMOUNT_MSAT(0);
+			}
+
+			/* Convert to satoshis (rounding down) */
+			anchor_amount = amount_msat_to_sat_round_down(anchor_msat);
+
+			tx_add_p2a_anchor_output(tx, anchor_amount);
+			output_order[n] = NULL;
+			n++;
+		}
+	} else if (option_anchor_outputs || option_anchors_zero_fee_htlc_tx) {
 		if (to_local || untrimmed != 0) {
 			tx_add_anchor_output(tx, &funding_key[side]);
 			output_order[n] = NULL;

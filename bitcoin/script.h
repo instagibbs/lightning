@@ -178,6 +178,12 @@ bool is_to_remote_anchored_witness_script(const u8 *script, size_t script_len);
 /* Is this an anchor witness script? */
 bool is_anchor_witness_script(const u8 *script, size_t script_len);
 
+/* Pay-to-Anchor (P2A) output script for zero-fee commitment channels (BOLT PR #1228) */
+u8 *scriptpubkey_p2a(const tal_t *ctx);
+
+/* Is this a P2A (Pay-to-Anchor) output? */
+bool is_p2a(const u8 *script, size_t script_len);
+
 /* Are these two scripts equal? */
 bool scripteq(const u8 *s1, const u8 *s2);
 
@@ -198,5 +204,8 @@ void script_push_bytes(u8 **scriptp, const void *mem, size_t len);
 
 /* OP_1 + PUSH(32-byte-key) */
 #define BITCOIN_SCRIPTPUBKEY_P2TR_LEN (1 + 1 + 32)
+
+/* OP_1 + PUSH(2-byte-anchor) for P2A (Pay-to-Anchor) */
+#define BITCOIN_SCRIPTPUBKEY_P2A_LEN (1 + 1 + 2)
 
 #endif /* LIGHTNING_BITCOIN_SCRIPT_H */
