@@ -89,6 +89,24 @@ void bitcoind_sendrawtx_(const tal_t *ctx,
 						bool, const char *),	\
 			    (arg))
 
+/* BOLT PR #1228: Submit a package of transactions for zero-fee commitment
+ * channels. The hextxs array should contain transactions in child-pays-for-
+ * parent order (parent first, then child). Requires Bitcoin Core v29+. */
+void bitcoind_submitpackage_(const tal_t *ctx,
+			     struct bitcoind *bitcoind,
+			     const char *id_prefix TAKES,
+			     const char **hextxs,
+			     void (*cb)(struct bitcoind *,
+					bool success, const char *msg, void *),
+			     void *arg);
+#define bitcoind_submitpackage(ctx, bitcoind_, id_prefix, hextxs, cb, arg) \
+	bitcoind_submitpackage_((ctx), (bitcoind_), (id_prefix), (hextxs), \
+				typesafe_cb_preargs(void, void *,	\
+						    (cb), (arg),	\
+						    struct bitcoind *,	\
+						    bool, const char *), \
+				(arg))
+
 void bitcoind_getfilteredblock_(const tal_t *ctx,
 				struct bitcoind *bitcoind, u32 height,
 				void (*cb)(struct bitcoind *bitcoind,

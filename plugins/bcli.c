@@ -587,6 +587,67 @@ static struct command_result *process_sendrawtransaction(struct bitcoin_cli *bcl
 	return command_finished(bcli->cmd, response);
 }
 
+/* Bitcoin Core RPC error code for packages already in chain */
+#define RPC_VERIFY_ALREADY_IN_CHAIN -27
+
+/* Process the response from submitpackage RPC.
+ * Bitcoin Core v29+ returns:
+ * {
+ *   "package_msg": "success" or error description,
+ *   "tx-results": { "<txid>": { ... }, ... },
+ *   "replaced-transactions": [...]
+ * }
+ * We simplify this to success/errmsg for CLN's consumption.
+ */
+static struct command_result *process_submitpackage(struct bitcoin_cli *bcli)
+{
+	struct json_stream *response;
+	const jsmntok_t *result, *pkg_msg_tok;
+	const char *pkg_msg = NULL;
+	bool success = false;
+
+	/* Log for debugging */
+	if (bcli->exitstatus)
+		plugin_log(bcli->cmd->plugin, LOG_DBG,
+			   "submitpackage exit %i (%s) %.*s",
+			   *bcli->exitstatus, bcli_args(tmpctx, bcli),
+			   *bcli->exitstatus ?
+				(u32)bcli->output_bytes-1 : 0,
+				bcli->output);
+
+	/* Parse the JSON response to check package_msg */
+	if (*bcli->exitstatus == 0 ||
+	    *bcli->exitstatus == RPC_VERIFY_ALREADY_IN_CHAIN) {
+		result = json_parse_simple(tmpctx, bcli->output,
+					   bcli->output_bytes);
+		if (result) {
+			pkg_msg_tok = json_get_member(bcli->output, result,
+						      "package_msg");
+			if (pkg_msg_tok) {
+				pkg_msg = json_strdup(tmpctx, bcli->output,
+						      pkg_msg_tok);
+				/* "success" means all txs accepted to mempool */
+				success = streq(pkg_msg, "success");
+			}
+		}
+		/* If we couldn't parse, assume success if exit status was 0 */
+		if (!pkg_msg && *bcli->exitstatus == 0)
+			success = true;
+	}
+
+	response = jsonrpc_stream_success(bcli->cmd);
+	json_add_bool(response, "success", success);
+	if (!success && bcli->output_bytes > 0) {
+		json_add_string(response, "errmsg",
+				tal_strndup(bcli->cmd,
+					    bcli->output, bcli->output_bytes-1));
+	} else {
+		json_add_string(response, "errmsg", "");
+	}
+
+	return command_finished(bcli->cmd, response);
+}
+
 struct getrawblock_stash {
 	const char *block_hash;
 	u32 block_height;
@@ -1003,6 +1064,45 @@ static struct command_result *sendrawtransaction(struct command *cmd,
 	return command_still_pending(cmd);
 }
 
+/* Submit a package of transactions to the Bitcoin network.
+ * BOLT PR #1228: Used for zero-fee commitment channels where the commitment
+ * tx has 0 fees and must be submitted as a package with a CPFP child tx.
+ * Requires Bitcoin Core v29+ which supports package relay.
+ * Calls `submitpackage` with a JSON array of raw txs.
+ */
+static struct command_result *submitpackage(struct command *cmd,
+					    const char *buf,
+					    const jsmntok_t *toks)
+{
+	const jsmntok_t *txs_tok;
+	char *package_json;
+
+	/* Parse the txs parameter - array of hex strings */
+	if (!param(cmd, buf, toks,
+		   p_req("txs", param_array, &txs_tok),
+		   NULL))
+		return command_param_failed();
+
+	/* Build the JSON array string for bitcoin-cli.
+	 * Format: ["<hex1>", "<hex2>", ...] */
+	package_json = tal_strdup(tmpctx, "[");
+	for (size_t i = 0; i < txs_tok->size; i++) {
+		const jsmntok_t *tx_tok = json_get_arr(txs_tok, i);
+		const char *tx_hex = json_strdup(tmpctx, buf, tx_tok);
+		if (i > 0)
+			tal_append_fmt(&package_json, ",");
+		tal_append_fmt(&package_json, "\"%s\"", tx_hex);
+	}
+	tal_append_fmt(&package_json, "]");
+
+	start_bitcoin_cli(NULL, cmd, process_submitpackage, true,
+			  BITCOIND_HIGH_PRIO, NULL,
+			  "submitpackage",
+			  package_json, NULL);
+
+	return command_still_pending(cmd);
+}
+
 static struct command_result *getutxout(struct command *cmd,
                                        const char *buf,
                                        const jsmntok_t *toks)
@@ -1160,6 +1260,10 @@ static const struct plugin_command commands[] = {
 	{
 		"sendrawtransaction",
 		sendrawtransaction
+	},
+	{
+		"submitpackage",
+		submitpackage
 	},
 	{
 		"getutxout",

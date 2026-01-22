@@ -368,6 +368,88 @@ void bitcoind_sendrawtx_(const tal_t *ctx,
 	bitcoin_plugin_send(bitcoind, req);
 }
 
+/* `submitpackage`
+ *
+ * BOLT PR #1228: Submit a package of transactions to the Bitcoin network.
+ * Used for zero-fee commitment channels where commitment tx has 0 fees
+ * and must be submitted as a package with a CPFP child transaction.
+ * Requires Bitcoin Core v29+ which supports package relay.
+ *
+ * Plugin response:
+ * {
+ *	"success": <true|false>,
+ *	"errmsg": "<not empty if !success>"
+ * }
+ */
+
+struct submitpackage_call {
+	struct bitcoind *bitcoind;
+	void (*cb)(struct bitcoind *bitcoind,
+		   bool success,
+		   const char *err_msg,
+		   void *);
+	void *cb_arg;
+};
+
+static void submitpackage_callback(const char *buf, const jsmntok_t *toks,
+				   const jsmntok_t *idtok,
+				   struct submitpackage_call *call)
+{
+	const char *err;
+	const char *errmsg = NULL;
+	bool success = false;
+
+	err = json_scan(tmpctx, buf, toks, "{result:{success:%}}",
+			JSON_SCAN(json_to_bool, &success));
+	if (err) {
+		bitcoin_plugin_error(call->bitcoind, buf, toks,
+				     "submitpackage",
+				     "bad 'result' field: %s", err);
+	} else if (!success) {
+		err = json_scan(tmpctx, buf, toks, "{result:{errmsg:%}}",
+				JSON_SCAN_TAL(tmpctx, json_strdup, &errmsg));
+		if (err)
+			bitcoin_plugin_error(call->bitcoind, buf, toks,
+					     "submitpackage",
+					     "bad 'errmsg' field: %s",
+					     err);
+	}
+
+	/* In case they don't free it, we will. */
+	tal_steal(tmpctx, call);
+	call->cb(call->bitcoind, success, errmsg, call->cb_arg);
+}
+
+void bitcoind_submitpackage_(const tal_t *ctx,
+			     struct bitcoind *bitcoind,
+			     const char *id_prefix,
+			     const char **hextxs,
+			     void (*cb)(struct bitcoind *bitcoind,
+					bool success, const char *msg, void *),
+			     void *cb_arg)
+{
+	struct jsonrpc_request *req;
+	struct submitpackage_call *call = tal(ctx, struct submitpackage_call);
+
+	call->bitcoind = bitcoind;
+	call->cb = cb;
+	call->cb_arg = cb_arg;
+	log_debug(bitcoind->log, "submitpackage: %zu transactions",
+		  tal_count(hextxs));
+
+	req = jsonrpc_request_start(call, "submitpackage",
+				    id_prefix,
+				    bitcoind->log,
+				    NULL, submitpackage_callback,
+				    call);
+	json_array_start(req->stream, "txs");
+	for (size_t i = 0; i < tal_count(hextxs); i++)
+		json_add_string(req->stream, NULL, hextxs[i]);
+	json_array_end(req->stream);
+	jsonrpc_request_end(req);
+	bitcoin_plugin_send(bitcoind, req);
+}
+
 /* `getrawblockbyheight`
  *
  * If no block were found at that height, will set each field to `null`.
