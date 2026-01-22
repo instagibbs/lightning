@@ -677,8 +677,9 @@ static void validate_zero_fee_commitment_tx(struct peer *peer,
 	/* BOLT PR #1228:
 	 * Zero-fee commitment transactions use a single shared P2A anchor
 	 * output (OP_1 <0x4e73>) for CPFP fee bumping.
-	 * The anchor amount MUST be <= 240 sats (P2A dust limit). */
-	bool found_p2a = false;
+	 * The anchor amount MUST be <= 240 sats (P2A dust limit).
+	 * There MUST be exactly ONE P2A anchor output. */
+	size_t p2a_count = 0;
 	for (size_t i = 0; i < tx->wtx->num_outputs; i++) {
 		const u8 *script = tx->wtx->outputs[i].script;
 		size_t script_len = tx->wtx->outputs[i].script_len;
@@ -697,14 +698,21 @@ static void validate_zero_fee_commitment_tx(struct peer *peer,
 						fmt_amount_sat(tmpctx, anchor_amount),
 						P2A_MAX_ANCHOR_SAT);
 			}
-			found_p2a = true;
-			break;
+			p2a_count++;
 		}
 	}
 
-	if (!found_p2a) {
+	/* BOLT PR #1228:
+	 * There MUST be exactly one P2A anchor output.
+	 * Zero or multiple P2A outputs is a protocol violation. */
+	if (p2a_count == 0) {
 		peer_failed_err(peer->pps, &peer->channel_id,
 				"Zero-fee commitment tx missing P2A anchor output");
+	}
+	if (p2a_count > 1) {
+		peer_failed_err(peer->pps, &peer->channel_id,
+				"Zero-fee commitment tx has %zu P2A outputs, expected 1",
+				p2a_count);
 	}
 }
 

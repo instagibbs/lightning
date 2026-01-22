@@ -3106,7 +3106,7 @@ def test_zero_fee_commitments_unilateral_close(node_factory, bitcoind):
     l1.fundwallet(FUNDAMOUNT * 2)
 
     # Record initial wallet balance
-    l1_initial_funds = sum([o['amount_msat'] for o in l1.rpc.listfunds()['outputs']])
+    l1_initial_funds = Millisatoshi(sum([int(o['amount_msat']) for o in l1.rpc.listfunds()['outputs']]))
 
     l1.connect(l2)
 
@@ -3141,18 +3141,24 @@ def test_zero_fee_commitments_unilateral_close(node_factory, bitcoind):
     # Wait for state change to ONCHAIN (requires confirmation)
     l1.daemon.wait_for_log(' to ONCHAIN')
 
-    # Wait for onchaind to process
-    l1.daemon.wait_for_log('Propose handling .* by OUR_UNILATERAL')
+    # Wait for onchaind to process - it logs "Telling lightningd about X to resolve OUR_UNILATERAL/Y"
+    l1.daemon.wait_for_log('Telling lightningd about .* to resolve OUR_UNILATERAL')
 
-    # Generate enough blocks for CSV timeout and full resolution
-    # to_self_delay is typically 6 blocks in tests
-    bitcoind.generate_block(100)
+    # Generate blocks to satisfy CSV timelock (to_self_delay is 6 in tests),
+    # then wait for the sweep tx to be broadcast, then mine it.
+    bitcoind.generate_block(6)
+
+    # Wait for sendrawtx to be sent (the sweep tx broadcast)
+    l1.daemon.wait_for_log('sendrawtx exit 0')
+
+    # Now mine more blocks to confirm everything
+    bitcoind.generate_block(100, wait_for_mempool=1)
 
     # Wait for onchaind to complete
     l1.daemon.wait_for_log('onchaind complete, forgetting peer')
 
     # Verify funds are back in the wallet
-    l1_final_funds = sum([o['amount_msat'] for o in l1.rpc.listfunds()['outputs']])
+    l1_final_funds = Millisatoshi(sum([int(o['amount_msat']) for o in l1.rpc.listfunds()['outputs']]))
 
     # The final funds should be roughly equal to:
     # initial funds - amount sent to l2 - on-chain fees
@@ -3225,10 +3231,18 @@ def test_zero_fee_commitments_their_unilateral_close(node_factory, bitcoind):
     l1.daemon.wait_for_log(' to ONCHAIN')
 
     # l1 should see it's their (remote's) unilateral close
-    l1.daemon.wait_for_log('Propose handling .* by THEIR_UNILATERAL')
+    l1.daemon.wait_for_log('Telling lightningd about .* to resolve THEIR_UNILATERAL')
 
-    # Generate enough blocks for full resolution
-    bitcoind.generate_block(100)
+    # For THEIR_UNILATERAL, there's no CSV delay for our outputs (they go to us
+    # via a simple p2wpkh), but l2 has CSV on their outputs.
+    # Wait for sweep txs to be broadcast then mine.
+    bitcoind.generate_block(6)
+
+    # Wait for sendrawtx (sweep tx broadcast)
+    l2.daemon.wait_for_log('sendrawtx exit 0')
+
+    # Now mine more blocks to confirm everything
+    bitcoind.generate_block(100, wait_for_mempool=1)
 
     # Wait for onchaind to complete
     l1.daemon.wait_for_log('onchaind complete, forgetting peer')
@@ -3236,11 +3250,11 @@ def test_zero_fee_commitments_their_unilateral_close(node_factory, bitcoind):
 
     # Verify l1's funds are recovered
     l1_final_outputs = l1.rpc.listfunds()['outputs']
-    l1_final_funds = sum([o['amount_msat'] for o in l1_final_outputs])
+    l1_final_funds = Millisatoshi(sum([int(o['amount_msat']) for o in l1_final_outputs]))
 
     # l1 should have recovered approximately their channel balance
     # (minus any fees)
-    expected_min = l1_balance_before - Millisatoshi(50000000)  # Allow 0.0005 BTC for fees
+    expected_min = Millisatoshi(l1_balance_before) - Millisatoshi(50000000)  # Allow 0.0005 BTC for fees
     assert l1_final_funds >= expected_min, f"Expected at least {expected_min} but got {l1_final_funds}"
 
     # Verify no channels remain
