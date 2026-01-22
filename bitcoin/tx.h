@@ -11,6 +11,10 @@
  * And bitcoind uses this value. */
 #define BITCOIN_TX_RBF_SEQUENCE 0xFFFFFFFD
 
+/* BOLT PR #1228: v3/TRUC transactions for zero-fee commitments.
+ * libwally doesn't define this yet, so we define it ourselves. */
+#define BITCOIN_TX_VERSION_3 3
+
 struct wally_psbt;
 struct ripemd160;
 

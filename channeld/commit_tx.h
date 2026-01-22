@@ -91,6 +91,7 @@ struct bitcoin_tx *commit_tx(const tal_t *ctx,
 			     u64 obscured_commitment_number,
 			     bool option_anchor_outputs,
 			     bool option_anchors_zero_fee_htlc_tx,
+			     bool option_zero_fee_commitments,
 			     enum side side,
 			     int *anchor_outnum);
 

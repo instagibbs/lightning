@@ -128,6 +128,7 @@ struct bitcoin_tx *commit_tx(const tal_t *ctx,
 			     u64 obscured_commitment_number,
 			     bool option_anchor_outputs,
 			     bool option_anchors_zero_fee_htlc_tx,
+			     bool option_zero_fee_commitments,
 			     enum side side,
 			     int *anchor_outnum)
 {
@@ -412,8 +413,17 @@ struct bitcoin_tx *commit_tx(const tal_t *ctx,
 	 * ## Commitment Transaction
 	 *
 	 * * version: 2
+	 *
+	 * BOLT PR #1228:
+	 *   For `option_zero_fee_commitments`:
+	 *   * version: 3
 	 */
-	assert(tx->wtx->version == 2);
+	if (option_zero_fee_commitments) {
+		tx->wtx->version = BITCOIN_TX_VERSION_3;
+		assert(tx->wtx->version == 3);
+	} else {
+		assert(tx->wtx->version == 2);
+	}
 
 	/* BOLT #3:
 	 *

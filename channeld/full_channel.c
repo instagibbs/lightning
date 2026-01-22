@@ -360,6 +360,7 @@ struct bitcoin_tx **channel_txs(const tal_t *ctx,
 	    commitment_number ^ channel->commitment_number_obscurer,
 	    channel_has(channel, OPT_ANCHOR_OUTPUTS_DEPRECATED),
 	    channel_has(channel, OPT_ANCHORS_ZERO_FEE_HTLC_TX),
+	    channel_has(channel, OPT_ZERO_FEE_COMMITMENTS),
 	    side, other_anchor_outnum);
 
 	/* Set the remote/local pubkeys on the commitment tx psbt */

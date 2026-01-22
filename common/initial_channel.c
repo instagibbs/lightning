@@ -136,6 +136,7 @@ struct bitcoin_tx *initial_channel_tx(const tal_t *ctx,
 				    side, csv_lock,
 				    channel_has(channel, OPT_ANCHOR_OUTPUTS_DEPRECATED),
 				    channel_has(channel, OPT_ANCHORS_ZERO_FEE_HTLC_TX),
+				    channel_has(channel, OPT_ZERO_FEE_COMMITMENTS),
 				    err_reason);
 
 	if (init_tx) {

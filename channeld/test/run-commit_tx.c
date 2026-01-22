@@ -792,6 +792,7 @@ int main(int argc, const char *argv[])
 		       NULL, &htlc_map, NULL, commitment_number ^ cn_obscurer,
 		       option_anchor_outputs,
 		       option_anchors_zero_fee_htlc_tx,
+		       false, /* option_zero_fee_commitments */
 		       LOCAL, &local_anchor);
 	print_superverbose = false;
 	tx2 = commit_tx(tmpctx,
@@ -809,6 +810,7 @@ int main(int argc, const char *argv[])
 			NULL, &htlc_map2, NULL, commitment_number ^ cn_obscurer,
 			option_anchor_outputs,
 			option_anchors_zero_fee_htlc_tx,
+			false, /* option_zero_fee_commitments */
 			REMOTE, &local_anchor);
 	tx_must_be_eq(tx, tx2);
 	report(tx, wscript, &x_remote_funding_privkey, &remote_funding_pubkey,
@@ -861,6 +863,7 @@ int main(int argc, const char *argv[])
 		       htlcs, &htlc_map, NULL, commitment_number ^ cn_obscurer,
 		       option_anchor_outputs,
 		       option_anchors_zero_fee_htlc_tx,
+		       false, /* option_zero_fee_commitments */
 		       LOCAL, &local_anchor);
 	print_superverbose = false;
 	tx2 = commit_tx(tmpctx,
@@ -879,6 +882,7 @@ int main(int argc, const char *argv[])
 			commitment_number ^ cn_obscurer,
 			option_anchor_outputs,
 			option_anchors_zero_fee_htlc_tx,
+			false, /* option_zero_fee_commitments */
 			REMOTE, &local_anchor);
 	tx_must_be_eq(tx, tx2);
 	report(tx, wscript, &x_remote_funding_privkey, &remote_funding_pubkey,
@@ -919,6 +923,7 @@ int main(int argc, const char *argv[])
 				  commitment_number ^ cn_obscurer,
 				  option_anchor_outputs,
 				  option_anchors_zero_fee_htlc_tx,
+				  false, /* option_zero_fee_commitments */
 				  LOCAL, &local_anchor);
 		/* This is what it would look like for peer generating it! */
 		tx2 = commit_tx(tmpctx,
@@ -937,6 +942,7 @@ int main(int argc, const char *argv[])
 				commitment_number ^ cn_obscurer,
 				option_anchor_outputs,
 				option_anchors_zero_fee_htlc_tx,
+				false, /* option_zero_fee_commitments */
 				REMOTE, &local_anchor);
 		tx_must_be_eq(newtx, tx2);
 #ifdef DEBUG
@@ -981,6 +987,7 @@ int main(int argc, const char *argv[])
 			       commitment_number ^ cn_obscurer,
 			       option_anchor_outputs,
 			       option_anchors_zero_fee_htlc_tx,
+			       false, /* option_zero_fee_commitments */
 			       LOCAL, &local_anchor);
 		report(tx, wscript,
 		       &x_remote_funding_privkey, &remote_funding_pubkey,
@@ -1033,6 +1040,7 @@ int main(int argc, const char *argv[])
 				  commitment_number ^ cn_obscurer,
 				  option_anchor_outputs,
 				  option_anchors_zero_fee_htlc_tx,
+				  false, /* option_zero_fee_commitments */
 				  LOCAL, &local_anchor);
 		report(newtx, wscript,
 		       &x_remote_funding_privkey, &remote_funding_pubkey,
@@ -1112,6 +1120,7 @@ int main(int argc, const char *argv[])
 			       commitment_number ^ cn_obscurer,
 			       option_anchor_outputs,
 			       option_anchors_zero_fee_htlc_tx,
+			       false, /* option_zero_fee_commitments */
 			       LOCAL, &local_anchor);
 		report(tx, wscript,
 		       &x_remote_funding_privkey, &remote_funding_pubkey,
@@ -1169,6 +1178,7 @@ int main(int argc, const char *argv[])
 		       htlcs, &htlc_map, NULL, commitment_number ^ cn_obscurer,
 		       option_anchor_outputs,
 		       option_anchors_zero_fee_htlc_tx,
+		       false, /* option_zero_fee_commitments */
 		       LOCAL, &local_anchor);
 	print_superverbose = false;
 	tx2 = commit_tx(tmpctx,
@@ -1187,6 +1197,7 @@ int main(int argc, const char *argv[])
 			commitment_number ^ cn_obscurer,
 			option_anchor_outputs,
 			option_anchors_zero_fee_htlc_tx,
+			false, /* option_zero_fee_commitments */
 			REMOTE, &local_anchor);
 	tx_must_be_eq(tx, tx2);
 	report(tx, wscript, &x_remote_funding_privkey, &remote_funding_pubkey,

@@ -110,6 +110,7 @@ struct bitcoin_tx *initial_commit_tx(const tal_t *ctx,
 				     u32 csv_lock,
 				     bool option_anchor_outputs,
 				     bool option_anchors_zero_fee_htlc_tx,
+				     bool option_zero_fee_commitments,
 				     char** err_reason);
 
 /* try_subtract_fee - take away this fee from the opener (and return true), or all if insufficient (and return false). */
