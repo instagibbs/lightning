@@ -20,6 +20,9 @@ static const char *methods[] = {"getchaininfo", "getrawblockbyheight",
                                 "sendrawtransaction", "getutxout",
                                 "estimatefees"};
 
+/* Optional methods that are only needed for specific features */
+static const char *optional_methods[] = {"submitpackage"};
+
 static void bitcoin_destructor(struct plugin *p)
 {
 	if (p->plugins->ld->state == LD_STATE_SHUTDOWN)
@@ -90,6 +93,30 @@ void bitcoind_check_commands(struct bitcoind *bitcoind)
 		}
 		wait_plugin(bitcoind, methods[i], p);
 	}
+
+	/* BOLT PR #1228: Register optional methods if available.
+	 * These are not required for basic operation but needed for
+	 * specific features like zero-fee commitment channels. */
+	for (i = 0; i < ARRAY_SIZE(optional_methods); i++) {
+		p = find_plugin_for_command(bitcoind->ld, optional_methods[i]);
+		if (p != NULL) {
+			/* Just add to map, plugin is already initialized from required methods */
+			strmap_add(&bitcoind->pluginsmap, optional_methods[i], p);
+			log_info(bitcoind->ld->log, "Bitcoin backend supports %s",
+				 optional_methods[i]);
+		} else {
+			log_info(bitcoind->ld->log,
+				 "Bitcoin backend does not support %s (optional)",
+				 optional_methods[i]);
+		}
+	}
+}
+
+/* Check if a Bitcoin backend method is available.
+ * Returns true if the method is registered in pluginsmap. */
+bool bitcoind_has_method(struct bitcoind *bitcoind, const char *method)
+{
+	return strmap_get(&bitcoind->pluginsmap, method) != NULL;
 }
 
 /* Our Bitcoin backend plugin gave us a bad response. We can't recover. */

@@ -3083,18 +3083,16 @@ def test_zero_fee_commitments_no_update_fee(node_factory, bitcoind):
 
 @unittest.skipIf(TEST_NETWORK != 'regtest', 'elementsd doesnt yet support PSBT features we need')
 @pytest.mark.openchannel('v2')
-@pytest.mark.xfail(reason="Phase 4 (CPFP Fee Bumping) not implemented - zero-fee tx rejected by bitcoind: 'min relay fee not met'")
+@pytest.mark.xfail(reason="Phase 5 (Onchaind Modifications) not implemented - onchaind does not recognize P2A outputs yet")
 def test_zero_fee_commitments_unilateral_close(node_factory, bitcoind):
     """BOLT PR #1228: Test unilateral close of zero-fee commitment channel.
 
     Verify that funds are properly recovered when force-closing a zero-fee
     commitment channel. This is critical for ensuring no money loss.
 
-    NOTE: This test currently fails because zero-fee commitment transactions
-    require CPFP (Child Pays For Parent) package relay to be broadcast.
-    The commitment tx has 0 fees and must be broadcast as a package with a
-    child transaction spending the P2A anchor. Phase 4 of the implementation
-    plan addresses this requirement.
+    Phase 4 (Fee Bumping Infrastructure) is implemented - the CPFP transaction
+    is created and submitted via submitpackage. However, onchaind needs Phase 5
+    modifications to recognize and handle P2A (Pay-to-Anchor) outputs.
     """
     STATIC_REMOTEKEY = 12
     ANCHORS_ZERO_FEE_HTLC_TX = 22
@@ -3135,12 +3133,14 @@ def test_zero_fee_commitments_unilateral_close(node_factory, bitcoind):
     # Since l2 is stopped, this will timeout and go to unilateral
     l1.rpc.close(l2.info['id'], unilateraltimeout=1)
 
-    # Wait for channel to go on-chain
+    # Wait for channel to go on-chain (tx in mempool)
     l1.wait_for_channel_onchain(l2.info['id'])
-    l1.daemon.wait_for_log(' to ONCHAIN')
 
     # Generate blocks to confirm the commitment transaction
     bitcoind.generate_block(1)
+
+    # Wait for state change to ONCHAIN (requires confirmation)
+    l1.daemon.wait_for_log(' to ONCHAIN')
 
     # Wait for onchaind to process
     l1.daemon.wait_for_log('Propose handling .* by OUR_UNILATERAL')

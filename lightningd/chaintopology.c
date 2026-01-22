@@ -1,23 +1,33 @@
 #include "config.h"
+#include <bitcoin/psbt.h>
 #include <bitcoin/script.h>
 #include <ccan/array_size/array_size.h>
 #include <ccan/io/io.h>
 #include <ccan/tal/str/str.h>
+#include <common/bip32.h>
+#include <common/features.h>
 #include <common/htlc_tx.h>
 #include <common/memleak.h>
 #include <common/timeout.h>
 #include <common/trace.h>
+#include <common/utxo.h>
 #include <db/exec.h>
+#include <hsmd/hsm_utxo.h>
+#include <hsmd/hsmd_wiregen.h>
 #include <lightningd/chaintopology.h>
 #include <lightningd/channel.h>
 #include <lightningd/coin_mvts.h>
 #include <lightningd/feerate.h>
 #include <lightningd/gossip_control.h>
+#include <lightningd/hsm_control.h>
 #include <lightningd/invoice.h>
 #include <lightningd/io_loop_with_timers.h>
 #include <lightningd/notification.h>
+#include <lightningd/peer_control.h>
 #include <math.h>
 #include <wallet/txfilter.h>
+#include <wallet/wallet.h>
+#include <wally_psbt.h>
 
 /* Mutual recursion via timer. */
 static void try_extend_tip(struct chain_topology *topo);
@@ -209,6 +219,200 @@ static void destroy_outgoing_tx(struct outgoing_tx *otx, struct chain_topology *
 	outgoing_tx_map_del(topo->outgoing_txs, otx);
 }
 
+/* BOLT PR #1228: Find P2A (Pay-to-Anchor) output in a zero-fee commitment tx.
+ * Returns the output index, or -1 if not found. */
+static int find_p2a_output(const struct bitcoin_tx *tx, struct amount_sat *amount)
+{
+	for (size_t i = 0; i < tx->wtx->num_outputs; i++) {
+		if (is_p2a(tx->wtx->outputs[i].script,
+			   tx->wtx->outputs[i].script_len)) {
+			if (amount)
+				*amount = amount_sat(tx->wtx->outputs[i].satoshi);
+			return i;
+		}
+	}
+	return -1;
+}
+
+/* BOLT PR #1228: Create CPFP child transaction for zero-fee commitment.
+ * The child spends the P2A anchor and wallet UTXOs to pay the package fee.
+ * Returns the signed CPFP transaction, or NULL on failure. */
+static struct bitcoin_tx *create_p2a_cpfp_tx(const tal_t *ctx,
+					     struct lightningd *ld,
+					     const struct bitcoin_tx *commit_tx,
+					     const struct bitcoin_txid *commit_txid,
+					     int p2a_output_idx,
+					     struct amount_sat p2a_amount,
+					     u32 feerate_target)
+{
+	struct wally_psbt *psbt, *signed_psbt;
+	struct bitcoin_tx *cpfp_tx;
+	struct utxo **utxos;
+	const struct hsm_utxo **hsm_utxos;
+	struct amount_sat fee_needed, change;
+	struct pubkey final_key;
+	struct bitcoin_outpoint p2a_outpoint;
+	size_t weight;
+	bool insufficient_funds;
+	const u8 *msg;
+
+	/* Calculate weight: 1 P2A input + wallet inputs + 1 change output
+	 * P2A input weight: 41 (outpoint + sequence) + 1 (empty witness)
+	 * We'll refine this after getting UTXOs */
+	weight = bitcoin_tx_core_weight(1, 1)
+		+ 41 + 1  /* P2A input with empty witness */
+		+ change_weight();
+
+	/* Get wallet UTXOs to pay the fee.
+	 * The commitment tx has 0 fee, so we need to pay full package fee. */
+	utxos = wallet_utxo_boost(ctx,
+				  ld->wallet,
+				  get_block_height(ld->topology),
+				  AMOUNT_SAT(0), /* commitment fee is 0 */
+				  chainparams->dust_limit,
+				  feerate_target,
+				  &weight, &insufficient_funds);
+
+	if (tal_count(utxos) == 0) {
+		log_unusual(ld->log,
+			    "No UTXOs available for zero-fee commitment CPFP");
+		return NULL;
+	}
+
+	/* Create PSBT with wallet UTXOs */
+	psbt = psbt_using_utxos(ctx, ld->wallet, utxos,
+				default_locktime(ld->topology),
+				BITCOIN_TX_RBF_SEQUENCE, NULL);
+
+	/* BOLT PR #1228: CPFP child must be v3 (TRUC rules).
+	 * A child spending from a v3 parent must also be v3.
+	 * Must set this BEFORE signing because tx version is part of sighash! */
+	wally_psbt_set_tx_version(psbt, BITCOIN_TX_VERSION_3);
+
+	/* Add P2A input (index 0 for consistency) */
+	p2a_outpoint.txid = *commit_txid;
+	p2a_outpoint.n = p2a_output_idx;
+
+	/* Insert P2A input at the beginning */
+	psbt_append_input(psbt, &p2a_outpoint, BITCOIN_TX_RBF_SEQUENCE,
+			  NULL, NULL, NULL);
+
+	/* Set the P2A input's witness UTXO for fee calculation */
+	psbt_input_set_wit_utxo(psbt, psbt->num_inputs - 1,
+				scriptpubkey_p2a(tmpctx),
+				p2a_amount);
+
+	/* Calculate required fee for the package */
+	fee_needed = amount_tx_fee(feerate_target, weight);
+
+	/* Calculate change: sum of inputs - fee */
+	change = psbt_compute_fee(psbt);
+	if (!amount_sat_sub(&change, change, fee_needed) ||
+	    amount_sat_less(change, chainparams->dust_limit)) {
+		log_unusual(ld->log,
+			    "Cannot afford CPFP fee %s (have %s)",
+			    fmt_amount_sat(tmpctx, fee_needed),
+			    fmt_amount_sat(tmpctx, psbt_compute_fee(psbt)));
+		return NULL;
+	}
+
+	/* Add change output to our wallet.
+	 * Get a new key index for the change output.
+	 * Use P2TR (Taproot) for non-elements chains. */
+	{
+		s64 keyidx;
+		u8 *change_script;
+
+		if (chainparams->is_elements) {
+			keyidx = wallet_get_newindex(ld, ADDR_BECH32);
+			if (keyidx < 0) {
+				log_unusual(ld->log, "Cannot get new key index for CPFP change");
+				return NULL;
+			}
+			bip32_pubkey(ld, &final_key, keyidx);
+			change_script = scriptpubkey_p2wpkh(tmpctx, &final_key);
+		} else {
+			keyidx = wallet_get_newindex(ld, ADDR_P2TR);
+			if (keyidx < 0) {
+				log_unusual(ld->log, "Cannot get new key index for CPFP change");
+				return NULL;
+			}
+			change_script = p2tr_for_keyidx(tmpctx, ld, keyidx);
+		}
+		psbt_append_output(psbt, change_script, change);
+	}
+
+	/* Sign the wallet inputs (P2A doesn't need a signature) */
+	hsm_utxos = utxos_to_hsm_utxos(tmpctx, utxos);
+	msg = towire_hsmd_sign_withdrawal(NULL, hsm_utxos, psbt);
+	msg = hsm_sync_req(tmpctx, ld, take(msg));
+	if (!fromwire_hsmd_sign_withdrawal_reply(tmpctx, msg, &signed_psbt)) {
+		log_broken(ld->log, "HSM refused to sign CPFP tx");
+		return NULL;
+	}
+
+	/* Set empty witness for P2A input (anyone-can-spend).
+	 * P2A outputs can be spent with an empty witness stack. */
+	{
+		struct wally_tx_witness_stack *empty_witness;
+		tal_wally_start();
+		wally_tx_witness_stack_init_alloc(0, &empty_witness);
+		wally_psbt_input_set_final_witness(&signed_psbt->inputs[psbt->num_inputs - 1],
+						   empty_witness);
+		wally_tx_witness_stack_free(empty_witness);
+		tal_wally_end(signed_psbt);
+	}
+
+	/* Finalize the PSBT */
+	if (!psbt_finalize(signed_psbt)) {
+		log_broken(ld->log, "Cannot finalize CPFP PSBT: %s",
+			   fmt_wally_psbt(tmpctx, signed_psbt));
+		return NULL;
+	}
+
+	cpfp_tx = tal(ctx, struct bitcoin_tx);
+	cpfp_tx->chainparams = chainparams;
+	cpfp_tx->wtx = psbt_final_tx(cpfp_tx, signed_psbt);
+	if (!cpfp_tx->wtx) {
+		log_broken(ld->log, "Cannot extract final CPFP tx");
+		return tal_free(cpfp_tx);
+	}
+	cpfp_tx->psbt = tal_steal(cpfp_tx, signed_psbt);
+
+	log_debug(ld->log, "Created v3 CPFP tx for zero-fee commitment: fee %s",
+		  fmt_amount_sat(tmpctx, fee_needed));
+
+	return cpfp_tx;
+}
+
+/* Callback for submitpackage (zero-fee commitment + CPFP child) */
+static void package_broadcast_done(struct bitcoind *bitcoind,
+				   bool success, const char *msg,
+				   struct outgoing_tx *otx)
+{
+	/* Same handling as regular broadcast_done */
+	if (otx->finished) {
+		if (otx->finished(otx->channel, otx->tx, success, msg, otx->cbarg)) {
+			tal_free(otx);
+			return;
+		}
+	}
+
+	if (we_broadcast(bitcoind->ld->topology, &otx->txid)) {
+		log_debug(
+		    bitcoind->ld->topology->log,
+		    "Not adding %s to list of outgoing transactions, already "
+		    "present",
+		    fmt_bitcoin_txid(tmpctx, &otx->txid));
+		tal_free(otx);
+		return;
+	}
+
+	/* For continual rebroadcasting, until context freed. */
+	outgoing_tx_map_add(bitcoind->ld->topology->outgoing_txs, otx);
+	tal_add_destructor2(otx, destroy_outgoing_tx, bitcoind->ld->topology);
+}
+
 static void broadcast_done(struct bitcoind *bitcoind,
 			   bool success, const char *msg,
 			   struct outgoing_tx *otx)
@@ -282,6 +486,61 @@ void broadcast_tx_(const tal_t *ctx,
 		  cmd_id ? " for " : "", cmd_id ? cmd_id : "");
 
 	wallet_transaction_add(topo->ld->wallet, tx->wtx, 0, 0);
+
+	/* BOLT PR #1228: Zero-fee commitment channels require package relay.
+	 * The commitment tx has 0 fees and must be submitted together with
+	 * a CPFP child transaction that pays the fee. */
+	if (channel && channel_has(channel, OPT_ZERO_FEE_COMMITMENTS)) {
+		struct amount_sat p2a_amount;
+		int p2a_idx = find_p2a_output(tx, &p2a_amount);
+
+		if (p2a_idx >= 0) {
+			/* Check if submitpackage is available (requires Bitcoin Core v29+) */
+			if (!bitcoind_has_method(topo->bitcoind, "submitpackage")) {
+				log_unusual(topo->log,
+					    "Cannot broadcast zero-fee commitment %s: "
+					    "Bitcoin backend does not support submitpackage "
+					    "(requires Bitcoin Core v29+)",
+					    fmt_bitcoin_txid(tmpctx, &otx->txid));
+				/* Fall through to regular broadcast which will fail,
+				 * but at least won't crash */
+			} else {
+				struct bitcoin_tx *cpfp_tx;
+				u32 feerate_target;
+				const char **hextxs;
+
+				/* Use unilateral close feerate for the package */
+				feerate_target = unilateral_feerate(topo, true);
+				if (feerate_target == 0)
+					feerate_target = get_feerate_floor(topo);
+
+				cpfp_tx = create_p2a_cpfp_tx(tmpctx, topo->ld, tx,
+							    &otx->txid, p2a_idx,
+							    p2a_amount, feerate_target);
+
+				if (cpfp_tx) {
+					/* Submit as package: commitment tx first, then CPFP child */
+					hextxs = tal_arr(tmpctx, const char *, 2);
+					hextxs[0] = fmt_bitcoin_tx(hextxs, otx->tx);
+					hextxs[1] = fmt_bitcoin_tx(hextxs, cpfp_tx);
+
+					log_info(topo->log,
+						 "Broadcasting zero-fee commitment %s with CPFP child via submitpackage",
+						 fmt_bitcoin_txid(tmpctx, &otx->txid));
+
+					bitcoind_submitpackage(otx, topo->bitcoind, otx->cmd_id,
+							       hextxs, package_broadcast_done, otx);
+					return;
+				}
+
+				log_unusual(topo->log,
+					    "Cannot create CPFP for zero-fee commitment %s, "
+					    "trying regular broadcast (will likely fail)",
+					    fmt_bitcoin_txid(tmpctx, &otx->txid));
+			}
+		}
+	}
+
 	bitcoind_sendrawtx(otx, topo->bitcoind, otx->cmd_id,
 			   fmt_bitcoin_tx(tmpctx, otx->tx),
 			   allowhighfees,

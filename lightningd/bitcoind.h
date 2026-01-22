@@ -177,4 +177,8 @@ void bitcoind_getutxout_(const tal_t *ctx,
 
 void bitcoind_check_commands(struct bitcoind *bitcoind);
 
+/* Check if a Bitcoin backend method is available.
+ * Used to detect optional methods like submitpackage. */
+bool bitcoind_has_method(struct bitcoind *bitcoind, const char *method);
+
 #endif /* LIGHTNING_LIGHTNINGD_BITCOIND_H */
