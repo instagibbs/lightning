@@ -652,6 +652,46 @@ static void handle_peer_add_htlc(struct peer *peer, const u8 *msg)
 				 channel_add_err_name(add_err));
 }
 
+/* BOLT PR #1228: Validate zero-fee commitment transaction structure.
+ * For zero-fee-commitment channels, the commitment tx MUST:
+ *   - Have version 3 (v3/TRUC transaction)
+ *   - Have a P2A (Pay-to-Anchor) output for CPFP fee bumping
+ * This is defensive validation to catch bugs in our own tx construction
+ * and ensure BOLT compliance. */
+static void validate_zero_fee_commitment_tx(struct peer *peer,
+					    const struct bitcoin_tx *tx)
+{
+	if (!channel_has(peer->channel, OPT_ZERO_FEE_COMMITMENTS))
+		return;
+
+	/* BOLT PR #1228:
+	 * For `option_zero_fee_commitments`:
+	 *   * version: 3 */
+	if (tx->wtx->version != BITCOIN_TX_VERSION_3) {
+		peer_failed_err(peer->pps, &peer->channel_id,
+				"Zero-fee commitment tx has version %d, expected 3",
+				tx->wtx->version);
+	}
+
+	/* BOLT PR #1228:
+	 * Zero-fee commitment transactions use a single shared P2A anchor
+	 * output (OP_1 <0x4e73>) for CPFP fee bumping. */
+	bool found_p2a = false;
+	for (size_t i = 0; i < tx->wtx->num_outputs; i++) {
+		const u8 *script = tx->wtx->outputs[i].script;
+		size_t script_len = tx->wtx->outputs[i].script_len;
+		if (is_p2a(script, script_len)) {
+			found_p2a = true;
+			break;
+		}
+	}
+
+	if (!found_p2a) {
+		peer_failed_err(peer->pps, &peer->channel_id,
+				"Zero-fee commitment tx missing P2A anchor output");
+	}
+}
+
 /* We don't get upset if they're outside the range, as long as they're
  * improving (or at least, not getting worse!). */
 static bool feerate_same_or_better(const struct channel *channel,
@@ -1200,6 +1240,11 @@ static u8 *send_commit_part(const tal_t *ctx,
 			  remote_index, REMOTE,
 			  splice_amnt, remote_splice_amnt, &local_anchor_outnum,
 			  funding_pubkeys);
+
+	/* BOLT PR #1228: Validate zero-fee commitment tx structure.
+	 * This ensures our tx construction is correct and BOLT compliant. */
+	validate_zero_fee_commitment_tx(peer, txs[0]);
+
 	htlc_sigs =
 	    calc_commitsigs(tmpctx, peer, txs, funding_wscript, htlc_map,
 			    remote_index, remote_per_commit, &commit_sig,
@@ -2115,6 +2160,10 @@ static struct commitsig_info *handle_peer_commit_sig(struct peer *peer,
 			  local_index, LOCAL, splice_amnt,
 			  remote_splice_amnt, &remote_anchor_outnum,
 			  funding_pubkeys);
+
+	/* BOLT PR #1228: Validate zero-fee commitment tx structure.
+	 * This ensures our tx construction is correct and BOLT compliant. */
+	validate_zero_fee_commitment_tx(peer, txs[0]);
 
 	/* Set the commit_sig on the commitment tx psbt */
 	if (!psbt_input_set_signature(txs[0]->psbt, 0,
