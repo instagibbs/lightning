@@ -3031,3 +3031,51 @@ def test_zero_fee_commitments_fallback(node_factory, bitcoind):
     # Verify payments still work
     inv = l2.rpc.invoice(100000, 'test_fallback', 'test')['bolt11']
     l1.rpc.pay(inv)
+
+
+@unittest.skipIf(TEST_NETWORK != 'regtest', 'elementsd doesnt yet support PSBT features we need')
+@pytest.mark.openchannel('v2')
+def test_zero_fee_commitments_no_update_fee(node_factory, bitcoind):
+    """BOLT PR #1228: Test that zero-fee channels don't send update_fee.
+
+    Zero-fee commitment channels should not send or process update_fee
+    messages. Feerate changes should be ignored and payments should
+    still work.
+    """
+    # Create two nodes with zero-fee channels enabled
+    opts = {'experimental-zero-fee-channels': None}
+    l1, l2 = node_factory.get_nodes(2, opts=opts)
+
+    l1.fundwallet(FUNDAMOUNT * 2)
+    l1.connect(l2)
+
+    # Open a zero-fee channel
+    ret = l1.rpc.fundchannel(l2.info['id'], FUNDAMOUNT)
+    assert 'zero_fee_commitments/even' in ret['channel_type']['names']
+
+    # Confirm funding and wait for channel to be active
+    bitcoind.generate_block(6, wait_for_mempool=1)
+    l1.daemon.wait_for_log('to CHANNELD_NORMAL')
+    l2.daemon.wait_for_log('to CHANNELD_NORMAL')
+
+    # Clear logs to make checking easier
+    l1.daemon.logsearch_start = len(l1.daemon.logs)
+    l2.daemon.logsearch_start = len(l2.daemon.logs)
+
+    # Change feerates - this would normally trigger update_fee
+    l1.set_feerates((14000, 11000, 7500, 3750))
+
+    # Make a payment to trigger any pending messages
+    inv = l2.rpc.invoice(100000, 'test_no_update_fee', 'test')['bolt11']
+    l1.rpc.pay(inv)
+
+    # Verify no update_fee was sent (l2 should NOT see "peer updated fee")
+    assert not l2.daemon.is_in_log('peer updated fee')
+
+    # Make another payment to confirm channel is healthy
+    inv2 = l2.rpc.invoice(200000, 'test_no_update_fee_2', 'test')['bolt11']
+    l1.rpc.pay(inv2)
+
+    # Channel should still be healthy
+    l1_chan = only_one(l1.rpc.listpeerchannels()['channels'])
+    assert l1_chan['state'] == 'CHANNELD_NORMAL'

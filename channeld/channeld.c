@@ -672,6 +672,14 @@ static void handle_peer_feechange(struct peer *peer, const u8 *msg)
 	struct channel_id channel_id;
 	u32 feerate;
 
+	/* BOLT PR #1228:
+	 * For zero-fee-commitment channels, update_fee is not used.
+	 * Receiving one is a protocol violation. */
+	if (channel_has(peer->channel, OPT_ZERO_FEE_COMMITMENTS)) {
+		peer_failed_err(peer->pps, &peer->channel_id,
+				"update_fee not allowed on zero-fee-commitment channel");
+	}
+
 	if (!fromwire_update_fee(msg, &channel_id, &feerate)) {
 		peer_failed_warn(peer->pps, &peer->channel_id,
 				 "Bad update_fee %s", tal_hex(msg, msg));
@@ -1074,6 +1082,11 @@ static bool want_fee_update(const struct peer *peer, u32 *target)
 	u32 current, val;
 
 	if (peer->channel->opener != LOCAL)
+		return false;
+
+	/* BOLT PR #1228:
+	 * Zero-fee-commitment channels do not use update_fee. */
+	if (channel_has(peer->channel, OPT_ZERO_FEE_COMMITMENTS))
 		return false;
 
 	/* No fee update while quiescing! */
@@ -6307,6 +6320,14 @@ static void handle_feerates(struct peer *peer, const u8 *inmsg)
 				       &peer->feerate_max,
 				       &peer->feerate_penalty))
 		master_badmsg(WIRE_CHANNELD_FEERATES, inmsg);
+
+	/* BOLT PR #1228:
+	 * Zero-fee-commitment channels have fee=0 and do not use update_fee.
+	 * We still accept and store the feerate info for min/max validation
+	 * (in case peer sends update_fee erroneously), but don't initiate
+	 * any fee updates ourselves. */
+	if (channel_has(peer->channel, OPT_ZERO_FEE_COMMITMENTS))
+		return;
 
 	/* BOLT #2:
 	 *
