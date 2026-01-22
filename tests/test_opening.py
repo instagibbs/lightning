@@ -3083,16 +3083,15 @@ def test_zero_fee_commitments_no_update_fee(node_factory, bitcoind):
 
 @unittest.skipIf(TEST_NETWORK != 'regtest', 'elementsd doesnt yet support PSBT features we need')
 @pytest.mark.openchannel('v2')
-@pytest.mark.xfail(reason="Phase 5 (Onchaind Modifications) not implemented - onchaind does not recognize P2A outputs yet")
 def test_zero_fee_commitments_unilateral_close(node_factory, bitcoind):
     """BOLT PR #1228: Test unilateral close of zero-fee commitment channel.
 
     Verify that funds are properly recovered when force-closing a zero-fee
     commitment channel. This is critical for ensuring no money loss.
 
-    Phase 4 (Fee Bumping Infrastructure) is implemented - the CPFP transaction
-    is created and submitted via submitpackage. However, onchaind needs Phase 5
-    modifications to recognize and handle P2A (Pay-to-Anchor) outputs.
+    Phase 4 (Fee Bumping Infrastructure) and Phase 5 (Onchaind Modifications)
+    are both implemented. The commitment tx with 0 fee is broadcast via
+    submitpackage with a CPFP child, and onchaind recognizes P2A anchors.
     """
     STATIC_REMOTEKEY = 12
     ANCHORS_ZERO_FEE_HTLC_TX = 22
@@ -3167,15 +3166,14 @@ def test_zero_fee_commitments_unilateral_close(node_factory, bitcoind):
 
 @unittest.skipIf(TEST_NETWORK != 'regtest', 'elementsd doesnt yet support PSBT features we need')
 @pytest.mark.openchannel('v2')
-@pytest.mark.xfail(reason="Phase 4 (CPFP Fee Bumping) not implemented - zero-fee tx rejected by bitcoind: 'min relay fee not met'")
 def test_zero_fee_commitments_their_unilateral_close(node_factory, bitcoind):
     """BOLT PR #1228: Test fund recovery when peer force-closes zero-fee channel.
 
     Verify that funds are properly recovered when the remote peer force-closes
     a zero-fee commitment channel.
 
-    NOTE: This test currently fails because zero-fee commitment transactions
-    require CPFP package relay. See test_zero_fee_commitments_unilateral_close.
+    Phase 4 (CPFP Fee Bumping) and Phase 5 (Onchaind Modifications) are both
+    implemented. Zero-fee commitment transactions are broadcast via submitpackage.
     """
     STATIC_REMOTEKEY = 12
     ANCHORS_ZERO_FEE_HTLC_TX = 22

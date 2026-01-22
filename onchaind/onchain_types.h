@@ -77,6 +77,10 @@ enum output_type {
 	/* Anchor outputs for option_anchor_outputs */
 	ANCHOR_TO_US,
 	ANCHOR_TO_THEM,
+
+	/* P2A anchor output for option_zero_fee_commitments (BOLT PR #1228).
+	 * Unlike regular anchors, P2A is a shared anyone-can-spend output. */
+	P2A_ANCHOR,
 };
 
 

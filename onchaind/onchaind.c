@@ -1316,6 +1316,7 @@ static bool output_spent(struct tracked_output ***outs,
 		case ELEMENTS_FEE:
 		case ANCHOR_TO_US:
 		case ANCHOR_TO_THEM:
+		case P2A_ANCHOR:  /* BOLT PR #1228: P2A is anyone-can-spend */
 			status_failed(STATUS_FAIL_INTERNAL_ERROR,
 				      "Tracked spend of %s/%s?",
 				      tx_type_name(out->tx_type),
@@ -2071,8 +2072,24 @@ static void note_missing_htlcs(u8 **htlc_scripts,
 	}
 }
 
+/* BOLT PR #1228: Get P2A scriptpubkey for zero-fee commitments.
+ * Returns NULL if not a zero-fee commitment channel. */
+static u8 *get_p2a_scriptpubkey(const tal_t *ctx)
+{
+	if (!option_zero_fee_commitments)
+		return NULL;
+	return scriptpubkey_p2a(ctx);
+}
+
 static void get_anchor_scriptpubkeys(const tal_t *ctx, u8 **anchor)
 {
+	/* BOLT PR #1228: For zero-fee commitments, there's no per-side anchor.
+	 * The P2A anchor is handled separately via get_p2a_scriptpubkey(). */
+	if (option_zero_fee_commitments) {
+		anchor[LOCAL] = anchor[REMOTE] = NULL;
+		return;
+	}
+
 	if (!option_anchor_outputs && !option_anchors_zero_fee_htlc_tx) {
 		anchor[LOCAL] = anchor[REMOTE] = NULL;
 		return;
@@ -2166,6 +2183,7 @@ static void handle_our_unilateral(const struct tx_parts *tx,
 {
 	u8 **htlc_scripts;
 	u8 *local_wscript, *script[NUM_SIDES], *anchor[NUM_SIDES];
+	u8 *p2a_script;  /* BOLT PR #1228: P2A anchor for zero-fee commitments */
 	struct pubkey local_per_commitment_point;
 	struct keyset *ks;
 	size_t i;
@@ -2239,6 +2257,7 @@ static void handle_our_unilateral(const struct tx_parts *tx,
 	}
 
 	get_anchor_scriptpubkeys(tmpctx, anchor);
+	p2a_script = get_p2a_scriptpubkey(tmpctx);
 
 	for (i = 0; i < tal_count(tx->outputs); i++) {
 		struct tracked_output *out;
@@ -2326,6 +2345,23 @@ static void handle_our_unilateral(const struct tx_parts *tx,
 			ignore_output(out);
 			record_external_deposit(out, tx_blockheight, mk_mvt_tags(MVT_ANCHOR));
 			anchor[REMOTE] = NULL;
+			continue;
+		}
+		/* BOLT PR #1228: Detect P2A anchor output for zero-fee commitments.
+		 * P2A is a shared anyone-can-spend output for CPFP fee bumping. */
+		if (p2a_script
+		    && wally_tx_output_scripteq(tx->outputs[i], p2a_script)) {
+			out = new_tracked_output(&outs, &outpoint,
+						 tx_blockheight,
+						 OUR_UNILATERAL,
+						 amt,
+						 P2A_ANCHOR,
+						 NULL, NULL, NULL);
+			/* P2A anchor is expected to be spent by CPFP child.
+			 * We don't spend it ourselves; lightningd handles CPFP. */
+			ignore_output(out);
+			record_external_deposit(out, tx_blockheight, mk_mvt_tags(MVT_ANCHOR));
+			p2a_script = NULL;
 			continue;
 		}
 
@@ -2607,6 +2643,7 @@ static void handle_their_cheat(const struct tx_parts *tx,
 {
 	u8 **htlc_scripts;
 	u8 *remote_wscript, *script[NUM_SIDES], *anchor[NUM_SIDES];
+	u8 *p2a_script;  /* BOLT PR #1228: P2A anchor for zero-fee commitments */
 	struct keyset *ks;
 	struct pubkey *k;
 	size_t i;
@@ -2718,6 +2755,7 @@ static void handle_their_cheat(const struct tx_parts *tx,
 		     tal_hex(tmpctx, script[LOCAL]));
 
 	get_anchor_scriptpubkeys(tmpctx, anchor);
+	p2a_script = get_p2a_scriptpubkey(tmpctx);
 
 	for (i = 0; i < tal_count(tx->outputs); i++) {
  		if (tx->outputs[i]->script_len == 0)
@@ -2810,6 +2848,23 @@ static void handle_their_cheat(const struct tx_parts *tx,
 			ignore_output(out);
 			record_external_deposit(out, tx_blockheight, mk_mvt_tags(MVT_ANCHOR));
 			anchor[REMOTE] = NULL;
+			continue;
+		}
+		/* BOLT PR #1228: Detect P2A anchor output for zero-fee commitments.
+		 * Even in revoked transactions, P2A is anyone-can-spend. */
+		if (p2a_script
+		    && wally_tx_output_scripteq(tx->outputs[i], p2a_script)) {
+			out = new_tracked_output(&outs, &outpoint,
+						 tx_blockheight,
+						 THEIR_REVOKED_UNILATERAL,
+						 amt,
+						 P2A_ANCHOR,
+						 NULL, NULL, NULL);
+			/* P2A anchor is expected to be spent for CPFP.
+			 * We track it but don't actively spend it. */
+			ignore_output(out);
+			record_external_deposit(out, tx_blockheight, mk_mvt_tags(MVT_ANCHOR));
+			p2a_script = NULL;
 			continue;
 		}
 
@@ -2942,6 +2997,7 @@ static void handle_their_unilateral(const struct tx_parts *tx,
 {
 	u8 **htlc_scripts;
 	u8 *remote_wscript, *script[NUM_SIDES], *anchor[NUM_SIDES];
+	u8 *p2a_script;  /* BOLT PR #1228: P2A anchor for zero-fee commitments */
 	struct keyset *ks;
 	size_t i;
 	struct htlcs_info *htlcs_info;
@@ -3026,6 +3082,7 @@ static void handle_their_unilateral(const struct tx_parts *tx,
 	htlc_scripts = derive_htlc_scripts(htlcs_info->htlcs, REMOTE);
 
 	get_anchor_scriptpubkeys(tmpctx, anchor);
+	p2a_script = get_p2a_scriptpubkey(tmpctx);
 
 	for (i = 0; i < tal_count(tx->outputs); i++) {
  		if (tx->outputs[i]->script_len == 0)
@@ -3136,6 +3193,23 @@ static void handle_their_unilateral(const struct tx_parts *tx,
 			ignore_output(out);
 			anchor[REMOTE] = NULL;
 			record_external_deposit(out, tx_blockheight, mk_mvt_tags(MVT_ANCHOR));
+			continue;
+		}
+		/* BOLT PR #1228: Detect P2A anchor output for zero-fee commitments.
+		 * P2A is a shared anyone-can-spend output for CPFP fee bumping. */
+		if (p2a_script
+		    && wally_tx_output_scripteq(tx->outputs[i], p2a_script)) {
+			out = new_tracked_output(&outs, &outpoint,
+						 tx_blockheight,
+						 THEIR_UNILATERAL,
+						 amt,
+						 P2A_ANCHOR,
+						 NULL, NULL, NULL);
+			/* P2A anchor is expected to be spent for CPFP.
+			 * We track it but don't actively spend it. */
+			ignore_output(out);
+			record_external_deposit(out, tx_blockheight, mk_mvt_tags(MVT_ANCHOR));
+			p2a_script = NULL;
 			continue;
 		}
 
