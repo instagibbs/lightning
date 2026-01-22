@@ -169,10 +169,18 @@ struct bitcoin_tx *commit_tx(const tal_t *ctx,
 	 *
 	 * 2. Calculate the base [commitment transaction
 	 * fee](#fee-calculation).
+	 *
+	 * BOLT PR #1228:
+	 *   For `option_zero_fee_commitments`:
+	 *   The commitment transaction fee is 0.
 	 */
-	base_fee = commit_tx_base_fee(feerate_per_kw, untrimmed,
-				      option_anchor_outputs,
-				      option_anchors_zero_fee_htlc_tx);
+	if (option_zero_fee_commitments) {
+		base_fee = AMOUNT_SAT(0);
+	} else {
+		base_fee = commit_tx_base_fee(feerate_per_kw, untrimmed,
+					      option_anchor_outputs,
+					      option_anchors_zero_fee_htlc_tx);
+	}
 
 	SUPERVERBOSE("# base commitment transaction fee = %"PRIu64" for %zu untrimmed\n",
 		     base_fee.satoshis /* Raw: spec uses raw numbers */, untrimmed);
@@ -182,8 +190,14 @@ struct bitcoin_tx *commit_tx(const tal_t *ctx,
 	 * transaction, also subtract two times the fixed anchor size
 	 * of 330 sats from the funder (either `to_local` or
 	 * `to_remote`).
+	 *
+	 * BOLT PR #1228:
+	 *   For `option_zero_fee_commitments`, the P2A anchor amount is
+	 *   calculated from trimmed HTLCs and msat remainders (not fixed),
+	 *   so we don't add the 660 sat deduction.
 	 */
 	if ((option_anchor_outputs || option_anchors_zero_fee_htlc_tx)
+	    && !option_zero_fee_commitments
 	    && !amount_sat_add(&base_fee, base_fee, AMOUNT_SAT(660)))
 		/* Can't overflow: feerate is u32. */
 		abort();
@@ -192,6 +206,10 @@ struct bitcoin_tx *commit_tx(const tal_t *ctx,
 	 *
 	 * 3. Subtract this base fee from the funder (either `to_local` or
 	 * `to_remote`).
+	 *
+	 * BOLT PR #1228:
+	 *   For `option_zero_fee_commitments`, this is a no-op since
+	 *   base_fee is 0.
 	 */
 	try_subtract_fee(opener, side, base_fee, &self_pay, &other_pay);
 

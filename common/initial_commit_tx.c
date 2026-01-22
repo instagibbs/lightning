@@ -141,10 +141,18 @@ struct bitcoin_tx *initial_commit_tx(const tal_t *ctx,
 	 *
 	 * 2. Calculate the base [commitment transaction
 	 * fee](#fee-calculation).
+	 *
+	 * BOLT PR #1228:
+	 *   For `option_zero_fee_commitments`:
+	 *   The commitment transaction fee is 0.
 	 */
-	base_fee = commit_tx_base_fee(feerate_per_kw, untrimmed,
-				      option_anchor_outputs,
-				      option_anchors_zero_fee_htlc_tx);
+	if (option_zero_fee_commitments) {
+		base_fee = AMOUNT_SAT(0);
+	} else {
+		base_fee = commit_tx_base_fee(feerate_per_kw, untrimmed,
+					      option_anchor_outputs,
+					      option_anchors_zero_fee_htlc_tx);
+	}
 
 	/* BOLT #3:
 	 * If `option_anchors` applies to the commitment
@@ -170,6 +178,10 @@ struct bitcoin_tx *initial_commit_tx(const tal_t *ctx,
 	 * If `option_anchors` applies to the commitment transaction,
 	 * also subtract two times the fixed anchor size of 330 sats from the
 	 * funder (either `to_local` or `to_remote`).
+	 *
+	 * BOLT PR #1228:
+	 *   For `option_zero_fee_commitments`, base_fee is 0, so this
+	 *   will always succeed.
 	 */
 	if (!try_subtract_fee(opener, side, base_fee, &self_pay, &other_pay)) {
 		/* BOLT #2:
