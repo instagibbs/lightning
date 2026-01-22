@@ -638,9 +638,15 @@ static struct command_result *process_submitpackage(struct bitcoin_cli *bcli)
 	response = jsonrpc_stream_success(bcli->cmd);
 	json_add_bool(response, "success", success);
 	if (!success && bcli->output_bytes > 0) {
-		json_add_string(response, "errmsg",
-				tal_strndup(bcli->cmd,
-					    bcli->output, bcli->output_bytes-1));
+		/* Sanitize the error message: replace control chars with spaces
+		 * to prevent JSON parsing issues when the Bitcoin Core response
+		 * contains non-printable characters or newlines */
+		char *errmsg = tal_strndup(bcli->cmd, bcli->output, bcli->output_bytes - 1);
+		for (size_t i = 0; errmsg[i]; i++) {
+			if ((unsigned char)errmsg[i] < 32 && errmsg[i] != '\t')
+				errmsg[i] = ' ';
+		}
+		json_add_string(response, "errmsg", take(errmsg));
 	} else {
 		json_add_string(response, "errmsg", "");
 	}
@@ -1084,11 +1090,14 @@ static struct command_result *submitpackage(struct command *cmd,
 		return command_param_failed();
 
 	/* Build the JSON array string for bitcoin-cli.
-	 * Format: ["<hex1>", "<hex2>", ...] */
-	package_json = tal_strdup(tmpctx, "[");
+	 * Format: ["<hex1>", "<hex2>", ...]
+	 * Note: Use cmd as the tal context so the string lives until the
+	 * command completes. Using tmpctx would cause use-after-free since
+	 * start_bitcoin_cli stores the pointer for later use. */
+	package_json = tal_strdup(cmd, "[");
 	for (size_t i = 0; i < txs_tok->size; i++) {
 		const jsmntok_t *tx_tok = json_get_arr(txs_tok, i);
-		const char *tx_hex = json_strdup(tmpctx, buf, tx_tok);
+		const char *tx_hex = json_strdup(cmd, buf, tx_tok);
 		if (i > 0)
 			tal_append_fmt(&package_json, ",");
 		tal_append_fmt(&package_json, "\"%s\"", tx_hex);
