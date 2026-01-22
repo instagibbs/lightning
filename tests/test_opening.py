@@ -3079,3 +3079,171 @@ def test_zero_fee_commitments_no_update_fee(node_factory, bitcoind):
     # Channel should still be healthy
     l1_chan = only_one(l1.rpc.listpeerchannels()['channels'])
     assert l1_chan['state'] == 'CHANNELD_NORMAL'
+
+
+@unittest.skipIf(TEST_NETWORK != 'regtest', 'elementsd doesnt yet support PSBT features we need')
+@pytest.mark.openchannel('v2')
+@pytest.mark.xfail(reason="Phase 4 (CPFP Fee Bumping) not implemented - zero-fee tx rejected by bitcoind: 'min relay fee not met'")
+def test_zero_fee_commitments_unilateral_close(node_factory, bitcoind):
+    """BOLT PR #1228: Test unilateral close of zero-fee commitment channel.
+
+    Verify that funds are properly recovered when force-closing a zero-fee
+    commitment channel. This is critical for ensuring no money loss.
+
+    NOTE: This test currently fails because zero-fee commitment transactions
+    require CPFP (Child Pays For Parent) package relay to be broadcast.
+    The commitment tx has 0 fees and must be broadcast as a package with a
+    child transaction spending the P2A anchor. Phase 4 of the implementation
+    plan addresses this requirement.
+    """
+    STATIC_REMOTEKEY = 12
+    ANCHORS_ZERO_FEE_HTLC_TX = 22
+    ZERO_FEE_COMMITMENTS = 40
+
+    # Create two nodes with zero-fee channels enabled
+    # allow_warning because unilateral close can generate warnings
+    opts = {'experimental-zero-fee-channels': None, 'allow_warning': True}
+    l1, l2 = node_factory.get_nodes(2, opts=opts)
+
+    # Fund l1's wallet
+    l1.fundwallet(FUNDAMOUNT * 2)
+
+    # Record initial wallet balance
+    l1_initial_funds = sum([o['amount_msat'] for o in l1.rpc.listfunds()['outputs']])
+
+    l1.connect(l2)
+
+    # Open a zero-fee channel
+    ret = l1.rpc.fundchannel(l2.info['id'], FUNDAMOUNT)
+    expected_bits = [STATIC_REMOTEKEY, ANCHORS_ZERO_FEE_HTLC_TX, ZERO_FEE_COMMITMENTS]
+    assert ret['channel_type']['bits'] == expected_bits
+    assert 'zero_fee_commitments/even' in ret['channel_type']['names']
+
+    # Confirm funding and wait for channel to be active
+    bitcoind.generate_block(6, wait_for_mempool=1)
+    l1.daemon.wait_for_log('to CHANNELD_NORMAL')
+    l2.daemon.wait_for_log('to CHANNELD_NORMAL')
+
+    # Make a payment from l1 to l2 to move some funds
+    inv = l2.rpc.invoice(100000000, 'test_close', 'test')['bolt11']
+    l1.rpc.pay(inv)
+
+    # Stop l2 so l1 is forced to do unilateral close
+    l2.stop()
+
+    # Force close the channel from l1's side (unilateral close)
+    # Since l2 is stopped, this will timeout and go to unilateral
+    l1.rpc.close(l2.info['id'], unilateraltimeout=1)
+
+    # Wait for channel to go on-chain
+    l1.wait_for_channel_onchain(l2.info['id'])
+    l1.daemon.wait_for_log(' to ONCHAIN')
+
+    # Generate blocks to confirm the commitment transaction
+    bitcoind.generate_block(1)
+
+    # Wait for onchaind to process
+    l1.daemon.wait_for_log('Propose handling .* by OUR_UNILATERAL')
+
+    # Generate enough blocks for CSV timeout and full resolution
+    # to_self_delay is typically 6 blocks in tests
+    bitcoind.generate_block(100)
+
+    # Wait for onchaind to complete
+    l1.daemon.wait_for_log('onchaind complete, forgetting peer')
+
+    # Verify funds are back in the wallet
+    l1_final_funds = sum([o['amount_msat'] for o in l1.rpc.listfunds()['outputs']])
+
+    # The final funds should be roughly equal to:
+    # initial funds - amount sent to l2 - on-chain fees
+    # We allow for some fee variance
+    expected_min = l1_initial_funds - Millisatoshi(100000000) - Millisatoshi(50000000)  # 0.0005 BTC tolerance for fees
+    assert l1_final_funds >= expected_min, f"Expected at least {expected_min} but got {l1_final_funds}"
+
+    # Verify no channels remain
+    assert l1.rpc.listpeerchannels()['channels'] == []
+
+
+@unittest.skipIf(TEST_NETWORK != 'regtest', 'elementsd doesnt yet support PSBT features we need')
+@pytest.mark.openchannel('v2')
+@pytest.mark.xfail(reason="Phase 4 (CPFP Fee Bumping) not implemented - zero-fee tx rejected by bitcoind: 'min relay fee not met'")
+def test_zero_fee_commitments_their_unilateral_close(node_factory, bitcoind):
+    """BOLT PR #1228: Test fund recovery when peer force-closes zero-fee channel.
+
+    Verify that funds are properly recovered when the remote peer force-closes
+    a zero-fee commitment channel.
+
+    NOTE: This test currently fails because zero-fee commitment transactions
+    require CPFP package relay. See test_zero_fee_commitments_unilateral_close.
+    """
+    STATIC_REMOTEKEY = 12
+    ANCHORS_ZERO_FEE_HTLC_TX = 22
+    ZERO_FEE_COMMITMENTS = 40
+
+    # Create two nodes with zero-fee channels enabled
+    # allow_warning because unilateral close can generate warnings
+    opts = {'experimental-zero-fee-channels': None, 'allow_warning': True}
+    l1, l2 = node_factory.get_nodes(2, opts=opts)
+
+    # Fund l1's wallet
+    l1.fundwallet(FUNDAMOUNT * 2)
+
+    l1.connect(l2)
+
+    # Open a zero-fee channel
+    ret = l1.rpc.fundchannel(l2.info['id'], FUNDAMOUNT)
+    expected_bits = [STATIC_REMOTEKEY, ANCHORS_ZERO_FEE_HTLC_TX, ZERO_FEE_COMMITMENTS]
+    assert ret['channel_type']['bits'] == expected_bits
+
+    # Confirm funding and wait for channel to be active
+    bitcoind.generate_block(6, wait_for_mempool=1)
+    l1.daemon.wait_for_log('to CHANNELD_NORMAL')
+    l2.daemon.wait_for_log('to CHANNELD_NORMAL')
+
+    # Make a payment from l1 to l2 to give l2 some funds in the channel
+    inv = l2.rpc.invoice(100000000, 'test_close', 'test')['bolt11']
+    l1.rpc.pay(inv)
+
+    # Record l1's channel balance before close
+    l1_chan = only_one(l1.rpc.listpeerchannels()['channels'])
+    l1_balance_before = l1_chan['to_us_msat']
+
+    # Stop l1 so l2 is forced to do unilateral close
+    l1.stop()
+
+    # l2 force closes the channel (l1's peer does unilateral close)
+    l2.rpc.close(l1.info['id'], unilateraltimeout=1)
+
+    # Wait for l2 to see the on-chain event
+    l2.wait_for_channel_onchain(l1.info['id'])
+    l2.daemon.wait_for_log(' to ONCHAIN')
+
+    # Generate blocks
+    bitcoind.generate_block(1)
+
+    # Restart l1 to let it process the on-chain event
+    l1.start()
+    l1.daemon.wait_for_log(' to ONCHAIN')
+
+    # l1 should see it's their (remote's) unilateral close
+    l1.daemon.wait_for_log('Propose handling .* by THEIR_UNILATERAL')
+
+    # Generate enough blocks for full resolution
+    bitcoind.generate_block(100)
+
+    # Wait for onchaind to complete
+    l1.daemon.wait_for_log('onchaind complete, forgetting peer')
+    l2.daemon.wait_for_log('onchaind complete, forgetting peer')
+
+    # Verify l1's funds are recovered
+    l1_final_outputs = l1.rpc.listfunds()['outputs']
+    l1_final_funds = sum([o['amount_msat'] for o in l1_final_outputs])
+
+    # l1 should have recovered approximately their channel balance
+    # (minus any fees)
+    expected_min = l1_balance_before - Millisatoshi(50000000)  # Allow 0.0005 BTC for fees
+    assert l1_final_funds >= expected_min, f"Expected at least {expected_min} but got {l1_final_funds}"
+
+    # Verify no channels remain
+    assert l1.rpc.listpeerchannels()['channels'] == []
