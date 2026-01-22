@@ -2952,3 +2952,82 @@ def test_zeroconf_withhold(node_factory, bitcoind, stay_withheld, mutual_close):
             wait_for(lambda: only_one(l1.rpc.listpeerchannels()['channels'])['state'] == 'CLOSINGD_COMPLETE')
         else:
             wait_for(lambda: only_one(l1.rpc.listpeerchannels()['channels'])['state'] == 'AWAITING_UNILATERAL')
+
+
+@unittest.skipIf(TEST_NETWORK != 'regtest', 'elementsd doesnt yet support PSBT features we need')
+@pytest.mark.openchannel('v2')
+def test_zero_fee_commitments_negotiation(node_factory, bitcoind):
+    """BOLT PR #1228: Test zero-fee commitment channel type negotiation.
+
+    When both peers have --experimental-zero-fee-channels enabled, they
+    should negotiate the zero_fee_commitments channel type (feature bits
+    12, 22, and 40).
+    """
+    STATIC_REMOTEKEY = 12
+    ANCHORS_ZERO_FEE_HTLC_TX = 22
+    ZERO_FEE_COMMITMENTS = 40
+
+    # Create two nodes with zero-fee channels enabled
+    opts = {'experimental-zero-fee-channels': None}
+    l1, l2 = node_factory.get_nodes(2, opts=opts)
+
+    l1.fundwallet(FUNDAMOUNT * 2)
+    l1.connect(l2)
+
+    # Open a channel - should automatically negotiate zero_fee_commitments
+    ret = l1.rpc.fundchannel(l2.info['id'], FUNDAMOUNT)
+
+    # Verify the channel type includes zero_fee_commitments (bit 40)
+    expected_bits = [STATIC_REMOTEKEY, ANCHORS_ZERO_FEE_HTLC_TX, ZERO_FEE_COMMITMENTS]
+    assert ret['channel_type']['bits'] == expected_bits
+    assert 'zero_fee_commitments/even' in ret['channel_type']['names']
+
+    # Confirm funding and wait for channel to be active
+    bitcoind.generate_block(6, wait_for_mempool=1)
+    l1.daemon.wait_for_log('to CHANNELD_NORMAL')
+    l2.daemon.wait_for_log('to CHANNELD_NORMAL')
+
+    # Verify both sides see the correct channel type
+    l1_chan = only_one(l1.rpc.listpeerchannels()['channels'])
+    l2_chan = only_one(l2.rpc.listpeerchannels()['channels'])
+
+    assert l1_chan['channel_type']['bits'] == expected_bits
+    assert l2_chan['channel_type']['bits'] == expected_bits
+
+
+@unittest.skipIf(TEST_NETWORK != 'regtest', 'elementsd doesnt yet support PSBT features we need')
+@pytest.mark.openchannel('v2')
+def test_zero_fee_commitments_fallback(node_factory, bitcoind):
+    """BOLT PR #1228: Test fallback when one peer doesn't support zero-fee channels.
+
+    When only one peer has --experimental-zero-fee-channels, they should
+    fall back to anchors_zero_fee_htlc channel type (feature bits 12 and 22).
+    """
+    STATIC_REMOTEKEY = 12
+    ANCHORS_ZERO_FEE_HTLC_TX = 22
+    ZERO_FEE_COMMITMENTS = 40
+
+    # l1 has zero-fee channels enabled, l2 does not
+    l1 = node_factory.get_node(options={'experimental-zero-fee-channels': None})
+    l2 = node_factory.get_node()
+
+    l1.fundwallet(FUNDAMOUNT * 2)
+    l1.connect(l2)
+
+    # Open a channel - should fall back to anchors
+    ret = l1.rpc.fundchannel(l2.info['id'], FUNDAMOUNT)
+
+    # Verify the channel type is anchors, NOT zero_fee_commitments
+    assert ZERO_FEE_COMMITMENTS not in ret['channel_type']['bits']
+    assert ANCHORS_ZERO_FEE_HTLC_TX in ret['channel_type']['bits']
+    assert STATIC_REMOTEKEY in ret['channel_type']['bits']
+    assert 'zero_fee_commitments/even' not in ret['channel_type']['names']
+
+    # Confirm funding
+    bitcoind.generate_block(6, wait_for_mempool=1)
+    l1.daemon.wait_for_log('to CHANNELD_NORMAL')
+    l2.daemon.wait_for_log('to CHANNELD_NORMAL')
+
+    # Verify payments still work
+    inv = l2.rpc.invoice(100000, 'test_fallback', 'test')['bolt11']
+    l1.rpc.pay(inv)

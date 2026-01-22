@@ -256,6 +256,12 @@ struct channel_type *desired_channel_type(const tal_t *ctx,
 					  const struct feature_set *our_features,
 					  const u8 *their_features)
 {
+	/* BOLT PR #1228: Prefer zero-fee commitments when both peers support it.
+	 * Zero-fee channels use v3/TRUC transactions and P2A anchors,
+	 * eliminating update_fee and providing better pinning resistance. */
+	if (feature_negotiated(our_features, their_features,
+			       OPT_ZERO_FEE_COMMITMENTS))
+		return channel_type_zero_fee_commitments(ctx);
 	if (feature_negotiated(our_features, their_features,
 			       OPT_ANCHORS_ZERO_FEE_HTLC_TX))
 		return channel_type_anchors_zero_fee_htlc(ctx);
