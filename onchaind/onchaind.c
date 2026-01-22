@@ -73,6 +73,9 @@ static bool option_anchor_outputs;
 /* Does option_anchors_zero_fee_htlc_tx apply to this commitment tx? */
 static bool option_anchors_zero_fee_htlc_tx;
 
+/* Does option_zero_fee_commitments apply to this commitment tx? */
+static bool option_zero_fee_commitments;
+
 /* The minimum relay feerate acceptable to the fullnode.  */
 static u32 min_relay_feerate;
 
@@ -1876,7 +1879,7 @@ static size_t resolve_our_htlc_ourcommit(struct tracked_output *out,
 			      " feerate %u-%u,"
 			      " last tx %s, input %s, signature %s,"
 			      " cltvs %s wscripts %s"
-			      "%s%s",
+			      "%s%s%s",
 			      tal_count(matches),
 			      min_possible_feerate, max_possible_feerate,
 			      fmt_bitcoin_tx(tmpctx, tx),
@@ -1887,7 +1890,9 @@ static size_t resolve_our_htlc_ourcommit(struct tracked_output *out,
 			      option_anchor_outputs
 			      ? " option_anchor_outputs" : "",
 			      option_anchors_zero_fee_htlc_tx
-			      ? " option_anchors_zero_fee_htlc_tx" : "");
+			      ? " option_anchors_zero_fee_htlc_tx" : "",
+			      option_zero_fee_commitments
+			      ? " option_zero_fee_commitments" : "");
 	}
 
 	/* FIXME: lightningd could derive this itself? */
@@ -3428,6 +3433,7 @@ int main(int argc, char *argv[])
 				   &static_remotekey_start[REMOTE],
 				   &option_anchor_outputs,
 				   &option_anchors_zero_fee_htlc_tx,
+				   &option_zero_fee_commitments,
 				   &min_relay_feerate)) {
 		master_badmsg(WIRE_ONCHAIND_INIT, msg);
 	}

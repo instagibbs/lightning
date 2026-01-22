@@ -1869,6 +1869,7 @@ enum watch_result onchaind_funding_spent(struct channel *channel,
 				  channel->static_remotekey_start[REMOTE],
 				   channel_has(channel, OPT_ANCHOR_OUTPUTS_DEPRECATED),
 				   channel_has(channel, OPT_ANCHORS_ZERO_FEE_HTLC_TX),
+				   channel_has(channel, OPT_ZERO_FEE_COMMITMENTS),
 				  feerate_min(ld, NULL));
 	subd_send_msg(channel->owner, take(msg));
 
