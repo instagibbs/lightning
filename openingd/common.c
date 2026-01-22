@@ -19,6 +19,7 @@ bool check_config_bounds(const tal_t *ctx,
 			 const struct channel_config *remoteconf,
 			 const struct channel_config *localconf,
 			 bool option_anchors_zero_fee_htlc_tx,
+			 bool option_zero_fee_commitments,
 			 char **err_reason)
 {
 	struct amount_sat capacity;
@@ -155,8 +156,21 @@ bool check_config_bounds(const tal_t *ctx,
 	 * The receiving node MUST fail the channel if:
 	 *...
 	 *  - `max_accepted_htlcs` is greater than 483.
+	 *
+	 * BOLT PR #1228:
+	 *  - if `channel_type` includes `zero_fee_commitments`:
+	 *    - `max_accepted_htlcs` is greater than 114.
 	 */
-	if (remoteconf->max_accepted_htlcs > 483) {
+	if (option_zero_fee_commitments) {
+		/* v3 transactions are limited to 10kvB, reducing max HTLCs */
+		if (remoteconf->max_accepted_htlcs > 114) {
+			*err_reason = tal_fmt(ctx,
+					      "max_accepted_htlcs %u too large"
+					      " for zero_fee_commitments (max 114)",
+					      remoteconf->max_accepted_htlcs);
+			return false;
+		}
+	} else if (remoteconf->max_accepted_htlcs > 483) {
 		*err_reason = tal_fmt(ctx,
 				      "max_accepted_htlcs %u too large",
 				      remoteconf->max_accepted_htlcs);

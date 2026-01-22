@@ -2462,6 +2462,20 @@ static void accepter_start(struct state *state, const u8 *oc2_msg)
 		}
 	}
 
+	/* BOLT PR #1228:
+	 * The receiving node MUST fail the channel if:
+	 * - `channel_type` includes `zero_fee_commitments` and
+	 *   `commitment_feerate_perkw` is not 0.
+	 */
+	if (channel_type_has(state->channel_type, OPT_ZERO_FEE_COMMITMENTS)
+	    && state->feerate_per_kw_commitment != 0) {
+		negotiation_failed(state,
+				   "zero_fee_commitments channel but"
+				   " commitment_feerate_perkw is %u, not 0",
+				   state->feerate_per_kw_commitment);
+		return;
+	}
+
 	/* Since anchor outputs are optional, we
 	 * only support liquidity ads if those are enabled. */
 	if (open_tlv->request_funds &&
@@ -2663,6 +2677,7 @@ static void accepter_start(struct state *state, const u8 *oc2_msg)
 				 &tx_state->remoteconf,
 				 &tx_state->localconf,
 				 channel_type_has(state->channel_type, OPT_ANCHORS_ZERO_FEE_HTLC_TX),
+				 channel_type_has(state->channel_type, OPT_ZERO_FEE_COMMITMENTS),
 				 &err_reason)) {
 		negotiation_failed(state, "%s", err_reason);
 		return;
@@ -3327,6 +3342,7 @@ static void opener_start(struct state *state, u8 *msg)
 				 &tx_state->remoteconf,
 				 &tx_state->localconf,
 				 channel_type_has(state->channel_type, OPT_ANCHORS_ZERO_FEE_HTLC_TX),
+				 channel_type_has(state->channel_type, OPT_ZERO_FEE_COMMITMENTS),
 				 &err_reason)) {
 		negotiation_failed(state, "%s", err_reason);
 		return;
@@ -3643,6 +3659,7 @@ static void rbf_local_start(struct state *state, u8 *msg)
 				 &tx_state->remoteconf,
 				 &tx_state->localconf,
 				 channel_type_has(state->channel_type, OPT_ANCHORS_ZERO_FEE_HTLC_TX),
+				 channel_type_has(state->channel_type, OPT_ZERO_FEE_COMMITMENTS),
 				 &err_reason)) {
 		open_abort(state, "%s", err_reason);
 		return;
@@ -3794,6 +3811,7 @@ static void rbf_remote_start(struct state *state, const u8 *rbf_msg)
 				 &tx_state->remoteconf,
 				 &tx_state->localconf,
 				 channel_type_has(state->channel_type, OPT_ANCHORS_ZERO_FEE_HTLC_TX),
+				 channel_type_has(state->channel_type, OPT_ZERO_FEE_COMMITMENTS),
 				 &err_reason)) {
 		negotiation_failed(state, "%s", err_reason);
 		goto free_rbf_ctx;

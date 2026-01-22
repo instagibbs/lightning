@@ -321,6 +321,7 @@ static u8 *funder_channel_start(struct state *state, u8 channel_flags,
 				 &state->localconf,
 				 &state->localconf,
 				 channel_type_has(state->channel_type, OPT_ANCHORS_ZERO_FEE_HTLC_TX),
+				 channel_type_has(state->channel_type, OPT_ZERO_FEE_COMMITMENTS),
 				 &err_reason)) {
 		negotiation_aborted(state,
 				    tal_fmt(tmpctx, "Not opening because if they used the same setting as us %s",
@@ -498,6 +499,7 @@ static u8 *funder_channel_start(struct state *state, u8 channel_flags,
 				 &state->remoteconf,
 				 &state->localconf,
 				 channel_type_has(state->channel_type, OPT_ANCHORS_ZERO_FEE_HTLC_TX),
+				 channel_type_has(state->channel_type, OPT_ZERO_FEE_COMMITMENTS),
 				 &err_reason)) {
 		negotiation_failed(state, "%s", err_reason);
 		return NULL;
@@ -1002,6 +1004,8 @@ static u8 *fundee_channel(struct state *state, const u8 *open_channel_msg)
 				 &state->localconf,
 				 channel_type_has(state->channel_type,
 						  OPT_ANCHORS_ZERO_FEE_HTLC_TX),
+				 channel_type_has(state->channel_type,
+						  OPT_ZERO_FEE_COMMITMENTS),
 				 &err_reason)) {
 		negotiation_failed(state, "%s", err_reason);
 		return NULL;
