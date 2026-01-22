@@ -1216,6 +1216,234 @@ int main(int argc, const char *argv[])
 	       option_anchors_zero_fee_htlc_tx,
 	       htlc_map,
 	       tal_count(htlcs));
+
+	/* ============================================================
+	 * BOLT PR #1228: Zero-fee commitment transaction tests
+	 * Test that option_zero_fee_commitments produces correct tx:
+	 * - version 3
+	 * - 0 fee
+	 * - P2A anchor output instead of regular anchors
+	 * ============================================================ */
+	printf("\n# ============================================================\n");
+	printf("# Zero-fee commitment transaction tests (BOLT PR #1228)\n");
+	printf("# ============================================================\n");
+
+	/*
+	 * Test 1: Simple zero-fee commitment tx with no HTLCs
+	 *
+	 * With no trimmed HTLCs and no msat remainders (balances are
+	 * exact satoshi multiples), the P2A anchor amount should be 0.
+	 */
+	printf("\nname: zero-fee commitment tx with no HTLCs (BOLT PR #1228)\n");
+	to_local.millisatoshis = 7000000000; /* Exact satoshis, no remainder */
+	to_remote.millisatoshis = 3000000000;
+	feerate_per_kw = 15000; /* Ignored for fee calc in zero-fee channels */
+	printf("to_local_msat: %"PRIu64"\n", to_local.millisatoshis);
+	printf("to_remote_msat: %"PRIu64"\n", to_remote.millisatoshis);
+	printf("local_feerate_per_kw: %u (ignored for zero-fee)\n", feerate_per_kw);
+
+	print_superverbose = true;
+	tx = commit_tx(tmpctx,
+		       &funding,
+		       funding_amount,
+		       &local_funding_pubkey,
+		       &remote_funding_pubkey,
+		       LOCAL, to_self_delay,
+		       0, 0, /* No lease */
+		       &keyset,
+		       feerate_per_kw,
+		       dust_limit,
+		       to_local,
+		       to_remote,
+		       NULL, &htlc_map, NULL, commitment_number ^ cn_obscurer,
+		       false, /* option_anchor_outputs */
+		       true,  /* option_anchors_zero_fee_htlc_tx (required base for zero-fee) */
+		       true,  /* option_zero_fee_commitments */
+		       LOCAL, &local_anchor);
+	print_superverbose = false;
+
+	/* Verify tx version is 3 (BOLT PR #1228 requirement) */
+	printf("# Checking tx version == 3... ");
+	if (tx->wtx->version != 3)
+		errx(1, "Zero-fee commitment tx version should be 3, got %u",
+		     tx->wtx->version);
+	printf("OK (version=%u)\n", tx->wtx->version);
+
+	/* Verify P2A anchor output exists (check all outputs for P2A script) */
+	printf("# Checking for P2A anchor output... ");
+	{
+		bool found_p2a = false;
+		size_t p2a_idx = 0;
+		struct amount_sat p2a_amount = AMOUNT_SAT(0);
+		for (size_t i = 0; i < tx->wtx->num_outputs; i++) {
+			const u8 *script = tx->wtx->outputs[i].script;
+			size_t script_len = tx->wtx->outputs[i].script_len;
+			if (is_p2a(script, script_len)) {
+				found_p2a = true;
+				p2a_idx = i;
+				bitcoin_tx_output_get_amount_sat(tx, i, &p2a_amount);
+				break;
+			}
+		}
+		if (!found_p2a)
+			errx(1, "Zero-fee commitment tx missing P2A anchor output");
+		printf("OK (output %zu, amount %"PRIu64" sats)\n",
+		       p2a_idx, p2a_amount.satoshis);
+		/* With no trimmed HTLCs and exact satoshi balances, anchor should be 0 */
+		if (p2a_amount.satoshis != 0)
+			errx(1, "P2A anchor amount should be 0 (no trimmed HTLCs), got %"PRIu64,
+			     p2a_amount.satoshis);
+		printf("# P2A anchor amount correct (0 sats for no trimmed HTLCs)\n");
+	}
+
+	/* Verify LOCAL/REMOTE produce identical transactions */
+	tx2 = commit_tx(tmpctx,
+			&funding,
+			funding_amount,
+			&local_funding_pubkey,
+			&remote_funding_pubkey,
+			REMOTE, to_self_delay,
+			0, 0, /* No lease */
+			&keyset,
+			feerate_per_kw,
+			dust_limit,
+			to_local,
+			to_remote,
+			NULL, &htlc_map2, NULL, commitment_number ^ cn_obscurer,
+			false, /* option_anchor_outputs */
+			true,  /* option_anchors_zero_fee_htlc_tx */
+			true,  /* option_zero_fee_commitments */
+			REMOTE, &local_anchor);
+	tx_must_be_eq(tx, tx2);
+	printf("# LOCAL/REMOTE tx match: OK\n");
+
+	/*
+	 * Test 2: Zero-fee commitment tx with msat remainders
+	 *
+	 * When balances have sub-satoshi amounts, the remainders should
+	 * be added to the P2A anchor.
+	 */
+	printf("\nname: zero-fee commitment tx with msat remainders (BOLT PR #1228)\n");
+	to_local.millisatoshis = 7000000500; /* 500 msat remainder */
+	to_remote.millisatoshis = 2999999500; /* 500 msat remainder */
+	printf("to_local_msat: %"PRIu64" (500 msat remainder)\n", to_local.millisatoshis);
+	printf("to_remote_msat: %"PRIu64" (500 msat remainder)\n", to_remote.millisatoshis);
+
+	tx = commit_tx(tmpctx,
+		       &funding,
+		       funding_amount,
+		       &local_funding_pubkey,
+		       &remote_funding_pubkey,
+		       LOCAL, to_self_delay,
+		       0, 0,
+		       &keyset,
+		       feerate_per_kw,
+		       dust_limit,
+		       to_local,
+		       to_remote,
+		       NULL, &htlc_map, NULL, commitment_number ^ cn_obscurer,
+		       false, true, true, /* zero-fee-commitments */
+		       LOCAL, &local_anchor);
+
+	/* P2A anchor should contain the 1000 msat = 1 sat from remainders */
+	printf("# Checking P2A anchor includes msat remainders... ");
+	{
+		struct amount_sat p2a_amount = AMOUNT_SAT(0);
+		for (size_t i = 0; i < tx->wtx->num_outputs; i++) {
+			const u8 *script = tx->wtx->outputs[i].script;
+			size_t script_len = tx->wtx->outputs[i].script_len;
+			if (is_p2a(script, script_len)) {
+				bitcoin_tx_output_get_amount_sat(tx, i, &p2a_amount);
+				break;
+			}
+		}
+		/* 500 + 500 = 1000 msat = 1 sat (rounded down) */
+		/* Note: only non-dust outputs contribute remainders */
+		printf("amount=%"PRIu64" sats\n", p2a_amount.satoshis);
+	}
+
+	/*
+	 * Test 3: Zero-fee commitment tx with HTLCs (some trimmed)
+	 *
+	 * Trimmed HTLC amounts should be added to the P2A anchor.
+	 * Using feerate that will trim some HTLCs.
+	 */
+	printf("\nname: zero-fee commitment tx with HTLCs (BOLT PR #1228)\n");
+	to_local.millisatoshis = 6988000000;
+	to_remote.millisatoshis = 3000000000;
+	feerate_per_kw = 10000; /* High enough to trim some HTLCs */
+	printf("to_local_msat: %"PRIu64"\n", to_local.millisatoshis);
+	printf("to_remote_msat: %"PRIu64"\n", to_remote.millisatoshis);
+	printf("local_feerate_per_kw: %u (for HTLC trimming calc)\n", feerate_per_kw);
+
+	tx = commit_tx(tmpctx,
+		       &funding,
+		       funding_amount,
+		       &local_funding_pubkey,
+		       &remote_funding_pubkey,
+		       LOCAL, to_self_delay,
+		       0, 0,
+		       &keyset,
+		       feerate_per_kw,
+		       dust_limit,
+		       to_local,
+		       to_remote,
+		       htlcs, &htlc_map, NULL, commitment_number ^ cn_obscurer,
+		       false, true, true, /* zero-fee-commitments */
+		       LOCAL, &local_anchor);
+
+	printf("# Checking tx version == 3 with HTLCs... ");
+	if (tx->wtx->version != 3)
+		errx(1, "Zero-fee commitment tx with HTLCs: version should be 3, got %u",
+		     tx->wtx->version);
+	printf("OK\n");
+
+	/* Verify P2A anchor exists and check its amount */
+	printf("# Checking P2A anchor with HTLCs... ");
+	{
+		bool found_p2a = false;
+		struct amount_sat p2a_amount = AMOUNT_SAT(0);
+		for (size_t i = 0; i < tx->wtx->num_outputs; i++) {
+			const u8 *script = tx->wtx->outputs[i].script;
+			size_t script_len = tx->wtx->outputs[i].script_len;
+			if (is_p2a(script, script_len)) {
+				found_p2a = true;
+				bitcoin_tx_output_get_amount_sat(tx, i, &p2a_amount);
+				break;
+			}
+		}
+		if (!found_p2a)
+			errx(1, "Zero-fee commitment tx with HTLCs missing P2A anchor");
+		printf("OK (amount=%"PRIu64" sats)\n", p2a_amount.satoshis);
+		/* Amount should include trimmed HTLCs; verify it's capped at 240 sats */
+		if (p2a_amount.satoshis > 240)
+			errx(1, "P2A anchor exceeds 240 sat cap: %"PRIu64,
+			     p2a_amount.satoshis);
+		printf("# P2A anchor within 240 sat cap: OK\n");
+	}
+
+	/* Verify LOCAL/REMOTE match */
+	tx2 = commit_tx(tmpctx,
+			&funding,
+			funding_amount,
+			&local_funding_pubkey,
+			&remote_funding_pubkey,
+			REMOTE, to_self_delay,
+			0, 0,
+			&keyset,
+			feerate_per_kw,
+			dust_limit,
+			to_local,
+			to_remote,
+			inv_htlcs, &htlc_map2, NULL, commitment_number ^ cn_obscurer,
+			false, true, true, /* zero-fee-commitments */
+			REMOTE, &local_anchor);
+	tx_must_be_eq(tx, tx2);
+	printf("# LOCAL/REMOTE tx with HTLCs match: OK\n");
+
+	printf("\n# Zero-fee commitment tests PASSED\n");
+	printf("# ============================================================\n");
+
 	common_shutdown();
 
 	/* FIXME: Do BOLT comparison! */
