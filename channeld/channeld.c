@@ -22,6 +22,7 @@
 #include <channeld/splice.h>
 #include <channeld/watchtower.h>
 #include <common/billboard.h>
+#include <common/initial_commit_tx.h>
 #include <common/ecdh_hsmd.h>
 #include <common/interactivetx.h>
 #include <common/key_derive.h>
@@ -675,12 +676,27 @@ static void validate_zero_fee_commitment_tx(struct peer *peer,
 
 	/* BOLT PR #1228:
 	 * Zero-fee commitment transactions use a single shared P2A anchor
-	 * output (OP_1 <0x4e73>) for CPFP fee bumping. */
+	 * output (OP_1 <0x4e73>) for CPFP fee bumping.
+	 * The anchor amount MUST be <= 240 sats (P2A dust limit). */
 	bool found_p2a = false;
 	for (size_t i = 0; i < tx->wtx->num_outputs; i++) {
 		const u8 *script = tx->wtx->outputs[i].script;
 		size_t script_len = tx->wtx->outputs[i].script_len;
 		if (is_p2a(script, script_len)) {
+			/* BOLT PR #1228:
+			 * Validate anchor amount is within the 240 sat cap.
+			 * This prevents peers from creating invalid commitment
+			 * transactions with inflated anchor values. */
+			struct amount_sat anchor_amount;
+			anchor_amount.satoshis = tx->wtx->outputs[i].satoshi;
+			if (amount_sat_greater(anchor_amount,
+					       AMOUNT_SAT(P2A_MAX_ANCHOR_SAT))) {
+				peer_failed_err(peer->pps, &peer->channel_id,
+						"P2A anchor amount %s exceeds "
+						"max %d sats",
+						fmt_amount_sat(tmpctx, anchor_amount),
+						P2A_MAX_ANCHOR_SAT);
+			}
 			found_p2a = true;
 			break;
 		}
