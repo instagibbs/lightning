@@ -708,6 +708,10 @@ static struct amount_sat commit_txfee(const struct channel *channel,
 	bool option_anchor_outputs = channel_has(channel, OPT_ANCHOR_OUTPUTS_DEPRECATED);
 	bool option_anchors_zero_fee_htlc_tx = channel_has(channel, OPT_ANCHORS_ZERO_FEE_HTLC_TX);
 
+	/* BOLT PR #1228: Zero-fee commitment channels have no commitment fee */
+	if (channel_has(channel, OPT_ZERO_FEE_COMMITMENTS))
+		return AMOUNT_SAT(0);
+
 	if (side == LOCAL)
 		dust_limit = channel->our_config.dust_limit;
 	if (side == REMOTE)

@@ -2683,6 +2683,13 @@ static void accepter_start(struct state *state, const u8 *oc2_msg)
 		return;
 	}
 
+	/* BOLT PR #1228:
+	 * For `zero_fee_commitments`, max_accepted_htlcs is limited
+	 * to 114 due to v3 transaction 10kvB size constraint. */
+	if (channel_type_has(state->channel_type, OPT_ZERO_FEE_COMMITMENTS)
+	    && tx_state->localconf.max_accepted_htlcs > 114)
+		tx_state->localconf.max_accepted_htlcs = 114;
+
 	/* If we have an upfront shutdown script, send it to our peer */
 	struct tlv_accept_tlvs *a_tlv = tlv_accept_tlvs_new(tmpctx);
 	if (!state->upfront_shutdown_script[LOCAL])
@@ -3003,8 +3010,17 @@ static void opener_start(struct state *state, u8 *msg)
 	open_tlv = tlv_opening_tlvs_new(tmpctx);
 	open_tlv->channel_type = state->channel_type->features;
 
-	/* Given channel type, which feerate do we use? */
-	if (channel_type_has_anchors(state->channel_type))
+	/* Given channel type, which feerate do we use?
+	 * BOLT PR #1228:
+	 * For `zero_fee_commitments`, commitment_feerate_perkw MUST be 0. */
+	if (channel_type_has(state->channel_type, OPT_ZERO_FEE_COMMITMENTS)) {
+		state->feerate_per_kw_commitment = 0;
+		/* BOLT PR #1228:
+		 * For `zero_fee_commitments`, max_accepted_htlcs is limited
+		 * to 114 due to v3 transaction 10kvB size constraint. */
+		if (tx_state->localconf.max_accepted_htlcs > 114)
+			tx_state->localconf.max_accepted_htlcs = 114;
+	} else if (channel_type_has_anchors(state->channel_type))
 		state->feerate_per_kw_commitment = anchor_feerate;
 	else
 		state->feerate_per_kw_commitment = nonanchor_feerate;

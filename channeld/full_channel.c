@@ -547,6 +547,10 @@ static bool local_opener_has_fee_headroom(const struct channel *channel,
 
 	assert(channel->opener == LOCAL);
 
+	/* BOLT PR #1228: Zero-fee commitment channels have no fee headroom concern */
+	if (channel_has(channel, OPT_ZERO_FEE_COMMITMENTS))
+		return true;
+
 	/* How many untrimmed at current feerate?   Increasing feerate can
 	 * only *reduce* this number, so use current feerate here! */
 	untrimmed = num_untrimmed_htlcs(LOCAL, channel->config[LOCAL].dust_limit,
