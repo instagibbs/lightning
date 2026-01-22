@@ -305,7 +305,11 @@ static struct bitcoin_tx *sign_and_send_last(const tal_t *ctx,
 	struct anchor_details *adet;
 	struct bitcoin_tx *tx;
 
-	tx = sign_last_tx(ctx, channel, last_tx, last_sig);
+	/* For simple close, tx is already signed (has witness) */
+	if (last_tx->wtx->inputs[0].witness)
+		tx = clone_bitcoin_tx(ctx, last_tx);
+	else
+		tx = sign_last_tx(ctx, channel, last_tx, last_sig);
 	bitcoin_txid(tx, &txid);
 	wallet_transaction_add(ld->wallet, tx->wtx, 0, 0);
 	wallet_extract_owned_outputs(ld->wallet, tx->wtx, false, NULL);

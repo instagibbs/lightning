@@ -31,6 +31,7 @@ msgdata,closingd_init,fee_negotiation_step,u64,
 msgdata,closingd_init,fee_negotiation_step_unit,u8,
 msgdata,closingd_init,use_quickclose,bool,
 msgdata,closingd_init,shutdown_wrong_funding,?bitcoin_outpoint,
+msgdata,closingd_init,option_simple_close,bool,
 
 # Message for any commands waiting.
 msgtype,closingd_notification,2003
@@ -47,3 +48,14 @@ msgdata,closingd_received_signature_reply,closing_txid,bitcoin_txid,
 
 # Negotiations complete, we're exiting.
 msgtype,closingd_complete,2004
+
+# Simple close: we received closing_complete from peer and signed their tx.
+msgtype,closingd_received_closing_complete,2005
+msgdata,closingd_received_closing_complete,their_sig,bitcoin_signature,
+msgdata,closingd_received_closing_complete,their_tx,bitcoin_tx,
+
+# Simple close: we received closing_sig from peer for our tx.
+# The tx has both signatures, ready to broadcast.
+msgtype,closingd_received_closing_sig,2006
+msgdata,closingd_received_closing_sig,final_tx,bitcoin_tx,
+msgdata,closingd_received_closing_sig,peer_sig,bitcoin_signature,

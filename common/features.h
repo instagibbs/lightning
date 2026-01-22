@@ -145,6 +145,11 @@ struct feature_set *feature_set_dup(const tal_t *ctx,
 #define OPT_PAYMENT_METADATA			48
 #define OPT_ZEROCONF				50
 
+/* BOLT #9:
+ * | 60/61 | `option_simple_close` | ... IN ...
+ */
+#define OPT_SIMPLE_CLOSE			60
+
 /* The old pre-zero-fee-anchors were deprecated, and we never supported them
  * outside experimental options */
 #define OPT_ANCHOR_OUTPUTS_DEPRECATED		20

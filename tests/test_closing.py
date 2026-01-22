@@ -4403,3 +4403,393 @@ def test_onchain_close_no_p2tr(node_factory, bitcoind):
 
     # We should see the output.
     assert len(l1.rpc.listfunds()['outputs']) == 2
+
+
+@unittest.skipIf(TEST_NETWORK != 'regtest', "option_simple_close test only for regtest")
+def test_simple_close_basic(node_factory, bitcoind):
+    """Test option_simple_close: both nodes use closing_complete/closing_sig"""
+    # Enable OPT_SIMPLE_CLOSE (feature bit 61 = optional) on both nodes
+    l1, l2 = node_factory.line_graph(2, opts={'dev-force-features': '+61'})
+
+    chan = l1.get_channel_scid(l2)
+
+    # Channel funded with 1M sats by l1
+    # Make a payment so balances are different: l1 pays l2 200000 sats
+    l1.pay(l2, 200000000)  # 200000 sats in msat
+
+    # Wait for HTLCs to settle
+    wait_for(lambda: only_one(l2.rpc.listpeerchannels()['channels'])['htlcs'] == [])
+
+    # Record expected balances before close (in sats)
+    # l1: 1000000 - 200000 = 800000 sats (minus fees)
+    # l2: 200000 sats
+    l1_expected_min = 795000  # Allow for closing fee
+    l2_expected_min = 195000  # Allow for closing fee
+
+    # Close the channel
+    l1.rpc.close(chan)
+
+    # Both should enter closing state
+    l1.daemon.wait_for_log(' to CHANNELD_SHUTTING_DOWN')
+    l2.daemon.wait_for_log(' to CHANNELD_SHUTTING_DOWN')
+
+    l1.daemon.wait_for_log(' to CLOSINGD_SIGEXCHANGE')
+    l2.daemon.wait_for_log(' to CLOSINGD_SIGEXCHANGE')
+
+    # Both should use option_simple_close protocol
+    l1.daemon.wait_for_log('Using option_simple_close protocol')
+    l2.daemon.wait_for_log('Using option_simple_close protocol')
+
+    # Both should send closing_complete
+    l1.daemon.wait_for_log('Sent closing_complete')
+    l2.daemon.wait_for_log('Sent closing_complete')
+
+    # Both should receive closing_complete from peer
+    l1.daemon.wait_for_log('Received closing_complete')
+    l2.daemon.wait_for_log('Received closing_complete')
+
+    # Both should send closing_sig for peer's tx
+    l1.daemon.wait_for_log('Sent closing_sig')
+    l2.daemon.wait_for_log('Sent closing_sig')
+
+    # Both should receive closing_sig for their tx
+    l1.daemon.wait_for_log('Received closing_sig')
+    l2.daemon.wait_for_log('Received closing_sig')
+
+    # Wait for tx to be in mempool (either node can broadcast first)
+    wait_for(lambda: bitcoind.rpc.getmempoolinfo()['size'] == 1)
+
+    # Get the close txid
+    closetxid = only_one(bitcoind.rpc.getrawmempool(False))
+
+    # Mine the close tx
+    bitcoind.generate_block(1, wait_for_mempool=1)
+
+    # Both should see the close as ONCHAIN (mutual close completed)
+    sync_blockheight(bitcoind, [l1, l2])
+    wait_for(lambda: only_one(l1.rpc.listpeerchannels()['channels'])['state'] == 'ONCHAIN')
+    wait_for(lambda: only_one(l2.rpc.listpeerchannels()['channels'])['state'] == 'ONCHAIN')
+
+    # Verify both nodes received their outputs from the closing tx
+    l1.daemon.wait_for_log(r'Owning output.* txid %s.* CONFIRMED' % closetxid)
+    l2.daemon.wait_for_log(r'Owning output.* txid %s.* CONFIRMED' % closetxid)
+
+    # Verify the amounts recovered are correct
+    l1_outputs = [o for o in l1.rpc.listfunds()['outputs'] if o['txid'] == closetxid]
+    l2_outputs = [o for o in l2.rpc.listfunds()['outputs'] if o['txid'] == closetxid]
+
+    assert len(l1_outputs) == 1, "l1 should have exactly one output from close tx"
+    assert len(l2_outputs) == 1, "l2 should have exactly one output from close tx"
+
+    l1_recovered = l1_outputs[0]['amount_msat'] // 1000  # Convert to sats
+    l2_recovered = l2_outputs[0]['amount_msat'] // 1000
+
+    assert l1_recovered >= l1_expected_min, f"l1 recovered {l1_recovered} sats, expected >= {l1_expected_min}"
+    assert l2_recovered >= l2_expected_min, f"l2 recovered {l2_recovered} sats, expected >= {l2_expected_min}"
+    # Total should be close to 1M sats (minus fees)
+    assert l1_recovered + l2_recovered >= 990000, f"Total recovered {l1_recovered + l2_recovered} sats, expected >= 990000"
+
+
+@unittest.skipIf(TEST_NETWORK != 'regtest', "option_simple_close test only for regtest")
+def test_simple_close_fallback_to_legacy(node_factory, bitcoind):
+    """Test that we fall back to legacy closing_signed if peer doesn't support simple close"""
+    # l1 supports simple close, l2 does not (default features)
+    l1, l2 = node_factory.line_graph(2, opts=[{'dev-force-features': '+61'},
+                                               {}])
+
+    chan = l1.get_channel_scid(l2)
+
+    # l1 pays l2 200000 sats
+    l1.pay(l2, 200000000)
+    wait_for(lambda: only_one(l2.rpc.listpeerchannels()['channels'])['htlcs'] == [])
+
+    # Expected balances (in sats, allowing for fees)
+    l1_expected_min = 795000
+    l2_expected_min = 195000
+
+    l1.rpc.close(chan)
+
+    l1.daemon.wait_for_log(' to CLOSINGD_SIGEXCHANGE')
+    l2.daemon.wait_for_log(' to CLOSINGD_SIGEXCHANGE')
+
+    # l1 should NOT use simple close (feature not negotiated)
+    assert not l1.daemon.is_in_log('Using option_simple_close protocol')
+
+    # Should use legacy closing_signed
+    l1.daemon.wait_for_log('fee offer')
+    l2.daemon.wait_for_log('Received fee offer')
+
+    # Wait for tx to be in mempool
+    wait_for(lambda: bitcoind.rpc.getmempoolinfo()['size'] == 1)
+    closetxid = only_one(bitcoind.rpc.getrawmempool(False))
+
+    bitcoind.generate_block(1, wait_for_mempool=1)
+    sync_blockheight(bitcoind, [l1, l2])
+
+    # Verify both nodes received their expected amounts
+    l1.daemon.wait_for_log(r'Owning output.* txid %s.* CONFIRMED' % closetxid)
+    l2.daemon.wait_for_log(r'Owning output.* txid %s.* CONFIRMED' % closetxid)
+
+    l1_outputs = [o for o in l1.rpc.listfunds()['outputs'] if o['txid'] == closetxid]
+    l2_outputs = [o for o in l2.rpc.listfunds()['outputs'] if o['txid'] == closetxid]
+
+    assert len(l1_outputs) == 1, "l1 should have exactly one output from close tx"
+    assert len(l2_outputs) == 1, "l2 should have exactly one output from close tx"
+
+    l1_recovered = l1_outputs[0]['amount_msat'] // 1000
+    l2_recovered = l2_outputs[0]['amount_msat'] // 1000
+
+    assert l1_recovered >= l1_expected_min, f"l1 recovered {l1_recovered} sats, expected >= {l1_expected_min}"
+    assert l2_recovered >= l2_expected_min, f"l2 recovered {l2_recovered} sats, expected >= {l2_expected_min}"
+
+
+@unittest.skipIf(TEST_NETWORK != 'regtest', "option_simple_close test only for regtest")
+def test_simple_close_opener_closes(node_factory, bitcoind):
+    """Test simple close when opener initiates close"""
+    l1, l2 = node_factory.line_graph(2, opts={'dev-force-features': '+61'})
+
+    chan = l1.get_channel_scid(l2)
+
+    # l1 is opener with 1M sats, pays l2 100000 sats
+    l1.pay(l2, 100000000)
+    wait_for(lambda: only_one(l2.rpc.listpeerchannels()['channels'])['htlcs'] == [])
+
+    # Expected balances (in sats, allowing for fees)
+    l1_expected_min = 895000  # 1M - 100k - fees
+    l2_expected_min = 95000   # 100k - fees
+
+    # Opener (l1) closes
+    l1.rpc.close(chan)
+
+    l1.daemon.wait_for_log('Using option_simple_close protocol')
+    l2.daemon.wait_for_log('Using option_simple_close protocol')
+
+    # Should complete
+    l1.daemon.wait_for_log('Received closing_sig')
+
+    wait_for(lambda: bitcoind.rpc.getmempoolinfo()['size'] == 1)
+    closetxid = only_one(bitcoind.rpc.getrawmempool(False))
+
+    bitcoind.generate_block(1, wait_for_mempool=1)
+    sync_blockheight(bitcoind, [l1, l2])
+
+    # Verify both nodes received their expected amounts
+    l1.daemon.wait_for_log(r'Owning output.* txid %s.* CONFIRMED' % closetxid)
+    l2.daemon.wait_for_log(r'Owning output.* txid %s.* CONFIRMED' % closetxid)
+
+    l1_outputs = [o for o in l1.rpc.listfunds()['outputs'] if o['txid'] == closetxid]
+    l2_outputs = [o for o in l2.rpc.listfunds()['outputs'] if o['txid'] == closetxid]
+
+    assert len(l1_outputs) == 1, "l1 should have exactly one output from close tx"
+    assert len(l2_outputs) == 1, "l2 should have exactly one output from close tx"
+
+    l1_recovered = l1_outputs[0]['amount_msat'] // 1000
+    l2_recovered = l2_outputs[0]['amount_msat'] // 1000
+
+    assert l1_recovered >= l1_expected_min, f"l1 recovered {l1_recovered} sats, expected >= {l1_expected_min}"
+    assert l2_recovered >= l2_expected_min, f"l2 recovered {l2_recovered} sats, expected >= {l2_expected_min}"
+    assert l1_recovered + l2_recovered >= 990000, f"Total recovered {l1_recovered + l2_recovered} sats"
+
+
+@unittest.skipIf(TEST_NETWORK != 'regtest', "option_simple_close test only for regtest")
+def test_simple_close_non_opener_closes(node_factory, bitcoind):
+    """Test simple close when non-opener initiates close"""
+    l1, l2 = node_factory.line_graph(2, opts={'dev-force-features': '+61'})
+
+    chan = l2.get_channel_scid(l1)
+
+    # l1 is opener with 1M sats, pays l2 100000 sats
+    l1.pay(l2, 100000000)
+    wait_for(lambda: only_one(l2.rpc.listpeerchannels()['channels'])['htlcs'] == [])
+
+    # Expected balances (in sats, allowing for fees)
+    l1_expected_min = 895000  # 1M - 100k - fees
+    l2_expected_min = 95000   # 100k - fees
+
+    # Non-opener (l2) closes
+    l2.rpc.close(chan)
+
+    l1.daemon.wait_for_log('Using option_simple_close protocol')
+    l2.daemon.wait_for_log('Using option_simple_close protocol')
+
+    l2.daemon.wait_for_log('Received closing_sig')
+
+    wait_for(lambda: bitcoind.rpc.getmempoolinfo()['size'] == 1)
+    closetxid = only_one(bitcoind.rpc.getrawmempool(False))
+
+    bitcoind.generate_block(1, wait_for_mempool=1)
+    sync_blockheight(bitcoind, [l1, l2])
+
+    # Verify both nodes received their expected amounts
+    l1.daemon.wait_for_log(r'Owning output.* txid %s.* CONFIRMED' % closetxid)
+    l2.daemon.wait_for_log(r'Owning output.* txid %s.* CONFIRMED' % closetxid)
+
+    l1_outputs = [o for o in l1.rpc.listfunds()['outputs'] if o['txid'] == closetxid]
+    l2_outputs = [o for o in l2.rpc.listfunds()['outputs'] if o['txid'] == closetxid]
+
+    assert len(l1_outputs) == 1, "l1 should have exactly one output from close tx"
+    assert len(l2_outputs) == 1, "l2 should have exactly one output from close tx"
+
+    l1_recovered = l1_outputs[0]['amount_msat'] // 1000
+    l2_recovered = l2_outputs[0]['amount_msat'] // 1000
+
+    assert l1_recovered >= l1_expected_min, f"l1 recovered {l1_recovered} sats, expected >= {l1_expected_min}"
+    assert l2_recovered >= l2_expected_min, f"l2 recovered {l2_recovered} sats, expected >= {l2_expected_min}"
+    assert l1_recovered + l2_recovered >= 990000, f"Total recovered {l1_recovered + l2_recovered} sats"
+
+
+# Reconnect test removed - more complex scenario that needs further investigation
+
+
+@unittest.skipIf(TEST_NETWORK != 'regtest', "option_simple_close test only for regtest")
+def test_simple_close_small_balance(node_factory, bitcoind):
+    """Test simple close when one side has a small (but not dust) balance.
+
+    Tests the close when balances are asymmetric but both parties
+    can still receive their funds.
+    """
+    l1, l2 = node_factory.line_graph(2, opts={'dev-force-features': '+61'})
+
+    chan = l1.get_channel_scid(l2)
+
+    # l1 has 1M sats, pay 900000 sats to l2
+    # This leaves l1 with ~100000 sats (small but not dust)
+    l1.pay(l2, 900000 * 1000)  # in msat
+    wait_for(lambda: only_one(l2.rpc.listpeerchannels()['channels'])['htlcs'] == [])
+
+    # l2 (greater balance) initiates close
+    l2.rpc.close(chan)
+
+    l1.daemon.wait_for_log('Using option_simple_close protocol')
+    l2.daemon.wait_for_log('Using option_simple_close protocol')
+
+    # Should complete successfully
+    l2.daemon.wait_for_log('Received closing_sig')
+
+    wait_for(lambda: bitcoind.rpc.getmempoolinfo()['size'] == 1)
+    closetxid = only_one(bitcoind.rpc.getrawmempool(False))
+
+    bitcoind.generate_block(1, wait_for_mempool=1)
+    sync_blockheight(bitcoind, [l1, l2])
+
+    # Both should have received their funds
+    l1.daemon.wait_for_log(r'Owning output.* txid %s.* CONFIRMED' % closetxid)
+    l2.daemon.wait_for_log(r'Owning output.* txid %s.* CONFIRMED' % closetxid)
+
+    l1_outputs = [o for o in l1.rpc.listfunds()['outputs'] if o['txid'] == closetxid]
+    l2_outputs = [o for o in l2.rpc.listfunds()['outputs'] if o['txid'] == closetxid]
+
+    # Both should have received outputs (neither is dust)
+    assert len(l1_outputs) == 1, "l1 should have exactly one output from close tx"
+    assert len(l2_outputs) == 1, "l2 should have exactly one output from close tx"
+
+    l1_recovered = l1_outputs[0]['amount_msat'] // 1000
+    l2_recovered = l2_outputs[0]['amount_msat'] // 1000
+
+    # l1 should have at least 90000 sats (100000 minus their closing fee)
+    assert l1_recovered >= 90000, f"l1 recovered {l1_recovered} sats, expected >= 90000"
+    # l2 should have at least 890000 sats (900000 minus fees)
+    assert l2_recovered >= 890000, f"l2 recovered {l2_recovered} sats, expected >= 890000"
+
+
+@unittest.skipIf(TEST_NETWORK != 'regtest', "option_simple_close test only for regtest")
+def test_simple_close_very_asymmetric(node_factory, bitcoind):
+    """Test simple close with very asymmetric balance (one side has 99%+).
+
+    This tests the lesser/greater balance party logic paths.
+    """
+    l1, l2 = node_factory.line_graph(2, opts={'dev-force-features': '+61'})
+
+    chan = l1.get_channel_scid(l2)
+
+    # l1 has 1M sats, pay 950000 sats to l2, leaving l1 with 50000 sats
+    l1.pay(l2, 950000 * 1000)
+    wait_for(lambda: only_one(l2.rpc.listpeerchannels()['channels'])['htlcs'] == [])
+
+    # Expected balances
+    l1_expected_min = 45000  # ~50k minus fees
+    l2_expected_min = 945000  # ~950k minus fees
+
+    # Lesser balance party (l1) initiates close
+    l1.rpc.close(chan)
+
+    l1.daemon.wait_for_log('Using option_simple_close protocol')
+    l2.daemon.wait_for_log('Using option_simple_close protocol')
+
+    # l1 should send closing_complete with closee_output_only and closer_and_closee_outputs
+    # (since l1 is lesser balance, they include closee_output_only per spec)
+    l1.daemon.wait_for_log('Sent closing_complete')
+    l1.daemon.wait_for_log('Received closing_sig')
+
+    wait_for(lambda: bitcoind.rpc.getmempoolinfo()['size'] == 1)
+    closetxid = only_one(bitcoind.rpc.getrawmempool(False))
+
+    bitcoind.generate_block(1, wait_for_mempool=1)
+    sync_blockheight(bitcoind, [l1, l2])
+
+    # Both should have outputs
+    l1.daemon.wait_for_log(r'Owning output.* txid %s.* CONFIRMED' % closetxid)
+    l2.daemon.wait_for_log(r'Owning output.* txid %s.* CONFIRMED' % closetxid)
+
+    l1_outputs = [o for o in l1.rpc.listfunds()['outputs'] if o['txid'] == closetxid]
+    l2_outputs = [o for o in l2.rpc.listfunds()['outputs'] if o['txid'] == closetxid]
+
+    assert len(l1_outputs) == 1, "l1 should have exactly one output from close tx"
+    assert len(l2_outputs) == 1, "l2 should have exactly one output from close tx"
+
+    l1_recovered = l1_outputs[0]['amount_msat'] // 1000
+    l2_recovered = l2_outputs[0]['amount_msat'] // 1000
+
+    assert l1_recovered >= l1_expected_min, f"l1 recovered {l1_recovered} sats, expected >= {l1_expected_min}"
+    assert l2_recovered >= l2_expected_min, f"l2 recovered {l2_recovered} sats, expected >= {l2_expected_min}"
+
+
+@unittest.skipIf(TEST_NETWORK != 'regtest', "option_simple_close test only for regtest")
+def test_simple_close_greater_balance_initiates(node_factory, bitcoind):
+    """Test simple close when greater balance party initiates.
+
+    Per BOLT: greater balance party uses closer_output_only and closer_and_closee_outputs.
+    """
+    l1, l2 = node_factory.line_graph(2, opts={'dev-force-features': '+61'})
+
+    chan = l1.get_channel_scid(l2)
+
+    # l1 has 1M sats, pay 100000 sats to l2
+    # l1 has 900k (greater), l2 has 100k (lesser)
+    l1.pay(l2, 100000 * 1000)
+    wait_for(lambda: only_one(l2.rpc.listpeerchannels()['channels'])['htlcs'] == [])
+
+    # Expected balances
+    l1_expected_min = 895000
+    l2_expected_min = 95000
+
+    # Greater balance party (l1) initiates close
+    l1.rpc.close(chan)
+
+    l1.daemon.wait_for_log('Using option_simple_close protocol')
+    l2.daemon.wait_for_log('Using option_simple_close protocol')
+
+    # Both should complete successfully
+    l1.daemon.wait_for_log('Sent closing_complete')
+    l1.daemon.wait_for_log('Received closing_sig')
+
+    wait_for(lambda: bitcoind.rpc.getmempoolinfo()['size'] == 1)
+    closetxid = only_one(bitcoind.rpc.getrawmempool(False))
+
+    bitcoind.generate_block(1, wait_for_mempool=1)
+    sync_blockheight(bitcoind, [l1, l2])
+
+    l1.daemon.wait_for_log(r'Owning output.* txid %s.* CONFIRMED' % closetxid)
+    l2.daemon.wait_for_log(r'Owning output.* txid %s.* CONFIRMED' % closetxid)
+
+    l1_outputs = [o for o in l1.rpc.listfunds()['outputs'] if o['txid'] == closetxid]
+    l2_outputs = [o for o in l2.rpc.listfunds()['outputs'] if o['txid'] == closetxid]
+
+    assert len(l1_outputs) == 1
+    assert len(l2_outputs) == 1
+
+    l1_recovered = l1_outputs[0]['amount_msat'] // 1000
+    l2_recovered = l2_outputs[0]['amount_msat'] // 1000
+
+    assert l1_recovered >= l1_expected_min, f"l1 recovered {l1_recovered}"
+    assert l2_recovered >= l2_expected_min, f"l2 recovered {l2_recovered}"

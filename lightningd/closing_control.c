@@ -4,6 +4,7 @@
 #include <channeld/channeld_wiregen.h>
 #include <closingd/closingd_wiregen.h>
 #include <common/closing_fee.h>
+#include <common/features.h>
 #include <common/json_command.h>
 #include <common/shutdown_scriptpubkey.h>
 #include <common/timeout.h>
@@ -326,6 +327,67 @@ static void peer_closing_notify(struct channel *channel, const u8 *msg)
 	}
 }
 
+/* Simple close: peer sent closing_complete, closingd signed their tx */
+static void peer_received_closing_complete(struct channel *channel, const u8 *msg)
+{
+	struct bitcoin_signature their_sig;
+	struct bitcoin_tx *their_tx;
+	struct lightningd *ld = channel->peer->ld;
+	u8 *funding_wscript;
+
+	if (!fromwire_closingd_received_closing_complete(msg, msg, &their_sig, &their_tx)) {
+		channel_internal_error(channel,
+				       "Bad closingd_received_closing_complete %s",
+				       tal_hex(msg, msg));
+		return;
+	}
+	their_tx->chainparams = chainparams;
+
+	funding_wscript = bitcoin_redeem_2of2(tmpctx,
+					      &channel->local_funding_pubkey,
+					      &channel->channel_info.remote_fundingkey);
+	if (!check_tx_sig(their_tx, 0, NULL, funding_wscript,
+			  &channel->channel_info.remote_fundingkey, &their_sig)) {
+		channel_internal_error(channel,
+				       "Bad signature in closing_complete %s",
+				       tal_hex(msg, msg));
+		return;
+	}
+
+	/* Save their tx as an alternative close option */
+	if (closing_fee_is_acceptable(ld, channel, their_tx)) {
+		channel_set_last_tx(channel, their_tx, &their_sig);
+		wallet_channel_save(ld->wallet, channel);
+	}
+
+	log_info(channel->log, "Received closing_complete from peer, signed their tx");
+}
+
+/* Simple close: peer sent closing_sig for our tx */
+static void peer_received_closing_sig(struct channel *channel, const u8 *msg)
+{
+	struct bitcoin_tx *final_tx;
+	struct bitcoin_txid txid;
+	struct bitcoin_signature peer_sig;
+
+	if (!fromwire_closingd_received_closing_sig(msg, msg, &final_tx, &peer_sig)) {
+		channel_internal_error(channel,
+				       "Bad closingd_received_closing_sig %s",
+				       tal_hex(msg, msg));
+		return;
+	}
+	final_tx->chainparams = chainparams;
+
+	/* This tx has both signatures and is ready to broadcast */
+	bitcoin_txid(final_tx, &txid);
+	log_info(channel->log, "Received closing_sig, tx %s ready to broadcast",
+		 fmt_bitcoin_txid(tmpctx, &txid));
+
+	/* Save final tx with peer's signature */
+	channel_set_last_tx(channel, final_tx, &peer_sig);
+	wallet_channel_save(channel->peer->ld->wallet, channel);
+}
+
 static unsigned closing_msg(struct subd *sd, const u8 *msg, const int *fds UNUSED)
 {
 	enum closingd_wire t = fromwire_peektype(msg);
@@ -341,6 +403,14 @@ static unsigned closing_msg(struct subd *sd, const u8 *msg, const int *fds UNUSE
 
 	case WIRE_CLOSINGD_NOTIFICATION:
 		peer_closing_notify(sd->channel, msg);
+		break;
+
+	case WIRE_CLOSINGD_RECEIVED_CLOSING_COMPLETE:
+		peer_received_closing_complete(sd->channel, msg);
+		break;
+
+	case WIRE_CLOSINGD_RECEIVED_CLOSING_SIG:
+		peer_received_closing_sig(sd->channel, msg);
 		break;
 
 	/* We send these, not receive them */
@@ -495,7 +565,10 @@ void peer_start_closingd(struct channel *channel, struct peer_fd *peer_fd)
 				       /* Always use quickclose with anchors */
 				       || option_anchor_outputs
 				       || option_anchors_zero_fee_htlc_tx,
-				       channel->shutdown_wrong_funding);
+				       channel->shutdown_wrong_funding,
+				       feature_negotiated(ld->our_features,
+							  channel->peer->their_features,
+							  OPT_SIMPLE_CLOSE));
 
 	/* We don't expect a response: it will give us feedback on
 	 * signatures sent and received, then closing_complete. */

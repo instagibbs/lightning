@@ -11,6 +11,7 @@
 #include <common/peer_io.h>
 #include <common/per_peer_state.h>
 #include <common/read_peer_msg.h>
+#include <common/shutdown_scriptpubkey.h>
 #include <common/status.h>
 #include <common/subdaemon.h>
 #include <common/utils.h>
@@ -21,6 +22,9 @@
 #include <unistd.h>
 #include <wire/peer_wire.h>
 #include <wire/wire_sync.h>
+
+/* Sequence number for simple close: allows locktime, signals RBF */
+#define SIMPLE_CLOSE_SEQUENCE 0xFFFFFFFD
 
 /* stdin == requests, 3 == peer, 4 = hsmd */
 #define REQ_FD STDIN_FILENO
@@ -645,6 +649,735 @@ static void calc_fee_bounds(size_t expected_weight,
 		     fmt_amount_sat(tmpctx, *maxfee));
 }
 
+/* Calculate the weight of a simple close tx with given variant */
+static size_t simple_close_weight(const u8 *closer_script,
+				  const u8 *closee_script,
+				  enum close_tx_variant variant)
+{
+	size_t weight = 4 * 10; /* version, locktime in vbytes */
+
+	/* Input: outpoint (36) + sequence (4) + empty scriptsig (1) = 41 bytes */
+	weight += 4 * 41;
+	/* Witness: 2-of-2 multisig = 1 + 1 + 72 + 1 + 72 = 147 WU (approx) */
+	weight += 147;
+
+	/* Outputs depend on variant */
+	switch (variant) {
+	case CLOSE_TX_BOTH_OUTPUTS:
+		/* Two outputs: 8 (value) + 1 (len) + script */
+		weight += 4 * (8 + 1 + tal_bytelen(closer_script));
+		weight += 4 * (8 + 1 + tal_bytelen(closee_script));
+		break;
+	case CLOSE_TX_CLOSER_ONLY:
+		weight += 4 * (8 + 1 + tal_bytelen(closer_script));
+		break;
+	case CLOSE_TX_CLOSEE_ONLY:
+		weight += 4 * (8 + 1 + tal_bytelen(closee_script));
+		break;
+	}
+
+	return weight;
+}
+
+/* Sign a simple close tx using HSM */
+static struct bitcoin_signature sign_simple_close(struct per_peer_state *pps,
+						  const struct channel_id *channel_id,
+						  struct bitcoin_tx *tx,
+						  const struct pubkey *remote_funding_pubkey)
+{
+	struct bitcoin_signature sig;
+	u8 *msg;
+
+	wire_sync_write(HSM_FD,
+			take(towire_hsmd_sign_mutual_close_tx(NULL,
+							     tx,
+							     remote_funding_pubkey)));
+	msg = wire_sync_read(tmpctx, HSM_FD);
+	if (!fromwire_hsmd_sign_tx_reply(msg, &sig))
+		status_failed(STATUS_FAIL_HSM_IO,
+			      "Bad hsmd_sign_tx_reply: %s",
+			      tal_hex(tmpctx, msg));
+
+	return sig;
+}
+
+/* Determine which tx variants we should sign as closer.
+ * Returns bitmask: bit 0 = BOTH, bit 1 = CLOSER_ONLY, bit 2 = CLOSEE_ONLY
+ * Returns 0 if no valid variant exists (e.g., both outputs dust without OP_RETURN).
+ * Based on BOLT rules:
+ * - Lesser balance party MUST NOT set closer_output_only
+ * - Lesser balance party MUST set closee_output_only if local output is dust
+ * - Greater balance party MUST NOT set closee_output_only
+ * - Greater balance party MUST set closer_output_only if peer's output is dust
+ * - MUST set fee_satoshis so that at least one output is not dust
+ */
+static unsigned int determine_variants_to_sign(struct amount_sat our_balance,
+					       struct amount_sat their_balance,
+					       struct amount_sat our_amount_after_fee,
+					       struct amount_sat their_amount,
+					       struct amount_sat dust_limit,
+					       const u8 *our_script,
+					       const u8 *their_script)
+{
+	unsigned int variants = 0;
+	bool we_have_lesser = amount_sat_less(our_balance, their_balance);
+	bool our_output_dust = amount_sat_less(our_amount_after_fee, dust_limit)
+			       && !is_valid_op_return_close(our_script);
+	bool their_output_dust = amount_sat_less(their_amount, dust_limit)
+				 && !is_valid_op_return_close(their_script);
+
+	status_debug("determine_variants: we_have_lesser=%d, our_dust=%d, their_dust=%d",
+		     we_have_lesser, our_output_dust, their_output_dust);
+
+	if (we_have_lesser) {
+		/* Lesser balance party rules:
+		 * - MUST NOT set closer_output_only
+		 * - MUST set closee_output_only if local output is dust */
+		if (our_output_dust && their_output_dust) {
+			/* Both outputs dust - no valid variant for lesser balance party.
+			 * Only greater balance party can close using OP_RETURN. */
+			status_debug("Both outputs dust, lesser balance cannot close");
+			return 0;
+		} else if (our_output_dust) {
+			/* Our output is dust, omit it via closee_output_only */
+			variants |= (1 << CLOSE_TX_CLOSEE_ONLY);
+		} else if (their_output_dust) {
+			/* Their output is dust but ours isn't.
+			 * We can only use BOTH_OUTPUTS (closee_output_only would be invalid).
+			 * Note: BOTH_OUTPUTS will fail if their dust output can't be included,
+			 * but that's the only valid option per spec. */
+			variants |= (1 << CLOSE_TX_BOTH_OUTPUTS);
+		} else {
+			/* Both outputs valid: include BOTH and CLOSEE_ONLY */
+			variants |= (1 << CLOSE_TX_BOTH_OUTPUTS);
+			variants |= (1 << CLOSE_TX_CLOSEE_ONLY);
+		}
+	} else {
+		/* Greater or equal balance party rules:
+		 * - MUST NOT set closee_output_only
+		 * - MUST set closer_output_only if peer's output is dust
+		 * - If own output is dust: MUST use OP_RETURN */
+		if (their_output_dust) {
+			/* Their output is dust, omit it via closer_output_only.
+			 * But we also need our output to be valid (not dust, or OP_RETURN). */
+			if (our_output_dust) {
+				/* Both dust - we need OP_RETURN for our output */
+				if (is_valid_op_return_close(our_script)) {
+					variants |= (1 << CLOSE_TX_CLOSER_ONLY);
+				} else {
+					/* Can't close - both dust without OP_RETURN */
+					status_debug("Both outputs dust, need OP_RETURN");
+					return 0;
+				}
+			} else {
+				variants |= (1 << CLOSE_TX_CLOSER_ONLY);
+			}
+		} else if (our_output_dust) {
+			/* Our output is dust - we MUST use OP_RETURN per spec */
+			if (is_valid_op_return_close(our_script)) {
+				/* OP_RETURN with their valid output */
+				variants |= (1 << CLOSE_TX_BOTH_OUTPUTS);
+			} else {
+				/* Can't close - our output dust without OP_RETURN */
+				status_debug("Our output dust without OP_RETURN, cannot close");
+				return 0;
+			}
+		} else {
+			/* Both outputs valid: include BOTH and CLOSER_ONLY */
+			variants |= (1 << CLOSE_TX_BOTH_OUTPUTS);
+			variants |= (1 << CLOSE_TX_CLOSER_ONLY);
+		}
+	}
+
+	return variants;
+}
+
+/* Select which variant to use when validating their closing_complete/closing_sig.
+ * Returns the appropriate variant, or -1 if no valid variant is available.
+ *
+ * IMPORTANT: We must validate that the variant they propose is appropriate:
+ * - CLOSER_ONLY is only valid if closee output IS dust (omitting valid output is theft)
+ * - CLOSEE_ONLY is only valid if closer output IS dust
+ * - BOTH is valid if neither output is dust
+ */
+static enum close_tx_variant select_variant_for_validation(
+	const struct tlv_closing_tlvs *tlvs,
+	struct amount_sat closer_amount,
+	struct amount_sat closee_amount,
+	struct amount_sat dust_limit,
+	const u8 *closer_script,
+	const u8 *closee_script)
+{
+	bool closer_dust = amount_sat_less(closer_amount, dust_limit)
+			   && !is_valid_op_return_close(closer_script);
+	bool closee_dust = amount_sat_less(closee_amount, dust_limit)
+			   && !is_valid_op_return_close(closee_script);
+
+	/* Determine which variants are VALID given the dust situation.
+	 * A variant is only valid if the omitted output (if any) IS dust. */
+	bool both_valid = !closer_dust && !closee_dust;
+	bool closer_only_valid = !closer_dust && closee_dust;
+	bool closee_only_valid = closer_dust && !closee_dust;
+
+	/* Special case: if both are dust, only closer_only with OP_RETURN closer is valid */
+	if (closer_dust && closee_dust) {
+		if (is_valid_op_return_close(closer_script))
+			closer_only_valid = true;
+	}
+
+	/* Select based on what they provided AND what's valid */
+	if (tlvs->closer_and_closee_outputs && both_valid)
+		return CLOSE_TX_BOTH_OUTPUTS;
+	if (tlvs->closer_output_only && closer_only_valid)
+		return CLOSE_TX_CLOSER_ONLY;
+	if (tlvs->closee_output_only && closee_only_valid)
+		return CLOSE_TX_CLOSEE_ONLY;
+
+	/* Fallback: select based on what's valid (they may have provided multiple sigs) */
+	if (both_valid && tlvs->closer_and_closee_outputs)
+		return CLOSE_TX_BOTH_OUTPUTS;
+	if (closer_only_valid && tlvs->closer_output_only)
+		return CLOSE_TX_CLOSER_ONLY;
+	if (closee_only_valid && tlvs->closee_output_only)
+		return CLOSE_TX_CLOSEE_ONLY;
+
+	/* Last resort: use what's valid even if they didn't provide signature
+	 * (will fail later when we try to get signature) */
+	if (both_valid)
+		return CLOSE_TX_BOTH_OUTPUTS;
+	if (closer_only_valid)
+		return CLOSE_TX_CLOSER_ONLY;
+	if (closee_only_valid)
+		return CLOSE_TX_CLOSEE_ONLY;
+
+	/* Nothing is valid - will fail later */
+	return CLOSE_TX_BOTH_OUTPUTS;
+}
+
+/* Get the signature from tlvs for a given variant */
+static const secp256k1_ecdsa_signature *get_sig_for_variant(
+	const struct tlv_closing_tlvs *tlvs,
+	enum close_tx_variant variant)
+{
+	switch (variant) {
+	case CLOSE_TX_BOTH_OUTPUTS:
+		return tlvs->closer_and_closee_outputs;
+	case CLOSE_TX_CLOSER_ONLY:
+		return tlvs->closer_output_only;
+	case CLOSE_TX_CLOSEE_ONLY:
+		return tlvs->closee_output_only;
+	}
+	return NULL;
+}
+
+/* Send closing_complete message */
+static void send_closing_complete(struct per_peer_state *pps,
+				  const struct channel_id *channel_id,
+				  const u8 *our_script,
+				  const u8 *their_script,
+				  struct amount_sat fee,
+				  u32 locktime,
+				  const struct bitcoin_signature *sig_both,
+				  const struct bitcoin_signature *sig_closer_only,
+				  const struct bitcoin_signature *sig_closee_only)
+{
+	struct tlv_closing_tlvs *tlvs = tlv_closing_tlvs_new(tmpctx);
+	u8 *msg;
+
+	/* Include signatures for applicable variants */
+	if (sig_both) {
+		tlvs->closer_and_closee_outputs = tal(tlvs, secp256k1_ecdsa_signature);
+		*tlvs->closer_and_closee_outputs = sig_both->s;
+	}
+	if (sig_closer_only) {
+		tlvs->closer_output_only = tal(tlvs, secp256k1_ecdsa_signature);
+		*tlvs->closer_output_only = sig_closer_only->s;
+	}
+	if (sig_closee_only) {
+		tlvs->closee_output_only = tal(tlvs, secp256k1_ecdsa_signature);
+		*tlvs->closee_output_only = sig_closee_only->s;
+	}
+
+	msg = towire_closing_complete(NULL, channel_id,
+				      our_script, their_script,
+				      fee, locktime, tlvs);
+	peer_write(pps, take(msg));
+
+	status_debug("Sent closing_complete: fee=%s, locktime=%u",
+		     fmt_amount_sat(tmpctx, fee), locktime);
+}
+
+/* Send closing_sig message (single signature for selected variant) */
+static void send_closing_sig(struct per_peer_state *pps,
+			     const struct channel_id *channel_id,
+			     const u8 *closer_script,
+			     const u8 *closee_script,
+			     struct amount_sat fee,
+			     u32 locktime,
+			     const struct bitcoin_signature *sig,
+			     enum close_tx_variant variant)
+{
+	struct tlv_closing_tlvs *tlvs = tlv_closing_tlvs_new(tmpctx);
+	u8 *msg;
+
+	/* Include signature for the selected variant */
+	switch (variant) {
+	case CLOSE_TX_BOTH_OUTPUTS:
+		tlvs->closer_and_closee_outputs = tal(tlvs, secp256k1_ecdsa_signature);
+		*tlvs->closer_and_closee_outputs = sig->s;
+		break;
+	case CLOSE_TX_CLOSER_ONLY:
+		tlvs->closer_output_only = tal(tlvs, secp256k1_ecdsa_signature);
+		*tlvs->closer_output_only = sig->s;
+		break;
+	case CLOSE_TX_CLOSEE_ONLY:
+		tlvs->closee_output_only = tal(tlvs, secp256k1_ecdsa_signature);
+		*tlvs->closee_output_only = sig->s;
+		break;
+	}
+
+	msg = towire_closing_sig(NULL, channel_id,
+				 closer_script, closee_script,
+				 fee, locktime, tlvs);
+	peer_write(pps, take(msg));
+
+	status_debug("Sent closing_sig for variant %d", variant);
+}
+
+/* Notify master about received closing_complete (their tx) */
+static void tell_master_closing_complete(const struct bitcoin_signature *their_sig,
+					 const struct bitcoin_tx *their_tx)
+{
+	u8 *msg = towire_closingd_received_closing_complete(NULL, their_sig, their_tx);
+	if (!wire_sync_write(REQ_FD, take(msg)))
+		status_failed(STATUS_FAIL_MASTER_IO,
+			      "Writing closing_complete to master: %s",
+			      strerror(errno));
+}
+
+/* Notify master about received closing_sig (our tx is complete) */
+static void tell_master_closing_sig(const struct bitcoin_tx *final_tx,
+				    const struct bitcoin_signature *peer_sig)
+{
+	u8 *msg = towire_closingd_received_closing_sig(NULL, final_tx, peer_sig);
+	if (!wire_sync_write(REQ_FD, take(msg)))
+		status_failed(STATUS_FAIL_MASTER_IO,
+			      "Writing closing_sig to master: %s",
+			      strerror(errno));
+}
+
+/* Main simple close protocol implementation */
+static void do_simple_close(const tal_t *ctx,
+			    struct per_peer_state *pps,
+			    const struct channel_id *channel_id,
+			    const struct pubkey funding_pubkey[NUM_SIDES],
+			    const u8 *funding_wscript,
+			    u32 *local_wallet_index,
+			    const struct ext_key *local_wallet_ext_key,
+			    const u8 *our_scriptpubkey,
+			    const u8 *their_scriptpubkey,
+			    const struct bitcoin_outpoint *funding,
+			    struct amount_sat funding_sats,
+			    struct amount_sat our_balance,
+			    struct amount_sat their_balance,
+			    struct amount_sat dust_limit,
+			    u32 min_feerate,
+			    u32 preferred_feerate,
+			    u32 max_feerate)
+{
+	struct amount_sat our_fee, our_amount_after_fee;
+	u32 our_locktime;
+	unsigned int our_variants;
+	struct bitcoin_tx *tx_both = NULL, *tx_closer_only = NULL, *tx_closee_only = NULL;
+	struct bitcoin_signature sig_both, sig_closer_only, sig_closee_only;
+	struct bitcoin_signature *p_sig_both = NULL, *p_sig_closer_only = NULL, *p_sig_closee_only = NULL;
+	bool received_closing_sig = false;
+
+	/* Calculate our fee based on preferred feerate */
+	size_t weight = simple_close_weight(our_scriptpubkey, their_scriptpubkey,
+					    CLOSE_TX_BOTH_OUTPUTS);
+	our_fee = amount_tx_fee(preferred_feerate, weight);
+
+	/* Ensure fee doesn't exceed our balance */
+	if (amount_sat_greater(our_fee, our_balance))
+		our_fee = our_balance;
+
+	if (!amount_sat_sub(&our_amount_after_fee, our_balance, our_fee))
+		our_amount_after_fee = AMOUNT_SAT(0);
+
+	/* Use current block height as locktime (could get from master, using 0 for now) */
+	our_locktime = 0;
+
+	status_debug("Simple close: our_balance=%s, their_balance=%s, fee=%s",
+		     fmt_amount_sat(tmpctx, our_balance),
+		     fmt_amount_sat(tmpctx, their_balance),
+		     fmt_amount_sat(tmpctx, our_fee));
+
+	/* Determine which variants we need to sign */
+	our_variants = determine_variants_to_sign(our_balance, their_balance,
+						  our_amount_after_fee, their_balance,
+						  dust_limit,
+						  our_scriptpubkey, their_scriptpubkey);
+
+	status_debug("Variants to sign: 0x%x", our_variants);
+
+	/* Create and sign applicable tx variants (we are closer)
+	 * NOTE: Allocate on ctx, not tmpctx, because tmpctx is cleaned in loop */
+	if (our_variants & (1 << CLOSE_TX_BOTH_OUTPUTS)) {
+		tx_both = create_simple_close_tx(ctx, chainparams,
+						 local_wallet_index, local_wallet_ext_key,
+						 our_scriptpubkey, their_scriptpubkey,
+						 funding_wscript, funding, funding_sats,
+						 our_balance, their_balance,
+						 our_fee, dust_limit, our_locktime,
+						 CLOSE_TX_BOTH_OUTPUTS);
+		if (tx_both) {
+			sig_both = sign_simple_close(pps, channel_id, tx_both,
+						     &funding_pubkey[REMOTE]);
+			p_sig_both = &sig_both;
+		}
+	}
+
+	if (our_variants & (1 << CLOSE_TX_CLOSER_ONLY)) {
+		tx_closer_only = create_simple_close_tx(ctx, chainparams,
+							local_wallet_index, local_wallet_ext_key,
+							our_scriptpubkey, their_scriptpubkey,
+							funding_wscript, funding, funding_sats,
+							our_balance, their_balance,
+							our_fee, dust_limit, our_locktime,
+							CLOSE_TX_CLOSER_ONLY);
+		if (tx_closer_only) {
+			sig_closer_only = sign_simple_close(pps, channel_id, tx_closer_only,
+							   &funding_pubkey[REMOTE]);
+			p_sig_closer_only = &sig_closer_only;
+		}
+	}
+
+	if (our_variants & (1 << CLOSE_TX_CLOSEE_ONLY)) {
+		tx_closee_only = create_simple_close_tx(ctx, chainparams,
+							local_wallet_index, local_wallet_ext_key,
+							our_scriptpubkey, their_scriptpubkey,
+							funding_wscript, funding, funding_sats,
+							our_balance, their_balance,
+							our_fee, dust_limit, our_locktime,
+							CLOSE_TX_CLOSEE_ONLY);
+		if (tx_closee_only) {
+			sig_closee_only = sign_simple_close(pps, channel_id, tx_closee_only,
+							   &funding_pubkey[REMOTE]);
+			p_sig_closee_only = &sig_closee_only;
+		}
+	}
+
+	/* Validate we have at least one signature to send.
+	 * Per BOLT: "MUST set fee_satoshis so that at least one output is not dust"
+	 * If we can't create any valid variant, we cannot participate in simple close. */
+	if (!p_sig_both && !p_sig_closer_only && !p_sig_closee_only) {
+		status_failed(STATUS_FAIL_INTERNAL_ERROR,
+			      "Cannot create valid simple close tx: "
+			      "our_balance=%s, their_balance=%s, fee=%s, dust_limit=%s. "
+			      "Both outputs may be dust without OP_RETURN script.",
+			      fmt_amount_sat(tmpctx, our_balance),
+			      fmt_amount_sat(tmpctx, their_balance),
+			      fmt_amount_sat(tmpctx, our_fee),
+			      fmt_amount_sat(tmpctx, dust_limit));
+	}
+
+	/* Send closing_complete immediately (only once, no RBF from us) */
+	send_closing_complete(pps, channel_id,
+			      our_scriptpubkey, their_scriptpubkey,
+			      our_fee, our_locktime,
+			      p_sig_both, p_sig_closer_only, p_sig_closee_only);
+
+	peer_billboard(false, "Sent closing_complete, waiting for peer's response");
+
+	/* Main message loop */
+	while (!received_closing_sig) {
+		u8 *msg;
+		u16 type;
+
+		clean_tmpctx();
+		msg = closing_read_peer_msg(tmpctx, pps);
+		type = fromwire_peektype(msg);
+
+		if (type == WIRE_CLOSING_COMPLETE) {
+			/* Peer sent closing_complete (they are closer, we are closee) */
+			struct channel_id their_channel_id;
+			u8 *their_closer_script, *their_closee_script;
+			struct amount_sat their_fee;
+			u32 their_locktime;
+			struct tlv_closing_tlvs *tlvs;
+			enum close_tx_variant variant;
+			const secp256k1_ecdsa_signature *their_sig_raw;
+			struct bitcoin_signature their_sig;
+			struct bitcoin_tx *their_tx;
+			struct bitcoin_signature our_sig_for_their_tx;
+			struct amount_sat their_closer_amount, their_closee_amount;
+
+			if (!fromwire_closing_complete(tmpctx, msg,
+						       &their_channel_id,
+						       &their_closer_script,
+						       &their_closee_script,
+						       &their_fee,
+						       &their_locktime,
+						       &tlvs)) {
+				peer_failed_warn(pps, channel_id,
+						 "Bad closing_complete: %s",
+						 tal_hex(tmpctx, msg));
+			}
+
+			if (!channel_id_eq(&their_channel_id, channel_id)) {
+				peer_failed_warn(pps, channel_id,
+						 "closing_complete channel_id mismatch");
+			}
+
+			status_debug("Received closing_complete: fee=%s, locktime=%u",
+				     fmt_amount_sat(tmpctx, their_fee), their_locktime);
+
+			/* Validate scripts: closee_script should be OUR script from shutdown */
+			if (!tal_arr_eq(their_closee_script, our_scriptpubkey)) {
+				peer_failed_warn(pps, channel_id,
+						 "closing_complete closee_script doesn't match "
+						 "our shutdown script");
+			}
+
+			/* Validate scripts: closer_script should be THEIR script from shutdown */
+			if (!tal_arr_eq(their_closer_script, their_scriptpubkey)) {
+				peer_failed_warn(pps, channel_id,
+						 "closing_complete closer_script doesn't match "
+						 "peer's shutdown script");
+			}
+
+			/* Validate fee: must not exceed their balance */
+			if (amount_sat_greater(their_fee, their_balance)) {
+				peer_failed_warn(pps, channel_id,
+						 "closing_complete fee %s exceeds their balance %s",
+						 fmt_amount_sat(tmpctx, their_fee),
+						 fmt_amount_sat(tmpctx, their_balance));
+			}
+
+			/* In their tx, they are closer (their_closer_script is theirs) */
+			/* So from their perspective: closer_amount = their_balance - fee */
+			/* closee_amount = our_balance (we're closee in their tx) */
+			if (!amount_sat_sub(&their_closer_amount, their_balance, their_fee))
+				their_closer_amount = AMOUNT_SAT(0);
+			their_closee_amount = our_balance;
+
+			/* Validate: at least one output must be above dust (or OP_RETURN) */
+			{
+				bool closer_valid = !amount_sat_less(their_closer_amount, dust_limit)
+						    || is_valid_op_return_close(their_closer_script);
+				bool closee_valid = !amount_sat_less(their_closee_amount, dust_limit)
+						    || is_valid_op_return_close(their_closee_script);
+				if (!closer_valid && !closee_valid) {
+					peer_failed_warn(pps, channel_id,
+							 "closing_complete: both outputs would be dust");
+				}
+			}
+
+			/* Select which variant to validate/sign */
+			variant = select_variant_for_validation(tlvs,
+								their_closer_amount,
+								their_closee_amount,
+								dust_limit,
+								their_closer_script,
+								their_closee_script);
+
+			status_debug("Selected variant %d for their tx", variant);
+
+			/* Get their signature for this variant */
+			their_sig_raw = get_sig_for_variant(tlvs, variant);
+			if (!their_sig_raw) {
+				peer_failed_warn(pps, channel_id,
+						 "No signature for variant %d in closing_complete",
+						 variant);
+			}
+
+			their_sig.sighash_type = SIGHASH_ALL;
+			their_sig.s = *their_sig_raw;
+
+			/* Create their tx to validate signature */
+			their_tx = create_simple_close_tx(tmpctx, chainparams,
+							  NULL, NULL, /* not our wallet output */
+							  their_closer_script,
+							  their_closee_script,
+							  funding_wscript, funding, funding_sats,
+							  their_balance, our_balance,
+							  their_fee, dust_limit, their_locktime,
+							  variant);
+			if (!their_tx) {
+				peer_failed_warn(pps, channel_id,
+						 "Could not create their closing tx");
+			}
+
+			/* Validate their signature */
+			if (!check_tx_sig(their_tx, 0, NULL, funding_wscript,
+					  &funding_pubkey[REMOTE], &their_sig)) {
+				peer_failed_warn(pps, channel_id,
+						 "Bad signature in closing_complete");
+			}
+
+			/* Sign their tx and send closing_sig */
+			our_sig_for_their_tx = sign_simple_close(pps, channel_id, their_tx,
+								 &funding_pubkey[REMOTE]);
+
+			/* Notify master about their tx */
+			tell_master_closing_complete(&their_sig, their_tx);
+
+			/* Send closing_sig for their tx */
+			send_closing_sig(pps, channel_id,
+					 their_closer_script, their_closee_script,
+					 their_fee, their_locktime,
+					 &our_sig_for_their_tx, variant);
+
+			notify(LOG_INFORM, "Signed peer's closing tx, fee %s",
+			       fmt_amount_sat(tmpctx, their_fee));
+
+		} else if (type == WIRE_CLOSING_SIG) {
+			/* Peer sent closing_sig for our tx (we were closer) */
+			struct channel_id their_channel_id;
+			u8 *sig_closer_script, *sig_closee_script;
+			struct amount_sat sig_fee;
+			u32 sig_locktime;
+			struct tlv_closing_tlvs *tlvs;
+			enum close_tx_variant variant;
+			const secp256k1_ecdsa_signature *their_sig_raw;
+			struct bitcoin_signature their_sig;
+			struct bitcoin_tx *final_tx;
+
+			if (!fromwire_closing_sig(tmpctx, msg,
+						  &their_channel_id,
+						  &sig_closer_script,
+						  &sig_closee_script,
+						  &sig_fee,
+						  &sig_locktime,
+						  &tlvs)) {
+				peer_failed_warn(pps, channel_id,
+						 "Bad closing_sig: %s",
+						 tal_hex(tmpctx, msg));
+			}
+
+			if (!channel_id_eq(&their_channel_id, channel_id)) {
+				peer_failed_warn(pps, channel_id,
+						 "closing_sig channel_id mismatch");
+			}
+
+			status_debug("Received closing_sig: fee=%s, locktime=%u",
+				     fmt_amount_sat(tmpctx, sig_fee), sig_locktime);
+
+			/* Verify it matches our proposal */
+			if (!amount_sat_eq(sig_fee, our_fee) || sig_locktime != our_locktime) {
+				peer_failed_warn(pps, channel_id,
+						 "closing_sig doesn't match our proposal: "
+						 "fee %s vs %s, locktime %u vs %u",
+						 fmt_amount_sat(tmpctx, sig_fee),
+						 fmt_amount_sat(tmpctx, our_fee),
+						 sig_locktime, our_locktime);
+			}
+
+			/* Validate scripts match what we sent in closing_complete:
+			 * We were closer, they were closee */
+			if (!tal_arr_eq(sig_closer_script, our_scriptpubkey)) {
+				peer_failed_warn(pps, channel_id,
+						 "closing_sig closer_script doesn't match "
+						 "our closing_complete");
+			}
+			if (!tal_arr_eq(sig_closee_script, their_scriptpubkey)) {
+				peer_failed_warn(pps, channel_id,
+						 "closing_sig closee_script doesn't match "
+						 "our closing_complete");
+			}
+
+			/* Determine which variant they signed */
+			if (tlvs->closer_and_closee_outputs) {
+				variant = CLOSE_TX_BOTH_OUTPUTS;
+				their_sig_raw = tlvs->closer_and_closee_outputs;
+				final_tx = tx_both;
+			} else if (tlvs->closer_output_only) {
+				variant = CLOSE_TX_CLOSER_ONLY;
+				their_sig_raw = tlvs->closer_output_only;
+				final_tx = tx_closer_only;
+			} else if (tlvs->closee_output_only) {
+				variant = CLOSE_TX_CLOSEE_ONLY;
+				their_sig_raw = tlvs->closee_output_only;
+				final_tx = tx_closee_only;
+			} else {
+				peer_failed_warn(pps, channel_id,
+						 "No signature in closing_sig");
+				return;
+			}
+
+			if (!final_tx) {
+				peer_failed_warn(pps, channel_id,
+						 "closing_sig for variant %d we didn't propose",
+						 variant);
+			}
+
+			their_sig.sighash_type = SIGHASH_ALL;
+			their_sig.s = *their_sig_raw;
+
+			/* Validate their signature */
+			if (!check_tx_sig(final_tx, 0, NULL, funding_wscript,
+					  &funding_pubkey[REMOTE], &their_sig)) {
+				peer_failed_warn(pps, channel_id,
+						 "Bad signature in closing_sig");
+			}
+
+			/* Get our signature for this variant */
+			struct bitcoin_signature *our_sig;
+			switch (variant) {
+			case CLOSE_TX_BOTH_OUTPUTS:
+				our_sig = p_sig_both;
+				break;
+			case CLOSE_TX_CLOSER_ONLY:
+				our_sig = p_sig_closer_only;
+				break;
+			case CLOSE_TX_CLOSEE_ONLY:
+				our_sig = p_sig_closee_only;
+				break;
+			default:
+				our_sig = NULL;
+			}
+
+			if (!our_sig) {
+				peer_failed_warn(pps, channel_id,
+						 "No signature for variant %d", variant);
+			}
+
+			/* Add witness to final tx */
+			bitcoin_tx_input_set_witness(final_tx, 0,
+						     bitcoin_witness_2of2(final_tx,
+									  our_sig,
+									  &their_sig,
+									  &funding_pubkey[LOCAL],
+									  &funding_pubkey[REMOTE]));
+
+			/* Notify master - tx is ready to broadcast */
+			tell_master_closing_sig(final_tx, &their_sig);
+
+			struct bitcoin_txid txid;
+			bitcoin_txid(final_tx, &txid);
+			peer_billboard(true, "Simple close complete, txid: %s",
+				       fmt_bitcoin_txid(tmpctx, &txid));
+
+			received_closing_sig = true;
+
+		} else if (type == WIRE_CHANNEL_READY || type == WIRE_SHUTDOWN ||
+			   type == WIRE_ANNOUNCEMENT_SIGNATURES) {
+			/* Ignore these during close */
+			status_debug("Ignoring message type %d during simple close", type);
+		} else {
+			peer_failed_warn(pps, channel_id,
+					 "Unexpected message %s during simple close",
+					 peer_wire_name(type));
+		}
+	}
+
+	/* Clean up tx variants to avoid memleak */
+	tal_free(tx_both);
+	tal_free(tx_closer_only);
+	tal_free(tx_closee_only);
+}
+
 /* We've received one offer; if we're opener, that means we've already sent one
  * too. */
 static void do_quickclose(struct amount_sat offer[NUM_SIDES],
@@ -826,6 +1559,7 @@ int main(int argc, char *argv[])
 	struct tlv_closing_signed_tlvs_fee_range *our_feerange, **their_feerange;
 	struct bitcoin_outpoint *wrong_funding;
 	bool developer;
+	bool option_simple_close;
 
 	developer = subdaemon_setup(argc, argv);
 
@@ -851,7 +1585,8 @@ int main(int argc, char *argv[])
 				    &fee_negotiation_step,
 				    &fee_negotiation_step_unit,
 				    &use_quickclose,
-				    &wrong_funding))
+				    &wrong_funding,
+				    &option_simple_close))
 		master_badmsg(WIRE_CLOSINGD_INIT, msg);
 
 	/* stdin == requests, 3 == peer, 4 = hsmd */
@@ -862,6 +1597,24 @@ int main(int argc, char *argv[])
 					      &funding_pubkey[LOCAL],
 					      &funding_pubkey[REMOTE]);
 
+	/* Use simple close protocol if negotiated */
+	if (option_simple_close) {
+		status_info("Using option_simple_close protocol");
+		/* Initialize to NULL since we jump to exit_thru_the_giftshop */
+		our_feerange = NULL;
+		their_feerange = NULL;
+		do_simple_close(ctx, pps, &channel_id,
+				funding_pubkey, funding_wscript,
+				local_wallet_index, local_wallet_ext_key,
+				scriptpubkey[LOCAL], scriptpubkey[REMOTE],
+				&funding, funding_sats,
+				out[LOCAL], out[REMOTE],
+				our_dust_limit,
+				min_feerate, initial_feerate, max_feerate);
+		goto exit_thru_the_giftshop;
+	}
+
+	/* Legacy closing_signed protocol */
 	/* Start at what we consider a reasonable feerate for this tx. */
 	calc_fee_bounds(closing_tx_weight_estimate(scriptpubkey,
 						   funding_wscript,
