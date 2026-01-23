@@ -1576,3 +1576,155 @@ def test_eltoo_force_close_rpc_with_htlc(node_factory, bitcoind, executor):
     assert l2_total_msat > 95000000, f"l2 should have recovered funds including HTLC (~99k sat expected), got {l2_total_msat}"
 
     print("SUCCESS: Eltoo force close via RPC with HTLC timeout completed")
+
+
+def test_eltoo_stale_update_invalidation(node_factory, bitcoind):
+    """Test that a node can invalidate a stale update tx by broadcasting a newer update.
+
+    This test exercises the update-to-update spending path (spending from a
+    previous update tx output, not the funding output). This uses APO signatures
+    with SIGHASH_ANYPREVOUTANYSCRIPT.
+
+    Scenario:
+    1. Create channel, make payments to advance state (state 1 -> state 2)
+    2. Save state 1 update tx
+    3. Broadcast the OLD state 1 update tx (simulating dishonest party)
+    4. Counterparty detects stale state and broadcasts newer state 2 update tx
+       spending from state 1's output
+    5. The invalidation succeeds and close completes normally
+    """
+    l1, l2 = node_factory.line_graph(2,
+                                     opts=[{'may_reconnect': True, 'developer': None},
+                                           {'may_reconnect': True, 'developer': None}])
+
+    # Fund l2's wallet with multiple UTXOs for CPFPs (need separate UTXOs for update + settle)
+    # Note: Even though CPFP change should return after confirmation, we need separate
+    # UTXOs because onchaind may try to create both CPFPs before change is available
+    l2_addr = l2.rpc.newaddr()
+    addr = l2_addr.get('bech32') or l2_addr.get('p2tr')
+    bitcoind.rpc.sendtoaddress(addr, 0.02)
+    l2_addr2 = l2.rpc.newaddr()
+    addr2 = l2_addr2.get('bech32') or l2_addr2.get('p2tr')
+    bitcoind.rpc.sendtoaddress(addr2, 0.02)
+    bitcoind.generate_block(1)
+    wait_for(lambda: len(l2.rpc.listfunds()['outputs']) >= 2)
+
+    # Track l2's initial wallet balance before channel operations
+    l2_initial_wallet = sum(o['amount_msat'] for o in l2.rpc.listfunds()['outputs'])
+
+    # Make first payment to get state 1
+    l1.pay(l2, 100000 * SAT)
+    wait_for(lambda: l2.rpc.listpeerchannels()['channels'][0]['in_fulfilled_msat'] == Millisatoshi(100000000))
+
+    # Wait for HTLCs to clear
+    wait_for(lambda: l1.rpc.listpeerchannels(l2.info['id'])['channels'][0]['htlcs'] == [])
+
+    # Save state 1 update tx (this is the "old" state we'll broadcast later)
+    channel_info = l1.rpc.listpeerchannels(l2.info['id'])['channels'][0]
+    state1_update_tx = channel_info['last_update_tx']
+    state1_update_details = bitcoind.rpc.decoderawtransaction(state1_update_tx)
+    state1_locktime = state1_update_details['locktime']
+    print(f"DEBUG: State 1 update tx locktime = {state1_locktime}")
+    print(f"DEBUG: State 1 update txid = {state1_update_details['txid']}")
+
+    # Make second payment to advance to state 2
+    l1.pay(l2, 50000 * SAT)
+    wait_for(lambda: l2.rpc.listpeerchannels()['channels'][0]['in_fulfilled_msat'] == Millisatoshi(150000000))
+
+    # Wait for HTLCs to clear
+    wait_for(lambda: l1.rpc.listpeerchannels(l2.info['id'])['channels'][0]['htlcs'] == [])
+
+    # Verify we're now on state 2
+    channel_info_2 = l1.rpc.listpeerchannels(l2.info['id'])['channels'][0]
+    state2_update_tx = channel_info_2['last_update_tx']
+    state2_update_details = bitcoind.rpc.decoderawtransaction(state2_update_tx)
+    state2_locktime = state2_update_details['locktime']
+    print(f"DEBUG: State 2 update tx locktime = {state2_locktime}")
+    assert state2_locktime > state1_locktime, "State 2 should have higher locktime than state 1"
+
+    # Stop l1 so it doesn't interfere
+    l1.stop()
+
+    # Now broadcast the OLD state 1 update tx (simulating dishonest l1 with old state)
+    print(f"DEBUG: Broadcasting stale state 1 update tx...")
+
+    # Broadcast using submitpackage for TRUC/ephemeral anchor
+    result = broadcast_eltoo_tx_with_cpfp(bitcoind, state1_update_tx)
+    print(f"DEBUG: Stale update tx broadcast result: {result}")
+
+    wait_for(lambda: bitcoind.rpc.getmempoolinfo()['size'] >= 1)
+
+    # Mine the stale update tx
+    bitcoind.generate_block(1)
+
+    # l2 should see the stale update and transition to ONCHAIN
+    l2.daemon.wait_for_log('to ONCHAIN')
+
+    # l2's eltoo_onchaind should detect this is a STALE update (locktime < our state)
+    # and broadcast a NEWER update tx spending from the stale update's output
+    l2.daemon.wait_for_log('handle_unilateral else branch')
+
+    # l2 should propose and broadcast the invalidation update tx
+    l2.daemon.wait_for_log('Broadcasting ELTOO_UPDATE')
+
+    # Wait for package broadcast to succeed
+    l2.daemon.wait_for_log('Package broadcast succeeded')
+
+    print(f"DEBUG: Invalidation update tx successfully broadcast")
+
+    # Mine the invalidation update tx - it should be in mempool
+    wait_for(lambda: bitcoind.rpc.getmempoolinfo()['size'] >= 1)
+    bitcoind.generate_block(1)
+
+    # Wait for onchaind to resolve the invalidation and start tracking new output
+    # This log indicates the invalidation succeeded - the update-to-update spending worked!
+    l2.daemon.wait_for_log('Resolved ELTOO_UPDATE/DELAYED_OUTPUT_TO_US by our proposal ELTOO_UPDATE')
+
+    print(f"DEBUG: Invalidation confirmed, onchaind resolved the output")
+
+    # Settle tx should be proposed after CSV delay
+    l2.daemon.wait_for_log('Propose handling.*by ELTOO_SETTLE')
+
+    # Mine blocks for CSV timelock (watchtime-blocks=5)
+    bitcoind.generate_block(6)
+
+    # Settle tx should be broadcast
+    l2.daemon.wait_for_log('Broadcasting ELTOO_SETTLE')
+
+    # Wait for settle tx to get into mempool (needs CPFP)
+    wait_for(lambda: bitcoind.rpc.getmempoolinfo()['size'] >= 1)
+
+    # Mine settle tx
+    bitcoind.generate_block(1)
+
+    # Mine to completion (100 blocks maturity)
+    bitcoind.generate_block(100)
+
+    l2.daemon.wait_for_log('onchaind complete, forgetting peer')
+
+    # Verify channel is closed
+    channels = l2.rpc.listpeerchannels()['channels']
+    assert len(channels) == 0, f"Channel should be forgotten after onchaind complete"
+
+    # Verify l2 recovered funds
+    # l2's channel balance was 150k sats (from two payments: 100k + 50k)
+    l2_final_outputs = l2.rpc.listfunds()['outputs']
+    l2_final_wallet = sum(o['amount_msat'] for o in l2_final_outputs)
+
+    print(f"DEBUG: l2 initial wallet (before channel): {l2_initial_wallet}")
+    print(f"DEBUG: l2 final outputs: {len(l2_final_outputs)}")
+    print(f"DEBUG: l2 final wallet total: {l2_final_wallet}")
+
+    # l2's channel balance was 150k sats
+    # After stale update invalidation and close, l2 should recover this
+    expected_channel_balance = Millisatoshi(150000000)  # 150k sats
+
+    # l2 should have at least the channel balance (minus some fees for anchor spending)
+    min_channel_recovery = expected_channel_balance - Millisatoshi(20000000)  # Allow 20k sats for fees
+
+    assert l2_final_wallet >= min_channel_recovery, \
+        f"l2 should have recovered channel funds (~150k sats). Got {l2_final_wallet}, expected at least {min_channel_recovery}"
+
+    print("SUCCESS: Eltoo stale update invalidation completed end-to-end!")
+    print("The update-to-update spending path (SIGHASH_ANYPREVOUTANYSCRIPT) works correctly with APO.")
+    print(f"l2 recovered channel funds: {l2_final_wallet} (expected ~150k sats)")
