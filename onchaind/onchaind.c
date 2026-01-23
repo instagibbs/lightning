@@ -2122,7 +2122,10 @@ static u8 *scriptpubkey_to_remote(const tal_t *ctx,
 	 *...
 	 * Otherwise, this output is a simple P2WPKH to `remotepubkey`.
 	 */
-	if (option_anchor_outputs || option_anchors_zero_fee_htlc_tx) {
+	/* BOLT PR #1228: For `option_zero_fee_commitments`, the `to_remote`
+	 * output is a simple P2WPKH (immediately spendable), not P2WSH. */
+	if ((option_anchor_outputs || option_anchors_zero_fee_htlc_tx)
+	    && !option_zero_fee_commitments) {
 		return scriptpubkey_p2wsh(ctx,
 					  bitcoin_wscript_to_remote_anchored(tmpctx,
 								  remotekey,
