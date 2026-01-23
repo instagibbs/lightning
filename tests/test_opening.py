@@ -3709,3 +3709,97 @@ def test_zero_fee_commitments_startup_warning(node_factory, bitcoind):
         # Node should have full zero-fee channel support
         info = l1.rpc.getinfo()
         assert info['id'] is not None
+
+
+@unittest.skipIf(TEST_NETWORK != 'regtest', 'elementsd doesnt yet support PSBT features we need')
+@pytest.mark.openchannel('v2')
+def test_zero_fee_commitments_htlc_stress(node_factory, bitcoind):
+    """BOLT PR #1228: Stress test with many HTLCs on zero-fee commitment channel.
+
+    This test verifies that zero-fee commitment channels properly handle
+    multiple HTLCs. All HTLCs should be processed and funds transferred
+    correctly.
+
+    This is important because:
+    - v3 transactions have a 10kvB size limit
+    - With many HTLCs, the commitment tx could approach size limits
+    - Proper HTLC handling is critical for payment reliability
+    """
+    STATIC_REMOTEKEY = 12
+    ANCHORS_ZERO_FEE_HTLC_TX = 22
+    ZERO_FEE_COMMITMENTS = 40
+    NUM_HTLCS = 10  # Number of HTLCs to create
+
+    opts = {'experimental-zero-fee-channels': None}
+    l1, l2 = node_factory.get_nodes(2, opts=opts)
+
+    # Fund l1's wallet first
+    l1.fundwallet(2000000)  # 2M sats to wallet
+
+    # Connect and fund channel
+    l1.rpc.connect(l2.info['id'], 'localhost', l2.port)
+    l1.fundchannel(l2, 1000000)  # 1M sats
+
+    # Wait for channel to be fully operational
+    bitcoind.generate_block(6)
+    wait_for(lambda: l1.rpc.listpeerchannels()['channels'][0]['state'] == 'CHANNELD_NORMAL')
+
+    # Verify it's a zero-fee commitment channel
+    l1_chan = only_one(l1.rpc.listpeerchannels()['channels'])
+    channel_type_bits = l1_chan['channel_type']['bits']
+    assert STATIC_REMOTEKEY in channel_type_bits
+    assert ANCHORS_ZERO_FEE_HTLC_TX in channel_type_bits
+    assert ZERO_FEE_COMMITMENTS in channel_type_bits
+
+    # Create multiple invoices on l2
+    invoices = []
+    htlc_amount_msat = 10000000  # 10k sats per HTLC
+    for i in range(NUM_HTLCS):
+        inv = l2.rpc.invoice(htlc_amount_msat, f'htlc_stress_{i}', f'HTLC stress test {i}')
+        invoices.append(inv)
+
+    # Pay all invoices - this exercises HTLC handling
+    for inv in invoices:
+        l1.rpc.pay(inv['bolt11'])
+
+    # Wait for all HTLCs to settle
+    wait_for(lambda: all(
+        l2.rpc.listinvoices(f'htlc_stress_{i}')['invoices'][0]['status'] == 'paid'
+        for i in range(NUM_HTLCS)
+    ))
+
+    # Verify l2 received the expected amount
+    l2_chan = only_one(l2.rpc.listpeerchannels()['channels'])
+    expected_received = NUM_HTLCS * htlc_amount_msat
+    actual_received = l2_chan['to_us_msat']
+
+    # l2 should have received approximately the expected amount (minus routing fees)
+    assert actual_received >= expected_received - 10000, \
+        f"l2 should have received ~{expected_received}msat, got {actual_received}msat"
+
+    # Close channel cooperatively to verify fund recovery
+    l1.rpc.close(l2.info['id'])
+
+    # Mine blocks to confirm closing transaction
+    bitcoind.generate_block(1)
+
+    # Wait for channels to close
+    wait_for(lambda: l1.rpc.listpeerchannels()['channels'] == [] or
+             l1.rpc.listpeerchannels()['channels'][0]['state'] in ['ONCHAIN', 'CLOSINGD_COMPLETE'])
+
+    # Mine more blocks to fully resolve
+    bitcoind.generate_block(100)
+
+    # Wait for channel resolution
+    wait_for(lambda: l1.rpc.listpeerchannels()['channels'] == [], timeout=120)
+
+    # Verify l2 has received funds in wallet
+    l2_funds = l2.rpc.listfunds()['outputs']
+    l2_balance = sum(int(x['amount_msat']) for x in l2_funds)
+
+    # l2 should have received close to what was in channel (minus fees)
+    assert l2_balance >= (expected_received - 50000000), \
+        f"l2 should have ~{expected_received}msat in wallet, got {l2_balance}msat"
+
+    print(f"HTLC stress test passed: {NUM_HTLCS} HTLCs processed successfully")
+    print(f"l2 received: {actual_received}msat in channel, {l2_balance}msat in wallet")

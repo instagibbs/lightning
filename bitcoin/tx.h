@@ -15,6 +15,11 @@
  * libwally doesn't define this yet, so we define it ourselves. */
 #define BITCOIN_TX_VERSION_3 3
 
+/* BOLT PR #1228: v3/TRUC transactions have a 10kvB size limit.
+ * This is 10000 virtual bytes = 40000 weight units. */
+#define BITCOIN_TX_V3_MAX_VSIZE 10000
+#define BITCOIN_TX_V3_MAX_WEIGHT (BITCOIN_TX_V3_MAX_VSIZE * 4)
+
 struct wally_psbt;
 struct ripemd160;
 
