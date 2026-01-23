@@ -1570,6 +1570,275 @@ int main(int argc, const char *argv[])
 		printf("OK\n");
 	}
 
+	/*
+	 * Test 5: P2A anchor 240-sat cap boundary tests (BOLT PR #1228)
+	 *
+	 * The anchor amount is capped at 240 sats. These tests verify:
+	 * - 239 sats: anchor = 239, tx fee = 0
+	 * - 240 sats: anchor = 240, tx fee = 0
+	 * - 241 sats: anchor = 240, tx fee = 1 (excess goes to miner)
+	 *
+	 * We use msat remainders from to_local/to_remote plus a small
+	 * trimmed HTLC to construct precise test values.
+	 */
+	printf("\nname: P2A anchor 240-sat cap boundary tests (BOLT PR #1228)\n");
+	{
+		const struct htlc **boundary_htlcs;
+		struct htlc *trimmed_htlc;
+		struct amount_sat total_output, expected_fee;
+		size_t i;
+
+		/* Test 5a: 239 sats trimmed -> anchor = 239, fee = 0 */
+		printf("\n# Test 5a: 239 sats trimmed value\n");
+
+		/* Create a single trimmed HTLC worth 239 sats (239000 msat) */
+		boundary_htlcs = tal_arr(tmpctx, const struct htlc *, 1);
+		trimmed_htlc = tal(boundary_htlcs, struct htlc);
+		trimmed_htlc->id = 100;
+		trimmed_htlc->amount = AMOUNT_MSAT(239000); /* 239 sats - will be trimmed */
+		trimmed_htlc->expiry.locktime = 500;
+		trimmed_htlc->state = RCVD_ADD_ACK_REVOCATION; /* incoming HTLC */
+		memset(&trimmed_htlc->rhash, 0xaa, sizeof(trimmed_htlc->rhash));
+		boundary_htlcs[0] = trimmed_htlc;
+
+		/* Exact satoshi balances (no msat remainder) */
+		to_local.millisatoshis = 7000000000;
+		to_remote.millisatoshis = 2999761000; /* 10M - 239000 msat for HTLC */
+		feerate_per_kw = 15000; /* High enough that 239 sat HTLC is trimmed */
+
+		printf("to_local_msat: %"PRIu64"\n", to_local.millisatoshis);
+		printf("to_remote_msat: %"PRIu64"\n", to_remote.millisatoshis);
+		printf("trimmed HTLC: 239000 msat (239 sats)\n");
+
+		tx = commit_tx(tmpctx,
+			       &funding,
+			       funding_amount,
+			       &local_funding_pubkey,
+			       &remote_funding_pubkey,
+			       LOCAL, to_self_delay,
+			       0, 0,
+			       &keyset,
+			       feerate_per_kw,
+			       dust_limit,
+			       to_local,
+			       to_remote,
+			       boundary_htlcs, &htlc_map, NULL, commitment_number ^ cn_obscurer,
+			       false, true, true, /* zero-fee-commitments */
+			       LOCAL, &local_anchor);
+
+		/* Verify P2A anchor = 239 sats */
+		printf("# Checking P2A anchor = 239 sats... ");
+		{
+			struct amount_sat p2a_amount = AMOUNT_SAT(0);
+			bool found_p2a = false;
+			for (i = 0; i < tx->wtx->num_outputs; i++) {
+				if (is_p2a(tx->wtx->outputs[i].script,
+					   tx->wtx->outputs[i].script_len)) {
+					found_p2a = true;
+					bitcoin_tx_output_get_amount_sat(tx, i, &p2a_amount);
+					break;
+				}
+			}
+			if (!found_p2a)
+				errx(1, "Test 5a: Missing P2A anchor output");
+			if (p2a_amount.satoshis != 239)
+				errx(1, "Test 5a: Expected P2A anchor = 239, got %"PRIu64,
+				     p2a_amount.satoshis);
+			printf("OK (%"PRIu64" sats)\n", p2a_amount.satoshis);
+		}
+
+		/* Verify tx fee = 0 */
+		printf("# Checking tx fee = 0... ");
+		{
+			total_output = AMOUNT_SAT(0);
+			for (i = 0; i < tx->wtx->num_outputs; i++) {
+				struct amount_sat out;
+				bitcoin_tx_output_get_amount_sat(tx, i, &out);
+				if (!amount_sat_add(&total_output, total_output, out))
+					errx(1, "Test 5a: output overflow");
+			}
+			if (!amount_sat_sub(&expected_fee, funding_amount, total_output))
+				errx(1, "Test 5a: fee underflow");
+			if (expected_fee.satoshis != 0)
+				errx(1, "Test 5a: Expected fee = 0, got %"PRIu64,
+				     expected_fee.satoshis);
+			printf("OK (%"PRIu64" sats)\n", expected_fee.satoshis);
+		}
+
+		/* Test 5b: 240 sats trimmed -> anchor = 240, fee = 0 */
+		printf("\n# Test 5b: 240 sats trimmed value (at cap)\n");
+
+		trimmed_htlc->amount = AMOUNT_MSAT(240000); /* 240 sats */
+		to_remote.millisatoshis = 2999760000; /* Adjust for HTLC */
+
+		printf("trimmed HTLC: 240000 msat (240 sats)\n");
+
+		tx = commit_tx(tmpctx,
+			       &funding,
+			       funding_amount,
+			       &local_funding_pubkey,
+			       &remote_funding_pubkey,
+			       LOCAL, to_self_delay,
+			       0, 0,
+			       &keyset,
+			       feerate_per_kw,
+			       dust_limit,
+			       to_local,
+			       to_remote,
+			       boundary_htlcs, &htlc_map, NULL, commitment_number ^ cn_obscurer,
+			       false, true, true,
+			       LOCAL, &local_anchor);
+
+		printf("# Checking P2A anchor = 240 sats... ");
+		{
+			struct amount_sat p2a_amount = AMOUNT_SAT(0);
+			for (i = 0; i < tx->wtx->num_outputs; i++) {
+				if (is_p2a(tx->wtx->outputs[i].script,
+					   tx->wtx->outputs[i].script_len)) {
+					bitcoin_tx_output_get_amount_sat(tx, i, &p2a_amount);
+					break;
+				}
+			}
+			if (p2a_amount.satoshis != 240)
+				errx(1, "Test 5b: Expected P2A anchor = 240, got %"PRIu64,
+				     p2a_amount.satoshis);
+			printf("OK (%"PRIu64" sats)\n", p2a_amount.satoshis);
+		}
+
+		printf("# Checking tx fee = 0... ");
+		{
+			total_output = AMOUNT_SAT(0);
+			for (i = 0; i < tx->wtx->num_outputs; i++) {
+				struct amount_sat out;
+				bitcoin_tx_output_get_amount_sat(tx, i, &out);
+				if (!amount_sat_add(&total_output, total_output, out))
+					errx(1, "Test 5b: output overflow");
+			}
+			if (!amount_sat_sub(&expected_fee, funding_amount, total_output))
+				errx(1, "Test 5b: fee underflow");
+			if (expected_fee.satoshis != 0)
+				errx(1, "Test 5b: Expected fee = 0, got %"PRIu64,
+				     expected_fee.satoshis);
+			printf("OK (%"PRIu64" sats)\n", expected_fee.satoshis);
+		}
+
+		/* Test 5c: 241 sats trimmed -> anchor = 240 (capped), fee = 1 */
+		printf("\n# Test 5c: 241 sats trimmed value (above cap)\n");
+
+		trimmed_htlc->amount = AMOUNT_MSAT(241000); /* 241 sats */
+		to_remote.millisatoshis = 2999759000; /* Adjust for HTLC */
+
+		printf("trimmed HTLC: 241000 msat (241 sats)\n");
+
+		tx = commit_tx(tmpctx,
+			       &funding,
+			       funding_amount,
+			       &local_funding_pubkey,
+			       &remote_funding_pubkey,
+			       LOCAL, to_self_delay,
+			       0, 0,
+			       &keyset,
+			       feerate_per_kw,
+			       dust_limit,
+			       to_local,
+			       to_remote,
+			       boundary_htlcs, &htlc_map, NULL, commitment_number ^ cn_obscurer,
+			       false, true, true,
+			       LOCAL, &local_anchor);
+
+		printf("# Checking P2A anchor = 240 sats (capped)... ");
+		{
+			struct amount_sat p2a_amount = AMOUNT_SAT(0);
+			for (i = 0; i < tx->wtx->num_outputs; i++) {
+				if (is_p2a(tx->wtx->outputs[i].script,
+					   tx->wtx->outputs[i].script_len)) {
+					bitcoin_tx_output_get_amount_sat(tx, i, &p2a_amount);
+					break;
+				}
+			}
+			if (p2a_amount.satoshis != 240)
+				errx(1, "Test 5c: Expected P2A anchor = 240 (capped), got %"PRIu64,
+				     p2a_amount.satoshis);
+			printf("OK (%"PRIu64" sats)\n", p2a_amount.satoshis);
+		}
+
+		printf("# Checking tx fee = 1 sat (excess from cap)... ");
+		{
+			total_output = AMOUNT_SAT(0);
+			for (i = 0; i < tx->wtx->num_outputs; i++) {
+				struct amount_sat out;
+				bitcoin_tx_output_get_amount_sat(tx, i, &out);
+				if (!amount_sat_add(&total_output, total_output, out))
+					errx(1, "Test 5c: output overflow");
+			}
+			if (!amount_sat_sub(&expected_fee, funding_amount, total_output))
+				errx(1, "Test 5c: fee underflow");
+			if (expected_fee.satoshis != 1)
+				errx(1, "Test 5c: Expected fee = 1, got %"PRIu64,
+				     expected_fee.satoshis);
+			printf("OK (%"PRIu64" sats)\n", expected_fee.satoshis);
+		}
+
+		/* Test 5d: Large trimmed value -> anchor = 240, fee = excess */
+		printf("\n# Test 5d: 500 sats trimmed value (well above cap)\n");
+
+		trimmed_htlc->amount = AMOUNT_MSAT(500000); /* 500 sats */
+		to_remote.millisatoshis = 2999500000; /* Adjust for HTLC */
+
+		printf("trimmed HTLC: 500000 msat (500 sats)\n");
+
+		tx = commit_tx(tmpctx,
+			       &funding,
+			       funding_amount,
+			       &local_funding_pubkey,
+			       &remote_funding_pubkey,
+			       LOCAL, to_self_delay,
+			       0, 0,
+			       &keyset,
+			       feerate_per_kw,
+			       dust_limit,
+			       to_local,
+			       to_remote,
+			       boundary_htlcs, &htlc_map, NULL, commitment_number ^ cn_obscurer,
+			       false, true, true,
+			       LOCAL, &local_anchor);
+
+		printf("# Checking P2A anchor = 240 sats (capped)... ");
+		{
+			struct amount_sat p2a_amount = AMOUNT_SAT(0);
+			for (i = 0; i < tx->wtx->num_outputs; i++) {
+				if (is_p2a(tx->wtx->outputs[i].script,
+					   tx->wtx->outputs[i].script_len)) {
+					bitcoin_tx_output_get_amount_sat(tx, i, &p2a_amount);
+					break;
+				}
+			}
+			if (p2a_amount.satoshis != 240)
+				errx(1, "Test 5d: Expected P2A anchor = 240 (capped), got %"PRIu64,
+				     p2a_amount.satoshis);
+			printf("OK (%"PRIu64" sats)\n", p2a_amount.satoshis);
+		}
+
+		printf("# Checking tx fee = 260 sats (500 - 240 cap)... ");
+		{
+			total_output = AMOUNT_SAT(0);
+			for (i = 0; i < tx->wtx->num_outputs; i++) {
+				struct amount_sat out;
+				bitcoin_tx_output_get_amount_sat(tx, i, &out);
+				if (!amount_sat_add(&total_output, total_output, out))
+					errx(1, "Test 5d: output overflow");
+			}
+			if (!amount_sat_sub(&expected_fee, funding_amount, total_output))
+				errx(1, "Test 5d: fee underflow");
+			if (expected_fee.satoshis != 260)
+				errx(1, "Test 5d: Expected fee = 260, got %"PRIu64,
+				     expected_fee.satoshis);
+			printf("OK (%"PRIu64" sats)\n", expected_fee.satoshis);
+		}
+
+		printf("\n# P2A anchor cap boundary tests PASSED\n");
+	}
+
 	printf("\n# Zero-fee commitment tests PASSED\n");
 	printf("# ============================================================\n");
 
