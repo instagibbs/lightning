@@ -88,7 +88,8 @@ void htlc_success_tx_add_witness(struct bitcoin_tx *htlc_success,
 				 const struct preimage *payment_preimage,
 				 const struct pubkey *revocationkey,
 				 bool option_anchor_outputs,
-				 bool option_anchors_zero_fee_htlc_tx);
+				 bool option_anchors_zero_fee_htlc_tx,
+				 bool option_zero_fee_commitments);
 
 /* Create HTLC-timeout tx to spend an offered HTLC commitment tx
  * output; doesn't fill in input witness. */
@@ -114,7 +115,8 @@ void htlc_timeout_tx_add_witness(struct bitcoin_tx *htlc_timeout,
 				 const struct bitcoin_signature *localsig,
 				 const struct bitcoin_signature *remotesig,
 				 bool option_anchor_outputs,
-				 bool option_anchors_zero_fee_htlc_tx);
+				 bool option_anchors_zero_fee_htlc_tx,
+				 bool option_zero_fee_commitments);
 
 /* Generate the witness script for an HTLC the other side offered:
  * scriptpubkey_p2wsh(ctx, wscript) gives the scriptpubkey */
@@ -123,7 +125,8 @@ u8 *htlc_received_wscript(const tal_t *ctx,
 			  const struct abs_locktime *expiry,
 			  const struct keyset *keyset,
 			  bool option_anchor_outputs,
-			  bool option_anchors_zero_fee_htlc_tx);
+			  bool option_anchors_zero_fee_htlc_tx,
+			  bool option_zero_fee_commitments);
 
 /* Generate the witness script for an HTLC this side offered:
  * scriptpubkey_p2wsh(ctx, wscript) gives the scriptpubkey */
@@ -131,7 +134,8 @@ u8 *htlc_offered_wscript(const tal_t *ctx,
 			 const struct ripemd160 *ripemd,
 			 const struct keyset *keyset,
 			 bool option_anchor_outputs,
-			 bool option_anchors_zero_fee_htlc_tx);
+			 bool option_anchors_zero_fee_htlc_tx,
+			 bool option_zero_fee_commitments);
 
 /* Low-level HTLC tx creator */
 struct bitcoin_tx *htlc_tx(const tal_t *ctx,

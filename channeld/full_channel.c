@@ -259,7 +259,8 @@ static void add_htlcs(struct bitcoin_tx ***txs,
 			ripemd160(&ripemd, htlc->rhash.u.u8, sizeof(htlc->rhash.u.u8));
 			wscript = htlc_offered_wscript(tmpctx, &ripemd, keyset,
 						       option_anchor_outputs,
-						       option_anchors_zero_fee_htlc_tx);
+						       option_anchors_zero_fee_htlc_tx,
+						       option_zero_fee_commitments);
 			tx = htlc_timeout_tx(*txs, chainparams, &outpoint,
 					     wscript,
 					     htlc->amount,
@@ -275,7 +276,8 @@ static void add_htlcs(struct bitcoin_tx ***txs,
 			wscript = htlc_received_wscript(tmpctx, &ripemd,
 							&htlc->expiry, keyset,
 							option_anchor_outputs,
-							option_anchors_zero_fee_htlc_tx);
+							option_anchors_zero_fee_htlc_tx,
+							option_zero_fee_commitments);
 			tx = htlc_success_tx(*txs, chainparams, &outpoint,
 					     wscript,
 					     htlc->amount,

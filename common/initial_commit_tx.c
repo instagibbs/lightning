@@ -283,7 +283,16 @@ struct bitcoin_tx *initial_commit_tx(const tal_t *ctx,
 		u8 *redeem;
 
 		amount = amount_msat_to_sat_round_down(other_pay);
-		if (option_anchor_outputs || option_anchors_zero_fee_htlc_tx) {
+		/* BOLT #3:
+		 * If `option_anchors` applies to the commitment transaction,
+		 * the `to_remote` output is encumbered by a one block csv lock.
+		 *
+		 * BOLT PR #1228: For `option_zero_fee_commitments`, the
+		 * `to_remote` output is a simple P2WPKH (immediately spendable),
+		 * not P2WSH with CSV delay.
+		 */
+		if ((option_anchor_outputs || option_anchors_zero_fee_htlc_tx)
+		    && !option_zero_fee_commitments) {
 			redeem = bitcoin_wscript_to_remote_anchored(tmpctx,
 						&keyset->other_payment_key,
 						(!side) == lessor ? csv_lock : 1);
@@ -314,28 +323,40 @@ struct bitcoin_tx *initial_commit_tx(const tal_t *ctx,
 	 * For initial commit (no HTLCs), only msat remainders contribute.
 	 */
 	if (option_zero_fee_commitments) {
-		/* P2A anchor for zero-fee commitment channels */
+		/* P2A anchor for zero-fee commitment channels.
+		 *
+		 * BOLT PR #1228:
+		 * If the difference between the commitment transaction input
+		 * and the sum of all other commitment transaction outputs is
+		 * smaller than 240 sat, we set the anchor amount to this value.
+		 * Otherwise, we set the anchor amount to 240 sat, and the
+		 * remaining difference directly contributes to mining fees.
+		 */
 		if (to_local || to_remote || untrimmed != 0) {
-			struct amount_msat anchor_msat = AMOUNT_MSAT(0);
 			struct amount_sat anchor_amount;
+			struct amount_sat output_sum = AMOUNT_SAT(0);
 
-			/* No trimmed HTLCs in initial commit tx.
-			 * Collect msat remainders from self_pay and other_pay. */
+			/* Sum all outputs (to_local + to_remote if they exist).
+			 * Note: untrimmed HTLCs are not present in initial commit tx,
+			 * but would be added here for regular commit_tx. */
 			if (to_local) {
-				struct amount_msat remainder;
-				remainder.millisatoshis = self_pay.millisatoshis % 1000;
-				if (!amount_msat_accumulate(&anchor_msat, remainder))
-					anchor_msat = AMOUNT_MSAT(0);
+				struct amount_sat local_out = amount_msat_to_sat_round_down(self_pay);
+				if (!amount_sat_add(&output_sum, output_sum, local_out))
+					abort();
 			}
 			if (to_remote) {
-				struct amount_msat remainder;
-				remainder.millisatoshis = other_pay.millisatoshis % 1000;
-				if (!amount_msat_accumulate(&anchor_msat, remainder))
-					anchor_msat = AMOUNT_MSAT(0);
+				struct amount_sat remote_out = amount_msat_to_sat_round_down(other_pay);
+				if (!amount_sat_add(&output_sum, output_sum, remote_out))
+					abort();
 			}
 
-			/* Convert to satoshis (rounding down) */
-			anchor_amount = amount_msat_to_sat_round_down(anchor_msat);
+			/* anchor = funding_sats - output_sum, capped at 240 sats */
+			if (!amount_sat_sub(&anchor_amount, funding_sats, output_sum))
+				anchor_amount = AMOUNT_SAT(0);
+
+			/* Cap at 240 sats (the P2A dust limit) */
+			if (anchor_amount.satoshis > 240)
+				anchor_amount = AMOUNT_SAT(240);
 
 			tx_add_p2a_anchor_output(tx, anchor_amount);
 			output_order[n] = NULL;

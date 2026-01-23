@@ -1792,7 +1792,8 @@ static u8 **derive_htlc_scripts(const struct htlc_stub *htlcs, enum side side)
 							       &htlcs[i].ripemd,
 							       keyset,
 							       option_anchor_outputs,
-							       option_anchors_zero_fee_htlc_tx);
+							       option_anchors_zero_fee_htlc_tx,
+							       option_zero_fee_commitments);
 		else {
 			/* FIXME: remove abs_locktime */
 			struct abs_locktime ltime;
@@ -1806,7 +1807,8 @@ static u8 **derive_htlc_scripts(const struct htlc_stub *htlcs, enum side side)
 								&ltime,
 								keyset,
 								option_anchor_outputs,
-								option_anchors_zero_fee_htlc_tx);
+								option_anchors_zero_fee_htlc_tx,
+								option_zero_fee_commitments);
 		}
 	}
 	return htlc_scripts;

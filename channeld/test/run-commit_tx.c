@@ -273,7 +273,8 @@ static void report_htlcs(const struct bitcoin_tx *tx,
 								&htlc->rhash,
 								remote_revocation_key,
 								option_anchor_outputs,
-								option_anchors_zero_fee_htlc_tx);
+								option_anchors_zero_fee_htlc_tx,
+								option_zero_fee_commitments);
 			htlc_tx[i] = htlc_timeout_tx(htlc_tx, tx->chainparams,
 						     &outpoint, wscript[i],
 						     htlc->amount,
@@ -292,7 +293,8 @@ static void report_htlcs(const struct bitcoin_tx *tx,
 								  &htlc->rhash,
 								  remote_revocation_key,
 								  option_anchor_outputs,
-								  option_anchors_zero_fee_htlc_tx);
+								  option_anchors_zero_fee_htlc_tx,
+								  option_zero_fee_commitments);
 			htlc_tx[i] = htlc_success_tx(htlc_tx, tx->chainparams,
 						     &outpoint, wscript[i],
 						     htlc->amount,
@@ -333,7 +335,8 @@ static void report_htlcs(const struct bitcoin_tx *tx,
 						    &localhtlcsig,
 						    &remotehtlcsig[i],
 						    option_anchor_outputs,
-						    option_anchors_zero_fee_htlc_tx);
+						    option_anchors_zero_fee_htlc_tx,
+					    option_zero_fee_commitments);
 		} else {
 			htlc_success_tx_add_witness(htlc_tx[i],
 						    &htlc->expiry,
@@ -344,7 +347,8 @@ static void report_htlcs(const struct bitcoin_tx *tx,
 						    htlc->r,
 						    remote_revocation_key,
 						    option_anchor_outputs,
-						    option_anchors_zero_fee_htlc_tx);
+						    option_anchors_zero_fee_htlc_tx,
+					    option_zero_fee_commitments);
 		}
 		printf("htlc_%s_tx (htlc #%"PRIu64"): %s\n",
 		       htlc_owner(htlc) == LOCAL ? "timeout" : "success",
@@ -1485,7 +1489,8 @@ int main(int argc, const char *argv[])
 							    &htlcs[0]->rhash,
 							    &remote_revocation_key,
 							    false, /* option_anchor_outputs */
-							    true); /* option_anchors_zero_fee_htlc_tx */
+							    true, /* option_anchors_zero_fee_htlc_tx */
+						    true); /* option_zero_fee_commitments */
 
 		/* Test HTLC-success tx WITH zero-fee-commitments (should be v3) */
 		htlc_tx_v3 = htlc_success_tx(tmpctx, chainparams,
@@ -1530,7 +1535,8 @@ int main(int argc, const char *argv[])
 							  &htlcs[0]->rhash,
 							  &remote_revocation_key,
 							  false, /* option_anchor_outputs */
-							  true); /* option_anchors_zero_fee_htlc_tx */
+							  true, /* option_anchors_zero_fee_htlc_tx */
+						  true); /* option_zero_fee_commitments */
 
 		htlc_tx_v3 = htlc_timeout_tx(tmpctx, chainparams,
 					     &htlc_outpoint,

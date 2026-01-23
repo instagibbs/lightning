@@ -105,7 +105,8 @@ u8 *bitcoin_wscript_htlc_offer(const tal_t *ctx,
 			       const struct sha256 *payment_hash,
 			       const struct pubkey *revocationkey,
 			       bool option_anchor_outputs,
-			       bool option_anchors_zero_fee_htlc_tx);
+			       bool option_anchors_zero_fee_htlc_tx,
+			       bool option_zero_fee_commitments);
 u8 **bitcoin_witness_htlc_timeout_tx(const tal_t *ctx,
 				     const struct bitcoin_signature *localsig,
 				     const struct bitcoin_signature *remotesig,
@@ -117,7 +118,8 @@ u8 *bitcoin_wscript_htlc_receive(const tal_t *ctx,
 				 const struct sha256 *payment_hash,
 				 const struct pubkey *revocationkey,
 				 bool option_anchor_outputs,
-				 bool option_anchors_zero_fee_htlc_tx);
+				 bool option_anchors_zero_fee_htlc_tx,
+				 bool option_zero_fee_commitments);
 u8 **bitcoin_witness_htlc_success_tx(const tal_t *ctx,
 				     const struct bitcoin_signature *localsig,
 				     const struct bitcoin_signature *remotesig,
@@ -131,7 +133,8 @@ u8 *bitcoin_wscript_htlc_offer_ripemd160(const tal_t *ctx,
 					 const struct ripemd160 *payment_ripemd,
 					 const struct pubkey *revocationkey,
 					 bool option_anchor_outputs,
-					 bool option_anchors_zero_fee_htlc_tx);
+					 bool option_anchors_zero_fee_htlc_tx,
+					 bool option_zero_fee_commitments);
 u8 *bitcoin_wscript_htlc_receive_ripemd(const tal_t *ctx,
 					const struct abs_locktime *htlc_abstimeout,
 					const struct pubkey *localkey,
@@ -139,7 +142,8 @@ u8 *bitcoin_wscript_htlc_receive_ripemd(const tal_t *ctx,
 					const struct ripemd160 *payment_ripemd,
 					const struct pubkey *revocationkey,
 					bool option_anchor_outputs,
-					bool option_anchors_zero_fee_htlc_tx);
+					bool option_anchors_zero_fee_htlc_tx,
+					bool option_zero_fee_commitments);
 
 /* BOLT #3 HTLC-success/HTLC-timeout output */
 u8 *bitcoin_wscript_htlc_tx(const tal_t *ctx,

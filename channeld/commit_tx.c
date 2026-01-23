@@ -65,7 +65,8 @@ static void add_offered_htlc_out(struct bitcoin_tx *tx, size_t n,
 				 const struct htlc *htlc,
 				 const struct keyset *keyset,
 				 bool option_anchor_outputs,
-				 bool option_anchors_zero_fee_htlc_tx)
+				 bool option_anchors_zero_fee_htlc_tx,
+				 bool option_zero_fee_commitments)
 {
 	struct ripemd160 ripemd;
 	u8 *wscript, *p2wsh;
@@ -74,7 +75,8 @@ static void add_offered_htlc_out(struct bitcoin_tx *tx, size_t n,
 	ripemd160(&ripemd, htlc->rhash.u.u8, sizeof(htlc->rhash.u.u8));
 	wscript = htlc_offered_wscript(tx, &ripemd, keyset,
 				       option_anchor_outputs,
-				       option_anchors_zero_fee_htlc_tx);
+				       option_anchors_zero_fee_htlc_tx,
+				       option_zero_fee_commitments);
 	p2wsh = scriptpubkey_p2wsh(tx, wscript);
 	bitcoin_tx_add_output(tx, p2wsh, wscript, amount);
 	SUPERVERBOSE("# HTLC #%" PRIu64 " offered amount %"PRIu64" wscript %s\n", htlc->id,
@@ -87,7 +89,8 @@ static void add_received_htlc_out(struct bitcoin_tx *tx, size_t n,
 				  const struct htlc *htlc,
 				  const struct keyset *keyset,
 				  bool option_anchor_outputs,
-				  bool option_anchors_zero_fee_htlc_tx)
+				  bool option_anchors_zero_fee_htlc_tx,
+				  bool option_zero_fee_commitments)
 {
 	struct ripemd160 ripemd;
 	u8 *wscript, *p2wsh;
@@ -96,7 +99,8 @@ static void add_received_htlc_out(struct bitcoin_tx *tx, size_t n,
 	ripemd160(&ripemd, htlc->rhash.u.u8, sizeof(htlc->rhash.u.u8));
 	wscript = htlc_received_wscript(tx, &ripemd, &htlc->expiry, keyset,
 					option_anchor_outputs,
-					option_anchors_zero_fee_htlc_tx);
+					option_anchors_zero_fee_htlc_tx,
+					option_zero_fee_commitments);
 	p2wsh = scriptpubkey_p2wsh(tx, wscript);
 	amount = amount_msat_to_sat_round_down(htlc->amount);
 
@@ -263,7 +267,8 @@ struct bitcoin_tx *commit_tx(const tal_t *ctx,
 			continue;
 		add_offered_htlc_out(tx, n, htlcs[i], keyset,
 				     option_anchor_outputs,
-				     option_anchors_zero_fee_htlc_tx);
+				     option_anchors_zero_fee_htlc_tx,
+				     option_zero_fee_commitments);
 		(*htlcmap)[n] = htlcs[i];
 		cltvs[n] = abs_locktime_to_blocks(&htlcs[i]->expiry);
 		n++;
@@ -283,7 +288,8 @@ struct bitcoin_tx *commit_tx(const tal_t *ctx,
 			continue;
 		add_received_htlc_out(tx, n, htlcs[i], keyset,
 				      option_anchor_outputs,
-				      option_anchors_zero_fee_htlc_tx);
+				      option_anchors_zero_fee_htlc_tx,
+				      option_zero_fee_commitments);
 		(*htlcmap)[n] = htlcs[i];
 		cltvs[n] = abs_locktime_to_blocks(&htlcs[i]->expiry);
 		n++;
@@ -343,10 +349,13 @@ struct bitcoin_tx *commit_tx(const tal_t *ctx,
 		 * block csv lock.
 		 *    <remotepubkey> OP_CHECKSIGVERIFY 1 OP_CHECKSEQUENCEVERIFY
 		 *
-		 *...
+		 * BOLT PR #1228: For `option_zero_fee_commitments`, the
+		 * `to_remote` output is a simple P2WPKH (immediately spendable).
+		 *
 		 * Otherwise, this output is a simple P2WPKH to `remotepubkey`.
 		 */
-		if (option_anchor_outputs || option_anchors_zero_fee_htlc_tx) {
+		if ((option_anchor_outputs || option_anchors_zero_fee_htlc_tx)
+		    && !option_zero_fee_commitments) {
 			redeem = bitcoin_wscript_to_remote_anchored(tmpctx,
 							 &keyset->other_payment_key,
 							 (!side) == lessor ?
@@ -398,39 +407,49 @@ struct bitcoin_tx *commit_tx(const tal_t *ctx,
 	 * sum(trimmed_htlcs) + sum(msat_remainders), capped at 240 sats.
 	 */
 	if (option_zero_fee_commitments) {
-		/* P2A anchor for zero-fee commitment channels */
+		/* P2A anchor for zero-fee commitment channels.
+		 *
+		 * BOLT PR #1228:
+		 * If the difference between the commitment transaction input
+		 * and the sum of all other commitment transaction outputs is
+		 * smaller than 240 sat, we set the anchor amount to this value.
+		 * Otherwise, we set the anchor amount to 240 sat, and the
+		 * remaining difference directly contributes to mining fees.
+		 */
 		if (to_local || to_remote || untrimmed != 0) {
-			struct amount_msat trimmed_msat = AMOUNT_MSAT(0);
 			struct amount_sat anchor_amount;
+			struct amount_sat output_sum = AMOUNT_SAT(0);
 
-			/* Calculate sum of trimmed HTLC amounts */
-			if (!commit_tx_amount_trimmed(htlcs, feerate_per_kw,
-						      dust_limit,
-						      option_anchor_outputs,
-						      option_anchors_zero_fee_htlc_tx,
-						      side, &trimmed_msat)) {
-				/* Overflow shouldn't happen in practice */
-				trimmed_msat = AMOUNT_MSAT(0);
+			/* Sum all non-anchor outputs that actually exist in the tx:
+			 * to_local (if above dust) + to_remote (if above dust) + untrimmed HTLCs */
+			if (to_local) {
+				struct amount_sat local_out = amount_msat_to_sat_round_down(self_pay);
+				if (!amount_sat_add(&output_sum, output_sum, local_out))
+					abort();
+			}
+			if (to_remote) {
+				struct amount_sat remote_out = amount_msat_to_sat_round_down(other_pay);
+				if (!amount_sat_add(&output_sum, output_sum, remote_out))
+					abort();
+			}
+			/* Add untrimmed HTLC outputs */
+			for (size_t i = 0; i < tal_count(htlcs); i++) {
+				if (!trim(htlcs[i], feerate_per_kw, dust_limit,
+					  option_anchor_outputs,
+					  option_anchors_zero_fee_htlc_tx, side)) {
+					struct amount_sat htlc_out = amount_msat_to_sat_round_down(htlcs[i]->amount);
+					if (!amount_sat_add(&output_sum, output_sum, htlc_out))
+						abort();
+				}
 			}
 
-			/* Add msat remainders from self_pay and other_pay.
-			 * These are the sub-satoshi amounts that get rounded
-			 * down when converting to satoshi outputs. */
-			if (amount_msat_greater_eq_sat(self_pay, dust_limit)) {
-				struct amount_msat remainder;
-				remainder.millisatoshis = self_pay.millisatoshis % 1000;
-				if (!amount_msat_accumulate(&trimmed_msat, remainder))
-					trimmed_msat = AMOUNT_MSAT(0);
-			}
-			if (amount_msat_greater_eq_sat(other_pay, dust_limit)) {
-				struct amount_msat remainder;
-				remainder.millisatoshis = other_pay.millisatoshis % 1000;
-				if (!amount_msat_accumulate(&trimmed_msat, remainder))
-					trimmed_msat = AMOUNT_MSAT(0);
-			}
+			/* anchor = funding_sats - output_sum, capped at 240 sats */
+			if (!amount_sat_sub(&anchor_amount, funding_sats, output_sum))
+				anchor_amount = AMOUNT_SAT(0);
 
-			/* Convert to satoshis (rounding down) */
-			anchor_amount = amount_msat_to_sat_round_down(trimmed_msat);
+			/* Cap at 240 sats (the P2A dust limit) */
+			if (anchor_amount.satoshis > 240)
+				anchor_amount = AMOUNT_SAT(240);
 
 			tx_add_p2a_anchor_output(tx, anchor_amount);
 			/* P2A anchor is shared, no specific owner */

@@ -135,7 +135,8 @@ void htlc_success_tx_add_witness(struct bitcoin_tx *htlc_success,
 				 const struct preimage *payment_preimage,
 				 const struct pubkey *revocationkey,
 				 bool option_anchor_outputs,
-				 bool option_anchors_zero_fee_htlc_tx)
+				 bool option_anchors_zero_fee_htlc_tx,
+				 bool option_zero_fee_commitments)
 {
 	struct sha256 hash;
 	u8 *wscript, **witness;
@@ -146,7 +147,8 @@ void htlc_success_tx_add_witness(struct bitcoin_tx *htlc_success,
 					       localhtlckey, remotehtlckey,
 					       &hash, revocationkey,
 					       option_anchor_outputs,
-					       option_anchors_zero_fee_htlc_tx);
+					       option_anchors_zero_fee_htlc_tx,
+					       option_zero_fee_commitments);
 
 	witness = bitcoin_witness_htlc_success_tx(htlc_success,
 						  localhtlcsig, remotehtlcsig,
@@ -199,14 +201,16 @@ void htlc_timeout_tx_add_witness(struct bitcoin_tx *htlc_timeout,
 				 const struct bitcoin_signature *localhtlcsig,
 				 const struct bitcoin_signature *remotehtlcsig,
 				 bool option_anchor_outputs,
-				 bool option_anchors_zero_fee_htlc_tx)
+				 bool option_anchors_zero_fee_htlc_tx,
+				 bool option_zero_fee_commitments)
 {
 	u8 **witness;
 	u8 *wscript = bitcoin_wscript_htlc_offer(htlc_timeout,
 						 localhtlckey, remotehtlckey,
 						 payment_hash, revocationkey,
 						 option_anchor_outputs,
-						 option_anchors_zero_fee_htlc_tx);
+						 option_anchors_zero_fee_htlc_tx,
+						 option_zero_fee_commitments);
 
 	witness = bitcoin_witness_htlc_timeout_tx(htlc_timeout, localhtlcsig,
 						  remotehtlcsig, wscript);
@@ -218,7 +222,8 @@ u8 *htlc_offered_wscript(const tal_t *ctx,
 			 const struct ripemd160 *ripemd,
 			 const struct keyset *keyset,
 			 bool option_anchor_outputs,
-			 bool option_anchors_zero_fee_htlc_tx)
+			 bool option_anchors_zero_fee_htlc_tx,
+			 bool option_zero_fee_commitments)
 {
 	return bitcoin_wscript_htlc_offer_ripemd160(ctx,
 						    &keyset->self_htlc_key,
@@ -226,7 +231,8 @@ u8 *htlc_offered_wscript(const tal_t *ctx,
 						    ripemd,
 						    &keyset->self_revocation_key,
 						    option_anchor_outputs,
-						    option_anchors_zero_fee_htlc_tx);
+						    option_anchors_zero_fee_htlc_tx,
+						    option_zero_fee_commitments);
 }
 
 u8 *htlc_received_wscript(const tal_t *ctx,
@@ -234,7 +240,8 @@ u8 *htlc_received_wscript(const tal_t *ctx,
 			  const struct abs_locktime *expiry,
 			  const struct keyset *keyset,
 			  bool option_anchor_outputs,
-			  bool option_anchors_zero_fee_htlc_tx)
+			  bool option_anchors_zero_fee_htlc_tx,
+			  bool option_zero_fee_commitments)
 {
 	return bitcoin_wscript_htlc_receive_ripemd(ctx,
 						   expiry,
@@ -243,5 +250,6 @@ u8 *htlc_received_wscript(const tal_t *ctx,
 						   ripemd,
 						   &keyset->self_revocation_key,
 						   option_anchor_outputs,
-						   option_anchors_zero_fee_htlc_tx);
+						   option_anchors_zero_fee_htlc_tx,
+						   option_zero_fee_commitments);
 }

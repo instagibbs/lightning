@@ -63,7 +63,8 @@ u8 *htlc_offered_wscript(const tal_t *ctx UNNEEDED,
 			 const struct ripemd160 *ripemd UNNEEDED,
 			 const struct keyset *keyset UNNEEDED,
 			 bool option_anchor_outputs UNNEEDED,
-			 bool option_anchors_zero_fee_htlc_tx UNNEEDED)
+			 bool option_anchors_zero_fee_htlc_tx UNNEEDED,
+			 bool option_zero_fee_commitments UNNEEDED)
 { fprintf(stderr, "htlc_offered_wscript called!\n"); abort(); }
 /* Generated stub for htlc_received_wscript */
 u8 *htlc_received_wscript(const tal_t *ctx UNNEEDED,
@@ -71,7 +72,8 @@ u8 *htlc_received_wscript(const tal_t *ctx UNNEEDED,
 			  const struct abs_locktime *expiry UNNEEDED,
 			  const struct keyset *keyset UNNEEDED,
 			  bool option_anchor_outputs UNNEEDED,
-			  bool option_anchors_zero_fee_htlc_tx UNNEEDED)
+			  bool option_anchors_zero_fee_htlc_tx UNNEEDED,
+			  bool option_zero_fee_commitments UNNEEDED)
 { fprintf(stderr, "htlc_received_wscript called!\n"); abort(); }
 /* Generated stub for htlc_success_tx */
 struct bitcoin_tx *htlc_success_tx(const tal_t *ctx UNNEEDED,

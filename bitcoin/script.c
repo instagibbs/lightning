@@ -677,7 +677,8 @@ u8 *bitcoin_wscript_htlc_offer_ripemd160(const tal_t *ctx,
 					 const struct ripemd160 *payment_ripemd,
 					 const struct pubkey *revocationkey,
 					 bool option_anchor_outputs,
-					 bool option_anchors_zero_fee_htlc_tx)
+					 bool option_anchors_zero_fee_htlc_tx,
+					 bool option_zero_fee_commitments)
 {
 	u8 *script = tal_arr(ctx, u8, 0);
 	struct ripemd160 ripemd;
@@ -709,7 +710,10 @@ u8 *bitcoin_wscript_htlc_offer_ripemd160(const tal_t *ctx,
 	add_op(&script, OP_EQUALVERIFY);
 	add_op(&script, OP_CHECKSIG);
 	add_op(&script, OP_ENDIF);
-	if (option_anchor_outputs || option_anchors_zero_fee_htlc_tx) {
+	/* For zero-fee commitments, TRUC (v3) transactions provide pinning
+	 * protection, so we don't need the CSV delay. */
+	if ((option_anchor_outputs || option_anchors_zero_fee_htlc_tx)
+	    && !option_zero_fee_commitments) {
 		add_number(&script, 1);
 		add_op(&script, OP_CHECKSEQUENCEVERIFY);
 		add_op(&script, OP_DROP);
@@ -725,7 +729,8 @@ u8 *bitcoin_wscript_htlc_offer(const tal_t *ctx,
 			       const struct sha256 *payment_hash,
 			       const struct pubkey *revocationkey,
 			       bool option_anchor_outputs,
-			       bool option_anchors_zero_fee_htlc_tx)
+			       bool option_anchors_zero_fee_htlc_tx,
+			       bool option_zero_fee_commitments)
 {
 	struct ripemd160 ripemd;
 
@@ -734,7 +739,8 @@ u8 *bitcoin_wscript_htlc_offer(const tal_t *ctx,
 						    remotehtlckey,
 						    &ripemd, revocationkey,
 						    option_anchor_outputs,
-						    option_anchors_zero_fee_htlc_tx);
+						    option_anchors_zero_fee_htlc_tx,
+						    option_zero_fee_commitments);
 }
 
 /* BOLT #3:
@@ -791,7 +797,8 @@ u8 *bitcoin_wscript_htlc_receive_ripemd(const tal_t *ctx,
 					const struct ripemd160 *payment_ripemd,
 					const struct pubkey *revocationkey,
 					bool option_anchor_outputs,
-					bool option_anchors_zero_fee_htlc_tx)
+					bool option_anchors_zero_fee_htlc_tx,
+					bool option_zero_fee_commitments)
 {
 	u8 *script = tal_arr(ctx, u8, 0);
 	struct ripemd160 ripemd;
@@ -826,7 +833,10 @@ u8 *bitcoin_wscript_htlc_receive_ripemd(const tal_t *ctx,
 	add_op(&script, OP_DROP);
 	add_op(&script, OP_CHECKSIG);
 	add_op(&script, OP_ENDIF);
-	if (option_anchor_outputs || option_anchors_zero_fee_htlc_tx) {
+	/* For zero-fee commitments, TRUC (v3) transactions provide pinning
+	 * protection, so we don't need the CSV delay. */
+	if ((option_anchor_outputs || option_anchors_zero_fee_htlc_tx)
+	    && !option_zero_fee_commitments) {
 		add_number(&script, 1);
 		add_op(&script, OP_CHECKSEQUENCEVERIFY);
 		add_op(&script, OP_DROP);
@@ -843,7 +853,8 @@ u8 *bitcoin_wscript_htlc_receive(const tal_t *ctx,
 				 const struct sha256 *payment_hash,
 				 const struct pubkey *revocationkey,
 				 bool option_anchor_outputs,
-				 bool option_anchors_zero_fee_htlc_tx)
+				 bool option_anchors_zero_fee_htlc_tx,
+				 bool option_zero_fee_commitments)
 {
 	struct ripemd160 ripemd;
 
@@ -852,7 +863,8 @@ u8 *bitcoin_wscript_htlc_receive(const tal_t *ctx,
 						   localhtlckey, remotehtlckey,
 						   &ripemd, revocationkey,
 						   option_anchor_outputs,
-						   option_anchors_zero_fee_htlc_tx);
+						   option_anchors_zero_fee_htlc_tx,
+						   option_zero_fee_commitments);
 }
 
 /* BOLT #3:
