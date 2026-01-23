@@ -4,6 +4,7 @@
 #include <bitcoin/tx.h>
 #include <common/htlc_tx.h>
 #include <common/keyset.h>
+#include <wally_psbt.h>
 
 /* Low-level tx creator: used when onchaind has done most of the work! */
 struct bitcoin_tx *htlc_tx(const tal_t *ctx,
@@ -42,6 +43,9 @@ struct bitcoin_tx *htlc_tx(const tal_t *ctx,
 	 */
 	if (option_zero_fee_commitments) {
 		tx->wtx->version = BITCOIN_TX_VERSION_3;
+		/* Also update the PSBT's version, so CPFP fee bumping
+		 * (which extracts the tx from the PSBT) uses version 3. */
+		wally_psbt_set_tx_version(tx->psbt, BITCOIN_TX_VERSION_3);
 		assert(tx->wtx->version == 3);
 	} else {
 		assert(tx->wtx->version == 2);

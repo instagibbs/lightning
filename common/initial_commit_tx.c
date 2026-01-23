@@ -5,6 +5,7 @@
 #include <common/keyset.h>
 #include <common/permute_tx.h>
 #include <common/status.h>
+#include <wally_psbt.h>
 
 /* BOLT #3:
  *
@@ -376,6 +377,8 @@ struct bitcoin_tx *initial_commit_tx(const tal_t *ctx,
 	 */
 	if (option_zero_fee_commitments) {
 		tx->wtx->version = BITCOIN_TX_VERSION_3;
+		/* Also update the PSBT's version for consistency. */
+		wally_psbt_set_tx_version(tx->psbt, BITCOIN_TX_VERSION_3);
 		assert(tx->wtx->version == 3);
 	} else {
 		assert(tx->wtx->version == 2);
