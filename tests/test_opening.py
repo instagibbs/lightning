@@ -3374,23 +3374,21 @@ def test_zero_fee_commitments_update_fee_rejected(node_factory, bitcoind):
     protocol violation. The receiving node should fail the channel with an
     appropriate error message.
 
-    This test uses a plugin to inject an update_fee message after channel
-    establishment to verify the channel fails correctly.
+    This test uses --dev-force-update-fee on l1 to force it to send update_fee
+    messages even on zero-fee channels. l2 (without this option) should reject
+    the message and fail the channel.
     """
-    import os
-
-    # Create a simple plugin that will send update_fee on command
-    plugin_path = os.path.join(os.path.dirname(__file__), 'plugins', 'send_update_fee.py')
-
-    # Create the plugin if it doesn't exist
-    if not os.path.exists(plugin_path):
-        # Skip test if we can't create the plugin
-        pytest.skip("Plugin for sending update_fee not available")
-
-    # For now, we verify that the existing handling is correct by checking
-    # the log messages and error handling code paths
-    opts = {'experimental-zero-fee-channels': None}
-    l1, l2 = node_factory.get_nodes(2, opts=opts)
+    # l1: Force sending update_fee on zero-fee channels (misbehaving peer for testing)
+    # l2: Normal zero-fee channel operation (should reject update_fee)
+    l1_opts = {
+        'experimental-zero-fee-channels': None,
+        'dev-force-update-fee': None,
+        'may_fail': True,  # l1 will lose connection when l2 fails the channel
+    }
+    l2_opts = {
+        'experimental-zero-fee-channels': None,
+    }
+    l1, l2 = node_factory.get_nodes(2, opts=[l1_opts, l2_opts])
 
     l1.fundwallet(FUNDAMOUNT * 2)
     l1.connect(l2)
@@ -3404,28 +3402,44 @@ def test_zero_fee_commitments_update_fee_rejected(node_factory, bitcoind):
     l1.daemon.wait_for_log('to CHANNELD_NORMAL')
     l2.daemon.wait_for_log('to CHANNELD_NORMAL')
 
-    # Verify that no update_fee messages are sent during normal operation
-    # Change feerates dramatically - this would trigger update_fee on normal channels
+    # Trigger an update_fee by changing feerates on l1 (the opener/funder)
+    # Since l1 has dev-force-update-fee, it will send update_fee despite zero-fee channel
     l1.set_feerates((50000, 40000, 30000, 20000))
 
-    # Make payments to ensure channel is active and would have sent update_fee if it could
+    # Create an invoice and try a payment to trigger commitment cycle
+    # The payment will fail but will trigger update_fee to be sent
     inv = l2.rpc.invoice(100000, 'test1', 'test')['bolt11']
-    l1.rpc.pay(inv)
 
-    inv2 = l2.rpc.invoice(200000, 'test2', 'test')['bolt11']
-    l1.rpc.pay(inv2)
+    # Start payment in a thread (it will fail, but triggers the commitment cycle)
+    import threading
 
-    # Verify no update_fee was sent (l2 should NOT see "peer updated fee")
-    assert not l2.daemon.is_in_log('peer updated fee')
+    def pay_async():
+        try:
+            l1.rpc.call('pay', {'bolt11': inv, 'maxfeepercent': 100, 'retry_for': 3})
+        except Exception:
+            pass  # Expected to fail
 
-    # Channel should still be healthy and functional
-    l1_chan = only_one(l1.rpc.listpeerchannels()['channels'])
-    assert l1_chan['state'] == 'CHANNELD_NORMAL'
+    pay_thread = threading.Thread(target=pay_async)
+    pay_thread.start()
 
-    # The validation code in channeld.c will fail the channel if update_fee
-    # is ever received. This is tested implicitly by the fact that no update_fee
-    # is sent, and verified by the existence of the error handling code at
-    # channeld.c:678-681 which calls peer_failed_err() on receiving update_fee.
+    # l1 should send WIRE_UPDATE_FEE (this confirms dev-force-update-fee is working)
+    l1.daemon.wait_for_log('peer_out WIRE_UPDATE_FEE', timeout=30)
+
+    # Wait for the pay thread to complete (with a timeout)
+    pay_thread.join(timeout=10)
+
+    # l2 should receive and reject the update_fee message
+    l2.daemon.wait_for_log('peer_in WIRE_UPDATE_FEE', timeout=15)
+
+    # l2 should detect the protocol violation (look for the billboard message)
+    l2.daemon.wait_for_log('billboard perm: update_fee not allowed on zero-fee-commitment channel', timeout=15)
+
+    # l2 should have sent an error and failed the channel
+    l2.daemon.wait_for_log('Peer permanent failure.*update_fee not allowed', timeout=15)
+
+    # Verify the channel is no longer in CHANNELD_NORMAL state
+    # (it should be AWAITING_UNILATERAL or similar error state)
+    wait_for(lambda: only_one(l2.rpc.listpeerchannels()['channels'])['state'] != 'CHANNELD_NORMAL', timeout=30)
 
 
 @unittest.skipIf(TEST_NETWORK != 'regtest', 'elementsd doesnt yet support PSBT features we need')

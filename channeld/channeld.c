@@ -162,6 +162,9 @@ struct peer {
 	/* If set, don't fire commit counter when this hits 0 */
 	u32 *dev_disable_commit;
 
+	/* If set, send update_fee even on zero-fee channels (for testing) */
+	bool dev_force_update_fee;
+
 	/* Information used for reestablishment. */
 	bool last_was_revoke;
 	struct changed_htlc *last_sent_commit;
@@ -1149,8 +1152,10 @@ static bool want_fee_update(const struct peer *peer, u32 *target)
 		return false;
 
 	/* BOLT PR #1228:
-	 * Zero-fee-commitment channels do not use update_fee. */
-	if (channel_has(peer->channel, OPT_ZERO_FEE_COMMITMENTS))
+	 * Zero-fee-commitment channels do not use update_fee.
+	 * (Bypass for testing with dev_force_update_fee) */
+	if (channel_has(peer->channel, OPT_ZERO_FEE_COMMITMENTS)
+	    && !peer->dev_force_update_fee)
 		return false;
 
 	/* No fee update while quiescing! */
@@ -6398,8 +6403,10 @@ static void handle_feerates(struct peer *peer, const u8 *inmsg)
 	 * Zero-fee-commitment channels have fee=0 and do not use update_fee.
 	 * We still accept and store the feerate info for min/max validation
 	 * (in case peer sends update_fee erroneously), but don't initiate
-	 * any fee updates ourselves. */
-	if (channel_has(peer->channel, OPT_ZERO_FEE_COMMITMENTS))
+	 * any fee updates ourselves.
+	 * (Bypass for testing with dev_force_update_fee) */
+	if (channel_has(peer->channel, OPT_ZERO_FEE_COMMITMENTS)
+	    && !peer->dev_force_update_fee)
 		return;
 
 	/* BOLT #2:
@@ -6803,6 +6810,7 @@ static void init_channel(struct peer *peer)
 				    &peer->remote_upfront_shutdown_script,
 				    &channel_type,
 				    &peer->dev_disable_commit,
+				    &peer->dev_force_update_fee,
 				    &pbases,
 				    &peer->splice_state->inflights,
 				    &peer->local_alias)) {

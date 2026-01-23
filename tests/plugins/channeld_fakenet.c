@@ -1077,6 +1077,7 @@ static struct channel *handle_init(struct info *info, const u8 *init_msg)
 	u8 *their_features;
 	u8 *remote_upfront_shutdown_script;
 	u32 *dev_disable_commit;
+	bool dev_force_update_fee;
 	struct inflight **inflights;
 	struct short_channel_id local_alias;
 	struct channel *channel;
@@ -1134,6 +1135,7 @@ static struct channel *handle_init(struct info *info, const u8 *init_msg)
 				    &remote_upfront_shutdown_script,
 				    &channel_type,
 				    &dev_disable_commit,
+				    &dev_force_update_fee,
 				    &pbases,
 				    &inflights,
 				    &local_alias))
