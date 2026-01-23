@@ -1658,6 +1658,20 @@ void setup_topology(struct chain_topology *topo)
 	/* For testing.. */
 	log_debug(topo->ld->log, "All Bitcoin plugin commands registered");
 
+	/* BOLT PR #1228: Warn at startup if zero-fee commitments are enabled
+	 * but Bitcoin backend doesn't support submitpackage (requires v29+).
+	 * This check runs after bitcoind_check_commands() has registered
+	 * available methods, so we can accurately detect the capability. */
+	if (feature_offered(topo->ld->our_features->bits[INIT_FEATURE],
+			    OPT_ZERO_FEE_COMMITMENTS)
+	    && !bitcoind_has_method(topo->bitcoind, "submitpackage")) {
+		log_broken(topo->ld->log,
+			   "WARNING: --experimental-zero-fee-channels enabled but "
+			   "Bitcoin backend does not support submitpackage "
+			   "(requires Bitcoin Core v29+). Zero-fee commitment "
+			   "channels will not broadcast correctly!");
+	}
+
 	db_begin_transaction(topo->ld->wallet->db);
 
 	/*~ If we were asked to rescan from an absolute height (--rescan < 0)

@@ -3657,3 +3657,55 @@ def test_zero_fee_commitments_penalty_tx(node_factory, bitcoind, executor):
 
     # Verify l2's channel is gone (resolved on-chain)
     assert l2.rpc.listpeerchannels()['channels'] == []
+
+
+@unittest.skipIf(TEST_NETWORK != 'regtest', 'elementsd doesnt yet support PSBT features we need')
+def test_zero_fee_commitments_startup_warning(node_factory, bitcoind):
+    """BOLT PR #1228: Test startup warning when submitpackage is unavailable.
+
+    When --experimental-zero-fee-channels is enabled but the Bitcoin backend
+    doesn't support submitpackage (requires Bitcoin Core v29+), a warning
+    should be logged at startup.
+    """
+    # Check Bitcoin Core version
+    btc_info = bitcoind.rpc.getnetworkinfo()
+    btc_version = btc_info.get('version', 0)
+
+    if btc_version < 290000:
+        # Bitcoin Core < v29: submitpackage not available, warning expected
+        # Use broken_log to expect the BROKEN warning message
+        opts = {
+            'experimental-zero-fee-channels': None,
+            'broken_log': r'WARNING: --experimental-zero-fee-channels enabled but '
+                         r'Bitcoin backend does not support submitpackage'
+        }
+        l1 = node_factory.get_node(options=opts)
+
+        # Verify the warning was logged
+        assert l1.daemon.is_in_log(
+            r'BROKEN.*WARNING: --experimental-zero-fee-channels enabled but '
+            r'Bitcoin backend does not support submitpackage'
+        ), "Expected startup warning about missing submitpackage"
+
+        # Node should still start and function (just without zero-fee channel broadcast support)
+        info = l1.rpc.getinfo()
+        assert info['id'] is not None
+    else:
+        # Bitcoin Core >= v29: submitpackage available, no warning expected
+        opts = {'experimental-zero-fee-channels': None}
+        l1 = node_factory.get_node(options=opts)
+
+        # Verify the info log shows submitpackage is available
+        assert l1.daemon.is_in_log(
+            r'Bitcoin backend supports submitpackage'
+        ), "Expected log showing submitpackage is available"
+
+        # Verify NO warning was logged about missing submitpackage
+        assert not l1.daemon.is_in_log(
+            r'BROKEN.*WARNING: --experimental-zero-fee-channels enabled but '
+            r'Bitcoin backend does not support submitpackage'
+        ), "Should NOT see warning about missing submitpackage on v29+"
+
+        # Node should have full zero-fee channel support
+        info = l1.rpc.getinfo()
+        assert info['id'] is not None
