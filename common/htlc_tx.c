@@ -80,6 +80,14 @@ struct bitcoin_tx *htlc_tx(const tal_t *ctx,
 	bitcoin_tx_finalize(tx);
 	assert(bitcoin_tx_check(tx));
 
+	/* BOLT PR #1228: v3 transactions must not exceed 10kvB.
+	 * HTLC transactions are small (1 input, 1 output), so this
+	 * should never fail, but we assert defensively. */
+	if (option_zero_fee_commitments) {
+		size_t weight = bitcoin_tx_weight(tx);
+		assert(weight <= BITCOIN_TX_V3_MAX_WEIGHT);
+	}
+
 	return tx;
 }
 

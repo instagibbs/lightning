@@ -419,5 +419,13 @@ struct bitcoin_tx *initial_commit_tx(const tal_t *ctx,
 
 	assert(bitcoin_tx_check(tx));
 
+	/* BOLT PR #1228: v3 transactions must not exceed 10kvB.
+	 * The 114 HTLC limit for zero_fee_commitments ensures this, but
+	 * we assert defensively in case the limit is miscalculated. */
+	if (option_zero_fee_commitments) {
+		size_t weight = bitcoin_tx_weight(tx);
+		assert(weight <= BITCOIN_TX_V3_MAX_WEIGHT);
+	}
+
 	return tx;
 }
