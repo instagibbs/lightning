@@ -75,7 +75,8 @@ struct bitcoin_tx *htlc_success_tx(const tal_t *ctx,
 				   u32 feerate_per_kw,
 				   const struct keyset *keyset,
 				   bool option_anchor_outputs,
-				   bool option_anchors_zero_fee_htlc_tx);
+				   bool option_anchors_zero_fee_htlc_tx,
+				   bool option_zero_fee_commitments);
 
 /* Fill in the witness for HTLC-success tx produced above. */
 void htlc_success_tx_add_witness(struct bitcoin_tx *htlc_success,
@@ -101,7 +102,8 @@ struct bitcoin_tx *htlc_timeout_tx(const tal_t *ctx,
 				   u32 feerate_per_kw,
 				   const struct keyset *keyset,
 				   bool option_anchor_outputs,
-				   bool option_anchors_zero_fee_htlc_tx);
+				   bool option_anchors_zero_fee_htlc_tx,
+				   bool option_zero_fee_commitments);
 
 /* Fill in the witness for HTLC-timeout tx produced above. */
 void htlc_timeout_tx_add_witness(struct bitcoin_tx *htlc_timeout,
@@ -141,5 +143,6 @@ struct bitcoin_tx *htlc_tx(const tal_t *ctx,
 			   struct amount_sat htlc_fee,
 			   u32 locktime,
 			   bool option_anchor_outputs,
-			   bool option_anchors_zero_fee_htlc_tx);
+			   bool option_anchors_zero_fee_htlc_tx,
+			   bool option_zero_fee_commitments);
 #endif /* LIGHTNING_COMMON_HTLC_TX_H */

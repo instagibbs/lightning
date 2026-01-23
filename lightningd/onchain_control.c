@@ -1441,6 +1441,7 @@ static void handle_onchaind_spend_htlc_success(struct channel *channel,
 	const struct onchain_witness_element **welements;
 	const bool option_anchor_outputs = channel_has(channel, OPT_ANCHOR_OUTPUTS_DEPRECATED);
 	const bool option_anchors_zero_fee_htlc_tx = channel_has(channel, OPT_ANCHORS_ZERO_FEE_HTLC_TX);
+	const bool option_zero_fee_commitments = channel_has(channel, OPT_ZERO_FEE_COMMITMENTS);
 
 	info = new_signing_info(msg, channel, WIRE_ONCHAIND_SPEND_HTLC_SUCCESS);
 	info->minblock = 0;
@@ -1462,7 +1463,8 @@ static void handle_onchaind_spend_htlc_success(struct channel *channel,
 	 * * locktime: `0` for HTLC-success, `cltv_expiry` for HTLC-timeout
 	 */
 	tx = htlc_tx(NULL, chainparams, &out, info->wscript, out_sats, htlc_wscript, fee,
-		     0, option_anchor_outputs, option_anchors_zero_fee_htlc_tx);
+		     0, option_anchor_outputs, option_anchors_zero_fee_htlc_tx,
+		     option_zero_fee_commitments);
 	tal_free(htlc_wscript);
 	if (!tx) {
 		/* Can only happen if fee > out_sats */
@@ -1522,6 +1524,7 @@ static void handle_onchaind_spend_htlc_timeout(struct channel *channel,
 	const struct onchain_witness_element **welements;
 	const bool option_anchor_outputs = channel_has(channel, OPT_ANCHOR_OUTPUTS_DEPRECATED);
 	const bool option_anchors_zero_fee_htlc_tx = channel_has(channel, OPT_ANCHORS_ZERO_FEE_HTLC_TX);
+	const bool option_zero_fee_commitments = channel_has(channel, OPT_ZERO_FEE_COMMITMENTS);
 
 	info = new_signing_info(msg, channel, WIRE_ONCHAIND_SPEND_HTLC_TIMEOUT);
 
@@ -1542,7 +1545,8 @@ static void handle_onchaind_spend_htlc_timeout(struct channel *channel,
 	 * * locktime: `0` for HTLC-success, `cltv_expiry` for HTLC-timeout
 	 */
 	tx = htlc_tx(NULL, chainparams, &out, info->wscript, out_sats, htlc_wscript, fee,
-		     cltv_expiry, option_anchor_outputs, option_anchors_zero_fee_htlc_tx);
+		     cltv_expiry, option_anchor_outputs, option_anchors_zero_fee_htlc_tx,
+		     option_zero_fee_commitments);
 	tal_free(htlc_wscript);
 	if (!tx) {
 		/* Can only happen if fee > out_sats */

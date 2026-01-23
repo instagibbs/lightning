@@ -236,6 +236,7 @@ static void add_htlcs(struct bitcoin_tx ***txs,
 	u32 htlc_feerate_per_kw;
 	bool option_anchor_outputs = channel_has(channel, OPT_ANCHOR_OUTPUTS_DEPRECATED);
 	bool option_anchors_zero_fee_htlc_tx = channel_has(channel, OPT_ANCHORS_ZERO_FEE_HTLC_TX);
+	bool option_zero_fee_commitments = channel_has(channel, OPT_ZERO_FEE_COMMITMENTS);
 
 	if (channel_has(channel, OPT_ANCHORS_ZERO_FEE_HTLC_TX))
 		htlc_feerate_per_kw = 0;
@@ -267,7 +268,8 @@ static void add_htlcs(struct bitcoin_tx ***txs,
 					     htlc_feerate_per_kw,
 					     keyset,
 					     option_anchor_outputs,
-					     option_anchors_zero_fee_htlc_tx);
+					     option_anchors_zero_fee_htlc_tx,
+					     option_zero_fee_commitments);
 		} else {
 			ripemd160(&ripemd, htlc->rhash.u.u8, sizeof(htlc->rhash.u.u8));
 			wscript = htlc_received_wscript(tmpctx, &ripemd,
@@ -281,7 +283,8 @@ static void add_htlcs(struct bitcoin_tx ***txs,
 					     htlc_feerate_per_kw,
 					     keyset,
 					     option_anchor_outputs,
-					     option_anchors_zero_fee_htlc_tx);
+					     option_anchors_zero_fee_htlc_tx,
+					     option_zero_fee_commitments);
 		}
 
 		/* Append to array. */

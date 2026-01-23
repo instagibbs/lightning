@@ -225,7 +225,8 @@ static void report_htlcs(const struct bitcoin_tx *tx,
 			 const struct pubkey *remote_revocation_key,
 			 u32 feerate_per_kw,
 			 bool option_anchor_outputs,
-			 bool option_anchors_zero_fee_htlc_tx)
+			 bool option_anchors_zero_fee_htlc_tx,
+			 bool option_zero_fee_commitments)
 {
 	size_t i, n;
 	struct bitcoin_outpoint outpoint;
@@ -281,7 +282,8 @@ static void report_htlcs(const struct bitcoin_tx *tx,
 						     feerate_per_kw,
 						     &keyset,
 						     option_anchor_outputs,
-						     option_anchors_zero_fee_htlc_tx);
+						     option_anchors_zero_fee_htlc_tx,
+						     option_zero_fee_commitments);
 		} else {
 			wscript[i] = bitcoin_wscript_htlc_receive(tmpctx,
 								  &htlc->expiry,
@@ -298,7 +300,8 @@ static void report_htlcs(const struct bitcoin_tx *tx,
 						     feerate_per_kw,
 						     &keyset,
 						     option_anchor_outputs,
-						     option_anchors_zero_fee_htlc_tx);
+						     option_anchors_zero_fee_htlc_tx,
+						     option_zero_fee_commitments);
 		}
 		sign_tx_input(htlc_tx[i], 0,
 			      NULL,
@@ -368,6 +371,7 @@ static void report(struct bitcoin_tx *tx,
 		   u32 feerate_per_kw,
 		   bool option_anchor_outputs,
 		   bool option_anchors_zero_fee_htlc_tx,
+		   bool option_zero_fee_commitments,
 		   const struct htlc **htlc_map,
 		   size_t total_htlcs)
 {
@@ -414,7 +418,8 @@ static void report(struct bitcoin_tx *tx,
 		     remote_revocation_key,
 		     feerate_per_kw,
 		     option_anchor_outputs,
-		     option_anchors_zero_fee_htlc_tx);
+		     option_anchors_zero_fee_htlc_tx,
+		     option_zero_fee_commitments);
 }
 
 #ifdef DEBUG
@@ -827,6 +832,7 @@ int main(int argc, const char *argv[])
 	       feerate_per_kw,
 	       option_anchor_outputs,
 	       option_anchors_zero_fee_htlc_tx,
+	       false, /* option_zero_fee_commitments */
 	       htlc_map,
 	       0);
 
@@ -899,6 +905,7 @@ int main(int argc, const char *argv[])
 	       feerate_per_kw,
 	       option_anchor_outputs,
 	       option_anchors_zero_fee_htlc_tx,
+	       false, /* option_zero_fee_commitments */
 	       htlc_map,
 	       tal_count(htlcs));
 
@@ -1004,6 +1011,7 @@ int main(int argc, const char *argv[])
 		       feerate_per_kw-1,
 		       option_anchor_outputs,
 		       option_anchors_zero_fee_htlc_tx,
+		       false, /* option_zero_fee_commitments */
 		       htlc_map,
 		       tal_count(htlcs));
 
@@ -1057,6 +1065,7 @@ int main(int argc, const char *argv[])
 		       feerate_per_kw,
 		       option_anchor_outputs,
 		       option_anchors_zero_fee_htlc_tx,
+		       false, /* option_zero_fee_commitments */
 		       htlc_map,
 		       tal_count(htlcs));
 
@@ -1137,6 +1146,7 @@ int main(int argc, const char *argv[])
 		       feerate_per_kw,
 		       option_anchor_outputs,
 		       option_anchors_zero_fee_htlc_tx,
+		       false, /* option_zero_fee_commitments */
 		       htlc_map,
 		       tal_count(htlcs));
 		break;
@@ -1214,6 +1224,7 @@ int main(int argc, const char *argv[])
 	       feerate_per_kw,
 	       option_anchor_outputs,
 	       option_anchors_zero_fee_htlc_tx,
+	       false, /* option_zero_fee_commitments */
 	       htlc_map,
 	       tal_count(htlcs));
 
@@ -1440,6 +1451,124 @@ int main(int argc, const char *argv[])
 			REMOTE, &local_anchor);
 	tx_must_be_eq(tx, tx2);
 	printf("# LOCAL/REMOTE tx with HTLCs match: OK\n");
+
+	/*
+	 * Test 4: Verify HTLC transactions are v3 for zero-fee channels
+	 *
+	 * BOLT PR #1228: HTLC-success and HTLC-timeout transactions
+	 * MUST use version 3 for zero-fee commitment channels.
+	 */
+	printf("\nname: zero-fee HTLC transaction versions (BOLT PR #1228)\n");
+	{
+		struct bitcoin_outpoint htlc_outpoint;
+		struct bitcoin_tx *htlc_tx_v3;
+		struct bitcoin_tx *htlc_tx_v2;
+		const u8 *htlc_wscript;
+		struct keyset htlc_keyset;
+
+		/* Set up a dummy outpoint */
+		bitcoin_txid(tx, &htlc_outpoint.txid);
+		htlc_outpoint.n = 0;
+
+		/* Create keyset for HTLC */
+		htlc_keyset.self_revocation_key = remote_revocation_key;
+		htlc_keyset.self_delayed_payment_key = local_delayedkey;
+		htlc_keyset.self_payment_key = localkey;
+		htlc_keyset.other_payment_key = remotekey;
+		htlc_keyset.self_htlc_key = local_htlckey;
+		htlc_keyset.other_htlc_key = remote_htlckey;
+
+		htlc_wscript = bitcoin_wscript_htlc_receive(tmpctx,
+							    &htlcs[0]->expiry,
+							    &local_htlckey,
+							    &remote_htlckey,
+							    &htlcs[0]->rhash,
+							    &remote_revocation_key,
+							    false, /* option_anchor_outputs */
+							    true); /* option_anchors_zero_fee_htlc_tx */
+
+		/* Test HTLC-success tx WITH zero-fee-commitments (should be v3) */
+		htlc_tx_v3 = htlc_success_tx(tmpctx, chainparams,
+					     &htlc_outpoint,
+					     htlc_wscript,
+					     htlcs[0]->amount,
+					     to_self_delay,
+					     0, /* feerate */
+					     &htlc_keyset,
+					     false, /* option_anchor_outputs */
+					     true,  /* option_anchors_zero_fee_htlc_tx */
+					     true); /* option_zero_fee_commitments */
+		printf("# HTLC-success tx with zero-fee-commitments: version=%u... ",
+		       htlc_tx_v3->wtx->version);
+		if (htlc_tx_v3->wtx->version != 3)
+			errx(1, "HTLC-success tx should be v3 for zero-fee channels, got %u",
+			     htlc_tx_v3->wtx->version);
+		printf("OK\n");
+
+		/* Test HTLC-success tx WITHOUT zero-fee-commitments (should be v2) */
+		htlc_tx_v2 = htlc_success_tx(tmpctx, chainparams,
+					     &htlc_outpoint,
+					     htlc_wscript,
+					     htlcs[0]->amount,
+					     to_self_delay,
+					     0, /* feerate */
+					     &htlc_keyset,
+					     false, /* option_anchor_outputs */
+					     true,  /* option_anchors_zero_fee_htlc_tx */
+					     false); /* option_zero_fee_commitments = false */
+		printf("# HTLC-success tx without zero-fee-commitments: version=%u... ",
+		       htlc_tx_v2->wtx->version);
+		if (htlc_tx_v2->wtx->version != 2)
+			errx(1, "HTLC-success tx should be v2 for non-zero-fee channels, got %u",
+			     htlc_tx_v2->wtx->version);
+		printf("OK\n");
+
+		/* Test HTLC-timeout tx WITH zero-fee-commitments (should be v3) */
+		htlc_wscript = bitcoin_wscript_htlc_offer(tmpctx,
+							  &local_htlckey,
+							  &remote_htlckey,
+							  &htlcs[0]->rhash,
+							  &remote_revocation_key,
+							  false, /* option_anchor_outputs */
+							  true); /* option_anchors_zero_fee_htlc_tx */
+
+		htlc_tx_v3 = htlc_timeout_tx(tmpctx, chainparams,
+					     &htlc_outpoint,
+					     htlc_wscript,
+					     htlcs[0]->amount,
+					     htlcs[0]->expiry.locktime,
+					     to_self_delay,
+					     0, /* feerate */
+					     &htlc_keyset,
+					     false, /* option_anchor_outputs */
+					     true,  /* option_anchors_zero_fee_htlc_tx */
+					     true); /* option_zero_fee_commitments */
+		printf("# HTLC-timeout tx with zero-fee-commitments: version=%u... ",
+		       htlc_tx_v3->wtx->version);
+		if (htlc_tx_v3->wtx->version != 3)
+			errx(1, "HTLC-timeout tx should be v3 for zero-fee channels, got %u",
+			     htlc_tx_v3->wtx->version);
+		printf("OK\n");
+
+		/* Test HTLC-timeout tx WITHOUT zero-fee-commitments (should be v2) */
+		htlc_tx_v2 = htlc_timeout_tx(tmpctx, chainparams,
+					     &htlc_outpoint,
+					     htlc_wscript,
+					     htlcs[0]->amount,
+					     htlcs[0]->expiry.locktime,
+					     to_self_delay,
+					     0, /* feerate */
+					     &htlc_keyset,
+					     false, /* option_anchor_outputs */
+					     true,  /* option_anchors_zero_fee_htlc_tx */
+					     false); /* option_zero_fee_commitments = false */
+		printf("# HTLC-timeout tx without zero-fee-commitments: version=%u... ",
+		       htlc_tx_v2->wtx->version);
+		if (htlc_tx_v2->wtx->version != 2)
+			errx(1, "HTLC-timeout tx should be v2 for non-zero-fee channels, got %u",
+			     htlc_tx_v2->wtx->version);
+		printf("OK\n");
+	}
 
 	printf("\n# Zero-fee commitment tests PASSED\n");
 	printf("# ============================================================\n");

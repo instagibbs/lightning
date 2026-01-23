@@ -1,6 +1,7 @@
 #include "config.h"
 #include <bitcoin/preimage.h>
 #include <bitcoin/script.h>
+#include <bitcoin/tx.h>
 #include <common/htlc_tx.h>
 #include <common/keyset.h>
 
@@ -14,7 +15,8 @@ struct bitcoin_tx *htlc_tx(const tal_t *ctx,
 			   struct amount_sat htlc_fee,
 			   u32 locktime,
 			   bool option_anchor_outputs,
-			   bool option_anchors_zero_fee_htlc_tx)
+			   bool option_anchors_zero_fee_htlc_tx,
+			   bool option_zero_fee_commitments)
 {
 	/* BOLT #3:
 	 * * locktime: `0` for HTLC-success, `cltv_expiry` for HTLC-timeout
@@ -31,10 +33,19 @@ struct bitcoin_tx *htlc_tx(const tal_t *ctx,
 	 * penalty transaction.
 	 */
 
-	/* BOLT #3:
-	 * * version: 2
+	/* BOLT PR #1228:
+	 * For `option_zero_fee_commitments`:
+	 *   * HTLC transactions MUST use version 3 (v3/TRUC).
+	 *
+	 * BOLT #3:
+	 *   * version: 2 (for non-zero-fee channels)
 	 */
-	assert(tx->wtx->version == 2);
+	if (option_zero_fee_commitments) {
+		tx->wtx->version = BITCOIN_TX_VERSION_3;
+		assert(tx->wtx->version == 3);
+	} else {
+		assert(tx->wtx->version == 2);
+	}
 
 	/* BOLT #3:
 	 * * txin count: 1
@@ -77,7 +88,8 @@ struct bitcoin_tx *htlc_success_tx(const tal_t *ctx,
 				   u32 feerate_per_kw,
 				   const struct keyset *keyset,
 				   bool option_anchor_outputs,
-				   bool option_anchors_zero_fee_htlc_tx)
+				   bool option_anchors_zero_fee_htlc_tx,
+				   bool option_zero_fee_commitments)
 {
 	const u8 *htlc_wscript;
 
@@ -97,7 +109,8 @@ struct bitcoin_tx *htlc_success_tx(const tal_t *ctx,
 					option_anchors_zero_fee_htlc_tx),
 		       0,
 		       option_anchor_outputs,
-		       option_anchors_zero_fee_htlc_tx);
+		       option_anchors_zero_fee_htlc_tx,
+		       option_zero_fee_commitments);
 }
 
 /* Fill in the witness for HTLC-success tx produced above. */
@@ -140,7 +153,8 @@ struct bitcoin_tx *htlc_timeout_tx(const tal_t *ctx,
 				   u32 feerate_per_kw,
 				   const struct keyset *keyset,
 				   bool option_anchor_outputs,
-				   bool option_anchors_zero_fee_htlc_tx)
+				   bool option_anchors_zero_fee_htlc_tx,
+				   bool option_zero_fee_commitments)
 {
 	const u8 *htlc_wscript;
 
@@ -160,7 +174,8 @@ struct bitcoin_tx *htlc_timeout_tx(const tal_t *ctx,
 					option_anchors_zero_fee_htlc_tx),
 		       cltv_expiry,
 		       option_anchor_outputs,
-		       option_anchors_zero_fee_htlc_tx);
+		       option_anchors_zero_fee_htlc_tx,
+		       option_zero_fee_commitments);
 }
 
 /* Fill in the witness for HTLC-timeout tx produced above. */

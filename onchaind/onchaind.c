@@ -526,7 +526,8 @@ static struct amount_sat get_htlc_success_fee(struct tracked_output *out)
 			     0,
 			     keyset,
 			     option_anchor_outputs,
-			     option_anchors_zero_fee_htlc_tx);
+			     option_anchors_zero_fee_htlc_tx,
+			     option_zero_fee_commitments);
 
 	/* BOLT #3:
 	 *
@@ -1853,7 +1854,8 @@ static size_t resolve_our_htlc_ourcommit(struct tracked_output *out,
 				     htlcs[matches[i]].cltv_expiry,
 				     to_self_delay[LOCAL], 0, keyset,
 				     option_anchor_outputs,
-				     option_anchors_zero_fee_htlc_tx);
+				     option_anchors_zero_fee_htlc_tx,
+				     option_zero_fee_commitments);
 
 		if (set_htlc_timeout_fee(tx, out->remote_htlc_sig,
 					 htlc_scripts[matches[i]]))
