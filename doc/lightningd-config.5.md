@@ -848,6 +848,29 @@ a *experimental-lsps2-promise-secret* to be set.
  string that acts as the secret for promises according to ([blip][blip] #52).
  Is required if *experimental-lsps2-service* is set.
 
+* **experimental-zero-fee-channels**
+
+  Specifying this enables support for zero-fee commitment channels ([bolt][bolt]
+#1228), which use Bitcoin Core v3 (TRUC) transactions with ephemeral anchors
+(Pay-to-Anchor or P2A). Zero-fee commitment transactions have no embedded fees;
+instead, fees are paid via Child-Pays-For-Parent (CPFP) at broadcast time using
+a wallet UTXO to spend the anchor output.
+
+  This eliminates the `update_fee` message and associated force-close scenarios
+caused by fee disagreements. It also provides better protection against
+transaction pinning attacks through v3 transaction relay rules.
+
+  **Requirements:**
+  - Bitcoin Core v29 or later (for v3/TRUC transaction and ephemeral dust support)
+  - `--experimental-dual-fund` must also be enabled (zero-fee channels require v2 channel opens)
+  - Sufficient wallet UTXOs for emergency CPFP fee bumping during force closes
+
+  When both peers support this feature (feature bits 40/41), new channels will
+use the zero-fee commitment format. If only one peer supports it, channels fall
+back to the standard `anchors_zero_fee_htlc_tx` format.
+
+  See doc/developers-guide/zero-fee-channels.md for technical details.
+
 BUGS
 ----
 
