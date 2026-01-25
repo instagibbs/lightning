@@ -5349,8 +5349,13 @@ static void resend_commitment(struct peer *peer, struct changed_htlc *last)
 		}
 	}
 
-	/* Make sure they have the correct fee and blockheight. */
-	if (peer->channel->opener == LOCAL) {
+	/* Make sure they have the correct fee and blockheight.
+	 * BOLT PR #1228:
+	 * - if channel_type includes `zero_fee_commitments`:
+	 *   - MUST NOT send update_fee
+	 */
+	if (peer->channel->opener == LOCAL
+	    && !channel_has(peer->channel, OPT_ZERO_FEE_COMMITMENTS)) {
 		msg = towire_update_fee(NULL, &peer->channel_id,
 					channel_feerate(peer->channel, REMOTE));
 		peer_write(peer->pps, take(msg));
