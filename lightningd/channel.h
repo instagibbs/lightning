@@ -928,6 +928,11 @@ struct channel *find_channel_by_alias(const struct peer *peer,
  * might need to CPFP the fee if it force closes!) */
 bool have_anchor_channel(struct lightningd *ld);
 
+/* BOLT PR #1228: Count channels with option_zero_fee_commitments.
+ * Returns the number of channels (committed or uncommitted) that use
+ * zero-fee commitments (needed for wallet balance warning at startup). */
+size_t count_zero_fee_channels(struct lightningd *ld);
+
 /* Do we consider this channel "important" for connectd to maintain
  * connection to peer? */
 bool channel_important_filter(const struct channel *channel, void *unused);

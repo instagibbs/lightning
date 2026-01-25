@@ -4426,6 +4426,74 @@ def test_zero_fee_commitments_low_wallet_balance(node_factory, bitcoind):
 
 @unittest.skipIf(TEST_NETWORK != 'regtest', 'elementsd doesnt yet support PSBT features we need')
 @pytest.mark.openchannel('v2')
+def test_zero_fee_commitments_wallet_balance_warning(node_factory, bitcoind):
+    """BOLT PR #1228: Test startup warning when wallet balance is insufficient for CPFP.
+
+    This is Recommendation #5 from the zero-fee commitments audit plan (section 5.2).
+
+    Zero-fee commitment channels require CPFP to pay fees at broadcast time.
+    At startup, if the wallet balance is less than 10,000 sats per zero-fee channel,
+    a warning should be logged to alert the operator.
+
+    Test scenario:
+    1. Fund l2 and open a zero-fee channel with l1
+    2. Drain l1's wallet so balance < 10,000 sats
+    3. Restart l1
+    4. Verify startup warning about insufficient wallet balance
+    """
+    STATIC_REMOTEKEY = 12
+    ANCHORS_ZERO_FEE_HTLC_TX = 22
+    ZERO_FEE_COMMITMENTS = 40
+
+    # Create two nodes with zero-fee channels enabled
+    # l1 needs allow_warning because we expect the wallet balance warning on restart
+    opts = {'experimental-zero-fee-channels': None, 'allow_warning': True}
+    l1, l2 = node_factory.get_nodes(2, opts=opts)
+
+    # Fund l2's wallet generously
+    l2.fundwallet(FUNDAMOUNT * 2)
+
+    # Fund l1 minimally (below the 10,000 sats per channel threshold)
+    l1.fundwallet(5000)
+
+    l2.connect(l1)
+
+    # l2 opens a zero-fee channel to l1
+    ret = l2.rpc.fundchannel(l1.info['id'], FUNDAMOUNT)
+    expected_bits = [STATIC_REMOTEKEY, ANCHORS_ZERO_FEE_HTLC_TX, ZERO_FEE_COMMITMENTS]
+    assert ret['channel_type']['bits'] == expected_bits
+    assert 'zero_fee_commitments/even' in ret['channel_type']['names']
+
+    # Confirm funding and wait for channel to be active
+    bitcoind.generate_block(6, wait_for_mempool=1)
+    l1.daemon.wait_for_log('to CHANNELD_NORMAL')
+    l2.daemon.wait_for_log('to CHANNELD_NORMAL')
+
+    # l1 has ~5000 sats but need 10,000 per zero-fee channel
+    # Verify l1's wallet is below threshold
+    l1_funds = l1.rpc.listfunds()['outputs']
+    total_balance = sum(o['amount_msat'] for o in l1_funds if o['status'] == 'confirmed')
+    print(f"l1 wallet balance: {total_balance}msat ({total_balance // 1000} sats)")
+
+    # Restart l1 to trigger the startup warning
+    l1.restart()
+
+    # Verify the startup warning was logged
+    assert l1.daemon.is_in_log(
+        r'WARNING: You have [0-9]+ zero-fee commitment channel.*but only.*in wallet'
+    ), "Expected startup warning about insufficient wallet balance for CPFP"
+
+    # Verify the node is still operational
+    info = l1.rpc.getinfo()
+    assert info['id'] is not None
+
+    print("test_zero_fee_commitments_wallet_balance_warning PASSED")
+    print("  - Verified startup warning when wallet balance < 10k sats per zero-fee channel")
+    print("  - Verified node remains operational despite warning")
+
+
+@unittest.skipIf(TEST_NETWORK != 'regtest', 'elementsd doesnt yet support PSBT features we need')
+@pytest.mark.openchannel('v2')
 def test_zero_fee_commitments_nonzero_feerate_rejected(node_factory, bitcoind):
     """BOLT PR #1228: Verify that commitment_feerate_perkw != 0 is rejected for zero-fee channels.
 

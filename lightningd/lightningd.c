@@ -50,6 +50,7 @@
 #include <common/deprecation.h>
 #include <common/ecdh_hsmd.h>
 #include <common/errcode.h>
+#include <common/features.h>
 #include <common/hsm_secret.h>
 #include <common/memleak.h>
 #include <common/timeout.h>
@@ -1179,6 +1180,52 @@ static void setup_fd_limit(struct lightningd *ld, size_t num_channels)
 	}
 }
 
+/* BOLT PR #1228: Check if user has sufficient wallet balance for zero-fee
+ * channel CPFP.  Zero-fee commitment transactions have no fee, so CPFP is
+ * required for broadcast.  Recommend at least 10,000 sats per zero-fee channel. */
+static void check_zero_fee_wallet_balance(struct lightningd *ld)
+{
+	size_t zero_fee_count;
+	struct amount_sat required, total;
+	struct utxo **utxos;
+
+	/* Only warn if zero-fee feature is enabled */
+	if (!feature_offered(ld->our_features->bits[INIT_FEATURE],
+			     OPT_ZERO_FEE_COMMITMENTS))
+		return;
+
+	zero_fee_count = count_zero_fee_channels(ld);
+	if (zero_fee_count == 0)
+		return;
+
+	/* Recommend 10,000 sats per channel for CPFP fees */
+	required = amount_sat(zero_fee_count * 10000);
+
+	/* Sum unspent UTXOs - need database transaction for wallet access */
+	total = AMOUNT_SAT(0);
+	db_begin_transaction(ld->wallet->db);
+	utxos = wallet_get_unspent_utxos(tmpctx, ld->wallet);
+	db_commit_transaction(ld->wallet->db);
+
+	for (size_t i = 0; i < tal_count(utxos); i++) {
+		if (!amount_sat_add(&total, total, utxos[i]->amount)) {
+			log_broken(ld->log, "Wallet balance overflow?!");
+			return;
+		}
+	}
+
+	if (amount_sat_less(total, required)) {
+		log_unusual(ld->log,
+			    "WARNING: You have %zu zero-fee commitment channel(s) "
+			    "but only %s in wallet. Recommend at least %s "
+			    "(10,000 sats per channel) to ensure CPFP fee-bumping "
+			    "works during force-close scenarios.",
+			    zero_fee_count,
+			    fmt_amount_sat(tmpctx, total),
+			    fmt_amount_sat(tmpctx, required));
+	}
+}
+
 int main(int argc, char *argv[])
 {
 	struct lightningd *ld;
@@ -1386,6 +1433,10 @@ int main(int argc, char *argv[])
 	/*~ Now we have channels, try to ensure we have enough file descriptors
 	 * to cover 2x that many. */
 	setup_fd_limit(ld, num_channels);
+
+	/*~ BOLT PR #1228: Check if we have enough wallet balance for zero-fee
+	 * channel CPFP.  This warning helps users avoid force-close failures. */
+	check_zero_fee_wallet_balance(ld);
 
 	/*~ The gossip daemon looks after the routing gossip;
 	 *  channel_announcement, channel_update, node_announcement and gossip

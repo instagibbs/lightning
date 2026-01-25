@@ -3,6 +3,7 @@
 #include <common/blockheight_states.h>
 #include <common/clock_time.h>
 #include <common/closing_fee.h>
+#include <common/features.h>
 #include <common/fee_states.h>
 #include <common/json_command.h>
 #include <common/randbytes.h>
@@ -940,6 +941,35 @@ bool have_anchor_channel(struct lightningd *ld)
 		}
 	}
 	return false;
+}
+
+/* BOLT PR #1228: Count zero-fee commitment channels for wallet balance warning.
+ * Returns the number of channels (committed or uncommitted) that use
+ * option_zero_fee_commitments. */
+size_t count_zero_fee_channels(struct lightningd *ld)
+{
+	struct peer *p;
+	struct channel *channel;
+	struct peer_node_id_map_iter it;
+	size_t count = 0;
+
+	for (p = peer_node_id_map_first(ld->peers, &it);
+	     p;
+	     p = peer_node_id_map_next(ld->peers, &it)) {
+		if (p->uncommitted_channel) {
+			/* For uncommitted, check if zero-fee would be negotiated */
+			if (feature_negotiated(ld->our_features,
+					       p->their_features,
+					       OPT_ZERO_FEE_COMMITMENTS))
+				count++;
+		}
+		list_for_each(&p->channels, channel, list) {
+			if (channel_type_has(channel->type,
+					     OPT_ZERO_FEE_COMMITMENTS))
+				count++;
+		}
+	}
+	return count;
 }
 
 void channel_set_last_tx(struct channel *channel,
