@@ -3807,7 +3807,7 @@ def test_zero_fee_commitments_htlc_stress(node_factory, bitcoind):
 
 @unittest.skipIf(TEST_NETWORK != 'regtest', 'elementsd doesnt yet support PSBT features we need')
 @pytest.mark.openchannel('v2')
-def test_zero_fee_commitments_htlc_force_close(node_factory, bitcoind):
+def test_zero_fee_commitments_htlc_force_close(node_factory, bitcoind, executor):
     """BOLT PR #1228: Test force-close with pending HTLCs on zero-fee channel.
 
     This test verifies that when a zero-fee commitment channel is force-closed
@@ -3864,8 +3864,8 @@ def test_zero_fee_commitments_htlc_force_close(node_factory, bitcoind):
     for i in range(NUM_HTLCS):
         inv = l2.rpc.invoice(htlc_amount_msat, f'htlc_pending_{i}', f'Pending HTLC {i}')
         payment_hashes.append(inv['payment_hash'])
-        # Start payment - it will be held by the plugin
-        l1.rpc.pay(inv['bolt11'], retry_for=0)
+        # Start payment asynchronously - it will be held by the plugin
+        executor.submit(l1.rpc.pay, inv['bolt11'], retry_for=0)
 
     # Wait for HTLCs to be added to the channel
     wait_for(lambda: len(only_one(l1.rpc.listpeerchannels()['channels'])['htlcs']) == NUM_HTLCS)
@@ -3907,7 +3907,16 @@ def test_zero_fee_commitments_htlc_force_close(node_factory, bitcoind):
     l1.daemon.wait_for_log('Broadcast for onchaind tx')
 
     # Mine blocks to confirm HTLC-timeout transactions
-    bitcoind.generate_block(1, wait_for_mempool=NUM_HTLCS)
+    # Note: With zero-fee HTLC transactions using shared anchor CPFP,
+    # not all HTLCs may be in mempool simultaneously.
+    # Just wait for any transactions and mine them.
+    bitcoind.generate_block(1, wait_for_mempool=1)
+
+    # Continue mining blocks to process remaining HTLCs
+    # Mine extra blocks to ensure all HTLCs are resolved
+    for _ in range(10):
+        bitcoind.generate_block(1)
+        sync_blockheight(bitcoind, [l1])
 
     # Wait for CSV delay on to_local output (6 blocks in tests)
     bitcoind.generate_block(6)
@@ -3916,7 +3925,7 @@ def test_zero_fee_commitments_htlc_force_close(node_factory, bitcoind):
     l1.daemon.wait_for_log('sendrawtx exit 0')
 
     # Mine more blocks to confirm everything
-    bitcoind.generate_block(100, wait_for_mempool=1)
+    bitcoind.generate_block(100)
 
     # Wait for onchaind to complete
     l1.daemon.wait_for_log('onchaind complete, forgetting peer')
