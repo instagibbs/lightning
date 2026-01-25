@@ -3630,16 +3630,55 @@ def test_zero_fee_commitments_penalty_tx(node_factory, bitcoind, executor):
     # l2 should recognize this as a revoked commitment
     l2.daemon.wait_for_log('Resolved FUNDING_TRANSACTION/FUNDING_OUTPUT by THEIR_REVOKED_UNILATERAL')
 
-    # Wait for penalty tx to be broadcast - onchaind creates and sends it
-    l2.daemon.wait_for_log('sendrawtx exit 0')
+    # CRITICAL: Explicitly wait for BOTH penalty transactions to be broadcast.
+    # The revoked commitment has two outputs we need to penalize:
+    # 1. DELAYED_CHEAT_OUTPUT_TO_THEM - the to_local output (l1's funds)
+    # 2. THEIR_HTLC - the HTLC output (from the in-flight payment)
+    #
+    # This explicit verification ensures the penalty mechanism works for BOTH
+    # output types on zero-fee commitment channels (not just one).
+    ((_, txid1, blocks1), (_, txid2, blocks2)) = \
+        l2.wait_for_onchaind_txs(('OUR_PENALTY_TX',
+                                  'THEIR_REVOKED_UNILATERAL/DELAYED_CHEAT_OUTPUT_TO_THEM'),
+                                 ('OUR_PENALTY_TX',
+                                  'THEIR_REVOKED_UNILATERAL/THEIR_HTLC'))
+
+    # Penalty transactions should be immediately broadcastable (0 blocks delay)
+    assert blocks1 == 0, f"Expected 0 blocks delay for to_local penalty, got {blocks1}"
+    assert blocks2 == 0, f"Expected 0 blocks delay for HTLC penalty, got {blocks2}"
 
     # Mine blocks to confirm penalty transactions
-    # The "Resolved ... by our proposal OUR_PENALTY_TX" message only appears after confirmation
-    bitcoind.generate_block(100, wait_for_mempool=1)
+    # Note: CLN may consolidate/RBF penalties, so we wait for whichever txids end up in mempool
+    bitcoind.generate_block(100, wait_for_mempool=[txid1, txid2])
 
-    # l2 should recognize penalty tx was confirmed
-    # The penalty tx claims l1's outputs (both the delayed output and potentially HTLC)
-    l2.daemon.wait_for_log('Resolved .* by our proposal OUR_PENALTY_TX')
+    # Explicitly verify BOTH outputs were resolved by penalty transactions.
+    # These log patterns are the definitive proof that onchaind correctly:
+    # 1. Detected both outputs in the revoked commitment
+    # 2. Created valid penalty (justice) transactions for each
+    # 3. Successfully broadcast and confirmed both penalties
+    #
+    # Note: CLN may consolidate both penalties into a single transaction (same txid
+    # for both resolved outputs). This is correct and more efficient behavior.
+    #
+    # We use wait_for_log to ensure we wait for each resolution message.
+    import re
+    resolved_txids = set()
+
+    # Wait for to_local penalty resolution
+    to_local_log = l2.daemon.wait_for_log(
+        r'Resolved THEIR_REVOKED_UNILATERAL/DELAYED_CHEAT_OUTPUT_TO_THEM by our proposal OUR_PENALTY_TX \(([a-f0-9]{64})\)'
+    )
+    txid_match = re.search(r'\(([0-9a-f]{64})\)', to_local_log)
+    assert txid_match, f"Could not extract txid from: {to_local_log}"
+    resolved_txids.add(txid_match.group(1))
+
+    # Wait for HTLC penalty resolution
+    htlc_log = l2.daemon.wait_for_log(
+        r'Resolved THEIR_REVOKED_UNILATERAL/THEIR_HTLC by our proposal OUR_PENALTY_TX \(([a-f0-9]{64})\)'
+    )
+    txid_match = re.search(r'\(([0-9a-f]{64})\)', htlc_log)
+    assert txid_match, f"Could not extract txid from: {htlc_log}"
+    resolved_txids.add(txid_match.group(1))
 
     # Wait for onchaind to complete
     l2.daemon.wait_for_log('onchaind complete, forgetting peer')
@@ -3647,6 +3686,37 @@ def test_zero_fee_commitments_penalty_tx(node_factory, bitcoind, executor):
     # CRITICAL VERIFICATION: l2 should have recovered funds via penalty
     # l2 gets ALL of l1's channel balance plus their own balance (minus fees)
     l2_outputs = l2.rpc.listfunds()['outputs']
+
+    # Filter to just the penalty outputs (from the resolved txids)
+    # Note: listfunds returns ALL wallet outputs including pre-existing ones
+    penalty_outputs = [o for o in l2_outputs if o['txid'] in resolved_txids]
+
+    # Verify we have at least one confirmed penalty output
+    # Note: If CLN consolidated penalties, resolved_txids may have only 1 txid
+    # (same tx claimed both outputs), resulting in 1 output. If separate txs,
+    # we get 2 outputs.
+    assert len(penalty_outputs) >= 1, \
+        f"Expected at least 1 penalty output, got {len(penalty_outputs)}"
+
+    # Verify all penalty outputs are confirmed
+    for output in penalty_outputs:
+        assert output['status'] == 'confirmed', \
+            f"Expected penalty output {output['txid']} to be confirmed, got {output['status']}"
+
+    # Calculate total funds from penalty outputs
+    penalty_funds = Millisatoshi(sum([int(o['amount_msat']) for o in penalty_outputs]))
+
+    # The penalty should include at least l1's channel balance (minus fees for penalty tx)
+    # l1's balance at time of revoked commit was roughly (FUNDAMOUNT - 100000000) msats
+    # after paying 100000000 msat to l2. The penalty tx also has fees.
+    # Allow generous tolerance for:
+    # - HTLC trimming if amount is below dust threshold
+    # - Penalty tx fees (can be significant for consolidated tx)
+    # - Channel reserve requirements
+    expected_min_penalty = Millisatoshi(FUNDAMOUNT * 1000) - Millisatoshi(300000000)  # Allow 0.3 BTC for fees/reserves
+    assert penalty_funds >= expected_min_penalty, \
+        f"Penalty recovery too low! Expected at least {expected_min_penalty}, got {penalty_funds}"
+
     l2_final_funds = Millisatoshi(sum([int(o['amount_msat']) for o in l2_outputs]))
 
     # l2 should have at minimum their original balance (they also get l1's funds)
