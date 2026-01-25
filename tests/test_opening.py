@@ -3660,6 +3660,7 @@ def test_zero_fee_commitments_penalty_tx(node_factory, bitcoind, executor):
 
 
 @unittest.skipIf(TEST_NETWORK != 'regtest', 'elementsd doesnt yet support PSBT features we need')
+@pytest.mark.openchannel('v2')
 def test_zero_fee_commitments_startup_warning(node_factory, bitcoind):
     """BOLT PR #1228: Test startup warning when submitpackage is unavailable.
 
