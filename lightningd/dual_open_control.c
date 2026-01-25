@@ -8,6 +8,7 @@
 #include <ccan/mem/mem.h>
 #include <ccan/tal/str/str.h>
 #include <common/blockheight_states.h>
+#include <common/channel_type.h>
 #include <common/clock_time.h>
 #include <common/json_channel_type.h>
 #include <common/json_command.h>
@@ -1466,6 +1467,14 @@ wallet_commit_channel(struct lightningd *ld,
 
 	tal_free(channel->type);
 	channel->type = channel_type_dup(channel, type);
+
+	/* BOLT PR #1228:
+	 * For zero_fee_commitments, max_accepted_htlcs is capped at 114
+	 * to ensure commitment tx stays under v3 10kvB size limit.
+	 * This must match the capping done in dualopend. */
+	if (channel_type_has(type, OPT_ZERO_FEE_COMMITMENTS)
+	    && channel->our_config.max_accepted_htlcs > 114)
+		channel->our_config.max_accepted_htlcs = 114;
 
 	if (our_upfront_shutdown_script)
 		channel->shutdown_scriptpubkey[LOCAL]
@@ -3430,6 +3439,14 @@ static void handle_psbt_changed(struct subd *dualopend,
 	/* This is often the first time we hear about channel details */
 	tal_free(channel->type);
 	channel->type = tal_steal(channel, channel_type);
+
+	/* BOLT PR #1228:
+	 * For zero_fee_commitments, max_accepted_htlcs is capped at 114
+	 * to ensure commitment tx stays under v3 10kvB size limit.
+	 * This must match the capping done in dualopend. */
+	if (channel_type_has(channel_type, OPT_ZERO_FEE_COMMITMENTS)
+	    && channel->our_config.max_accepted_htlcs > 114)
+		channel->our_config.max_accepted_htlcs = 114;
 
 	switch (oa->role) {
 	case TX_INITIATOR:
