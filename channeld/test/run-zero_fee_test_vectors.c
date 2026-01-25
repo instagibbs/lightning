@@ -19,6 +19,7 @@ static bool print_superverbose;
 #include <bitcoin/privkey.h>
 #include <common/channel_id.h>
 #include <common/daemon.h>
+#include <common/htlc_tx.h>
 #include <common/json_parse_simple.h>
 #include <common/key_derive.h>
 #include <common/memleak.h>
@@ -272,6 +273,15 @@ int main(int argc, char *argv[])
 	keyset.self_htlc_key = local_htlckey;
 	keyset.other_htlc_key = remote_htlckey;
 
+	/* Derive HTLC private keys for signing HTLC transactions */
+	struct privkey local_htlc_privkey, remote_htlc_privkey;
+	if (!derive_simple_privkey(&local_htlc_basepoint_secret, &local_htlc_basepoint,
+				   &per_commitment_point, &local_htlc_privkey))
+		abort();
+	if (!derive_simple_privkey(&remote_htlc_basepoint_secret, &remote_htlc_basepoint,
+				   &per_commitment_point, &remote_htlc_privkey))
+		abort();
+
 	/* Calculate commitment number obscurer */
 	u64 cn_obscurer = commit_number_obscurer(&local_payment_basepoint, &remote_payment_basepoint);
 	printf("Commitment number obscurer: 0x%"PRIx64"\n\n", cn_obscurer);
@@ -476,8 +486,7 @@ int main(int argc, char *argv[])
 		       strlen(our_hex), strlen(expected_tx_hex));
 
 		if (strcasecmp(our_hex, expected_tx_hex) == 0) {
-			printf("  PASSED: Exact match!\n\n");
-			passed++;
+			printf("  PASSED: Exact match!\n");
 		} else {
 			printf("  MISMATCH - dumping details:\n");
 			printf("  Expected: %s\n", expected_tx_hex);
@@ -494,6 +503,216 @@ int main(int argc, char *argv[])
 			}
 			printf("\n");
 			failed++;
+			tal_free(htlcs);
+			continue;
+		}
+
+		/* Now validate HTLC transactions */
+		const jsmntok_t *htlc_success_txs_tok = json_get_member(json, test, "signed_htlc_success_txs");
+		const jsmntok_t *htlc_timeout_txs_tok = json_get_member(json, test, "signed_htlc_timeout_txs");
+
+		/* Get commitment txid for HTLC tx inputs */
+		struct bitcoin_txid commit_txid;
+		bitcoin_txid(tx, &commit_txid);
+
+		/* Track HTLC tx validation */
+		int htlc_success_passed = 0, htlc_success_failed = 0;
+		int htlc_timeout_passed = 0, htlc_timeout_failed = 0;
+
+		/* Validate HTLC success transactions (for incoming HTLCs) */
+		if (htlc_success_txs_tok && htlc_success_txs_tok->type == JSMN_ARRAY) {
+			size_t success_idx = 0;
+			const jsmntok_t *success_tx_tok;
+
+			/* Find incoming HTLCs in commitment tx */
+			for (size_t out_idx = 0; out_idx < tx->wtx->num_outputs; out_idx++) {
+				if (!htlc_map[out_idx])
+					continue;
+				/* Incoming HTLCs have RCVD state */
+				if (htlc_map[out_idx]->state != RCVD_ADD_ACK_REVOCATION)
+					continue;
+
+				/* Get expected tx for this HTLC */
+				json_for_each_arr(success_idx, success_tx_tok, htlc_success_txs_tok) {
+					if (success_idx != htlc_success_passed + htlc_success_failed)
+						continue;
+
+					char *expected_htlc_hex = json_strdup(ctx, json, success_tx_tok);
+
+					/* Build HTLC success tx */
+					struct bitcoin_outpoint htlc_outpoint;
+					htlc_outpoint.txid = commit_txid;
+					htlc_outpoint.n = out_idx;
+
+					struct ripemd160 ripemd;
+					ripemd160(&ripemd, htlc_map[out_idx]->rhash.u.u8, sizeof(htlc_map[out_idx]->rhash.u.u8));
+
+					u8 *htlc_wscript = htlc_received_wscript(ctx, &ripemd,
+						&htlc_map[out_idx]->expiry, &keyset,
+						false, true, true); /* option_zero_fee_commitments */
+
+					struct bitcoin_tx *htlc_tx = htlc_success_tx(ctx,
+						chainparams,
+						&htlc_outpoint,
+						htlc_wscript,
+						htlc_map[out_idx]->amount,
+						to_self_delay,
+						0, /* feerate - zero for zero-fee */
+						&keyset,
+						false, /* option_anchor_outputs */
+						true,  /* option_anchors_zero_fee_htlc_tx */
+						true); /* option_zero_fee_commitments */
+
+					/* Sign the HTLC success tx
+					 * For anchor-style HTLC txs (including zero-fee-commitments):
+					 * - Remote signs with SIGHASH_SINGLE|SIGHASH_ANYONECANPAY
+					 *   (allows local to add inputs for CPFP)
+					 * - Local signs with SIGHASH_ALL
+					 */
+					struct bitcoin_signature local_htlc_sig, remote_htlc_sig;
+					sign_tx_input(htlc_tx, 0, NULL, htlc_wscript,
+						      &remote_htlc_privkey, &keyset.other_htlc_key,
+						      SIGHASH_SINGLE|SIGHASH_ANYONECANPAY, &remote_htlc_sig);
+					sign_tx_input(htlc_tx, 0, NULL, htlc_wscript,
+						      &local_htlc_privkey, &keyset.self_htlc_key,
+						      SIGHASH_ALL, &local_htlc_sig);
+
+					/* Get preimage from payment_hash_to_preimage map */
+					const jsmntok_t *preimage_map = json_get_member(json, toks, "payment_hash_to_preimage");
+					char *hash_hex = tal_hexstr(ctx, htlc_map[out_idx]->rhash.u.u8, 32);
+					const jsmntok_t *preimage_tok = json_get_member(json, preimage_map, hash_hex);
+					struct preimage preimage;
+					if (preimage_tok) {
+						char *preimage_hex = json_strdup(ctx, json, preimage_tok);
+						hex_decode(preimage_hex, strlen(preimage_hex), &preimage, sizeof(preimage));
+					}
+
+					/* Add witness */
+					htlc_success_tx_add_witness(htlc_tx,
+						&htlc_map[out_idx]->expiry,
+						&keyset.self_htlc_key,
+						&keyset.other_htlc_key,
+						&local_htlc_sig,
+						&remote_htlc_sig,
+						&preimage,
+						&keyset.self_revocation_key,
+						false, true, true);
+
+					u8 *htlc_serialized = linearize_tx(ctx, htlc_tx);
+					char *htlc_hex = tal_hex(ctx, htlc_serialized);
+
+					if (strcasecmp(htlc_hex, expected_htlc_hex) == 0) {
+						htlc_success_passed++;
+					} else {
+						printf("  HTLC success tx %zu MISMATCH:\n", success_idx);
+						printf("    Expected: %s\n", expected_htlc_hex);
+						printf("    Got:      %s\n", htlc_hex);
+						htlc_success_failed++;
+					}
+					break;
+				}
+			}
+		}
+
+		/* Validate HTLC timeout transactions (for outgoing HTLCs) */
+		if (htlc_timeout_txs_tok && htlc_timeout_txs_tok->type == JSMN_ARRAY) {
+			size_t timeout_idx = 0;
+			const jsmntok_t *timeout_tx_tok;
+
+			/* Find outgoing HTLCs in commitment tx */
+			for (size_t out_idx = 0; out_idx < tx->wtx->num_outputs; out_idx++) {
+				if (!htlc_map[out_idx])
+					continue;
+				/* Outgoing HTLCs have SENT state */
+				if (htlc_map[out_idx]->state != SENT_ADD_ACK_REVOCATION)
+					continue;
+
+				/* Get expected tx for this HTLC */
+				json_for_each_arr(timeout_idx, timeout_tx_tok, htlc_timeout_txs_tok) {
+					if (timeout_idx != htlc_timeout_passed + htlc_timeout_failed)
+						continue;
+
+					char *expected_htlc_hex = json_strdup(ctx, json, timeout_tx_tok);
+
+					/* Build HTLC timeout tx */
+					struct bitcoin_outpoint htlc_outpoint;
+					htlc_outpoint.txid = commit_txid;
+					htlc_outpoint.n = out_idx;
+
+					struct ripemd160 ripemd;
+					ripemd160(&ripemd, htlc_map[out_idx]->rhash.u.u8, sizeof(htlc_map[out_idx]->rhash.u.u8));
+
+					u8 *htlc_wscript = htlc_offered_wscript(ctx, &ripemd,
+						&keyset, false, true, true);
+
+					struct bitcoin_tx *htlc_tx = htlc_timeout_tx(ctx,
+						chainparams,
+						&htlc_outpoint,
+						htlc_wscript,
+						htlc_map[out_idx]->amount,
+						htlc_map[out_idx]->expiry.locktime,
+						to_self_delay,
+						0, /* feerate - zero for zero-fee */
+						&keyset,
+						false, /* option_anchor_outputs */
+						true,  /* option_anchors_zero_fee_htlc_tx */
+						true); /* option_zero_fee_commitments */
+
+					/* Sign the HTLC timeout tx
+					 * Same as success tx: remote uses SIGHASH_SINGLE|SIGHASH_ANYONECANPAY
+					 */
+					struct bitcoin_signature local_htlc_sig, remote_htlc_sig;
+					sign_tx_input(htlc_tx, 0, NULL, htlc_wscript,
+						      &remote_htlc_privkey, &keyset.other_htlc_key,
+						      SIGHASH_SINGLE|SIGHASH_ANYONECANPAY, &remote_htlc_sig);
+					sign_tx_input(htlc_tx, 0, NULL, htlc_wscript,
+						      &local_htlc_privkey, &keyset.self_htlc_key,
+						      SIGHASH_ALL, &local_htlc_sig);
+
+					/* Add witness */
+					htlc_timeout_tx_add_witness(htlc_tx,
+						&keyset.self_htlc_key,
+						&keyset.other_htlc_key,
+						&htlc_map[out_idx]->rhash,
+						&keyset.self_revocation_key,
+						&local_htlc_sig,
+						&remote_htlc_sig,
+						false, true, true);
+
+					u8 *htlc_serialized = linearize_tx(ctx, htlc_tx);
+					char *htlc_hex = tal_hex(ctx, htlc_serialized);
+
+					if (strcasecmp(htlc_hex, expected_htlc_hex) == 0) {
+						htlc_timeout_passed++;
+					} else {
+						printf("  HTLC timeout tx %zu MISMATCH:\n", timeout_idx);
+						printf("    Expected: %s\n", expected_htlc_hex);
+						printf("    Got:      %s\n", htlc_hex);
+						htlc_timeout_failed++;
+					}
+					break;
+				}
+			}
+		}
+
+		/* Report HTLC tx results */
+		int expected_success = htlc_success_txs_tok ? htlc_success_txs_tok->size : 0;
+		int expected_timeout = htlc_timeout_txs_tok ? htlc_timeout_txs_tok->size : 0;
+
+		if (htlc_success_passed + htlc_timeout_passed > 0 ||
+		    expected_success + expected_timeout > 0) {
+			printf("  HTLC success txs: %d/%d passed\n", htlc_success_passed, expected_success);
+			printf("  HTLC timeout txs: %d/%d passed\n", htlc_timeout_passed, expected_timeout);
+		}
+
+		if (htlc_success_failed > 0 || htlc_timeout_failed > 0 ||
+		    htlc_success_passed != expected_success ||
+		    htlc_timeout_passed != expected_timeout) {
+			printf("  FAILED: HTLC transaction mismatch\n\n");
+			failed++;
+		} else {
+			printf("\n");
+			passed++;
 		}
 
 		tal_free(htlcs);

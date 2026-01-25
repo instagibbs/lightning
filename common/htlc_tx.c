@@ -57,9 +57,19 @@ struct bitcoin_tx *htlc_tx(const tal_t *ctx,
 	 *      `output_index` of the matching HTLC output for the HTLC
 	 *      transaction
 	 *    * `txin[0]` sequence: `0` (set to `1` for `option_anchors`)
+	 *
+	 * Note: option_zero_fee_commitments uses sequence 0 (v3/TRUC transactions
+	 * don't need the sequence=1 for RBF signaling since they're inherently
+	 * replaceable).
 	 */
-	bitcoin_tx_add_input(tx, commit,
-			     (option_anchor_outputs || option_anchors_zero_fee_htlc_tx) ? 1 : 0,
+	u32 sequence;
+	if (option_zero_fee_commitments)
+		sequence = 0;
+	else if (option_anchor_outputs || option_anchors_zero_fee_htlc_tx)
+		sequence = 1;
+	else
+		sequence = 0;
+	bitcoin_tx_add_input(tx, commit, sequence,
 			     NULL, amount, NULL, commit_wscript);
 
 	/* BOLT #3:
