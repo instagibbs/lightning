@@ -83,12 +83,8 @@ int main(int argc, char *argv[])
 		json_file = argv[1];
 	} else {
 		/* Try default locations */
-		json_file = "specs/zero-fee-commitments-test.json";
+		json_file = "tests/zero-fee-commitments-test.json";
 		json = grab_file_str(ctx, json_file);
-		if (!json) {
-			json_file = "../../../specs/zero-fee-commitments-test.json";
-			json = grab_file_str(ctx, json_file);
-		}
 		if (!json) {
 			printf("Test vectors file not found, skipping\n");
 			printf("PASS (no test vectors)\n");
