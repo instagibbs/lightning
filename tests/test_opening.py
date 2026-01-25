@@ -2,7 +2,7 @@ from fixtures import *  # noqa: F401,F403
 from fixtures import TEST_NETWORK
 from pyln.client import RpcError, Millisatoshi
 from utils import (
-    only_one, wait_for, sync_blockheight, first_channel_id, calc_lease_fee, check_coin_moves
+    only_one, wait_for, sync_blockheight, first_channel_id, calc_lease_fee, check_coin_moves, first_scid
 )
 from pyln.testing.utils import FUNDAMOUNT
 
@@ -4547,3 +4547,103 @@ def test_zero_fee_commitments_nonzero_feerate_rejected(node_factory, bitcoind):
     print("  - l1 attempted to open channel with commitment_feerate_perkw != 0")
     print("  - l2 correctly rejected the channel offer with tx_abort")
     print(f"  - Error message: {error_msg[:100]}...")
+
+
+@unittest.skipIf(TEST_NETWORK != 'regtest', 'elementsd doesnt yet support PSBT features we need')
+@pytest.mark.openchannel('v2')
+def test_zero_fee_commitments_reconnect(node_factory, bitcoind):
+    """BOLT PR #1228: Test that zero-fee channels don't send update_fee during reconnection.
+
+    This tests the fix for the bug in resend_commitment() where update_fee was
+    unconditionally sent during channel_reestablish, even on zero-fee channels.
+    A compliant peer receiving update_fee on a zero-fee channel would reject it
+    and fail the channel.
+
+    Test scenario:
+    1. Open a zero-fee channel
+    2. Start an HTLC payment
+    3. Disconnect during commitment_signed exchange (triggers retransmission)
+    4. Reconnect - this triggers resend_commitment() which should NOT send update_fee
+    5. Verify channel recovers without update_fee being sent
+    """
+    # Use disconnect to force disconnects during WIRE_COMMITMENT_SIGNED
+    # '-' = disconnect before sending, '+' = disconnect after sending
+    # '=' = skip this occurrence (for channel establishment in v2)
+    # Using both '-' and '+' ensures we trigger resend_commitment() paths
+    disconnects = ['-WIRE_COMMITMENT_SIGNED',
+                   '+WIRE_COMMITMENT_SIGNED']
+    # For dual-funding (v2), skip the commitment_signed during channel establishment
+    disconnects = ['=WIRE_COMMITMENT_SIGNED'] + disconnects
+
+    # Feerates identical so we don't get gratuitous commits to update them
+    l1 = node_factory.get_node(
+        disconnect=disconnects,
+        may_reconnect=True,
+        options={
+            'experimental-zero-fee-channels': None,
+        },
+        feerates=(7500, 7500, 7500, 7500)
+    )
+    l2 = node_factory.get_node(
+        may_reconnect=True,
+        options={
+            'experimental-zero-fee-channels': None,
+        },
+        feerates=(7500, 7500, 7500, 7500)
+    )
+
+    l1.fundwallet(FUNDAMOUNT * 2)
+    l1.rpc.connect(l2.info['id'], 'localhost', l2.port)
+
+    # Open a zero-fee channel
+    ret = l1.rpc.fundchannel(l2.info['id'], FUNDAMOUNT)
+    assert 'zero_fee_commitments/even' in ret['channel_type']['names'], \
+        f"Expected zero_fee_commitments channel, got: {ret['channel_type']['names']}"
+
+    # Confirm funding and wait for channel to be active
+    bitcoind.generate_block(6, wait_for_mempool=1)
+    l1.daemon.wait_for_log('to CHANNELD_NORMAL')
+    l2.daemon.wait_for_log('to CHANNELD_NORMAL')
+
+    # Clear logs before payment to make checking easier
+    l1.daemon.logsearch_start = len(l1.daemon.logs)
+    l2.daemon.logsearch_start = len(l2.daemon.logs)
+
+    # Make a payment - this will trigger commitment_signed which causes disconnects
+    amt = 200000000
+    inv = l2.rpc.invoice(amt, 'test_reconnect', 'desc')
+    rhash = inv['payment_hash']
+    route = [{'amount_msat': amt, 'id': l2.info['id'], 'delay': 5, 'channel': first_scid(l1, l2)}]
+
+    # This will send commit, triggering disconnects, but should succeed after reconnects
+    l1.rpc.sendpay(route, rhash, payment_secret=inv['payment_secret'])
+
+    # Wait for reconnections - should have one for each disconnect event
+    for i in range(len(disconnects) - 1):  # -1 because first one is '=' (skip)
+        l1.daemon.wait_for_log('Already have funding locked in')
+
+    # KEY VERIFICATION: Ensure no update_fee was sent during reconnection
+    # If the bug were present (resend_commitment sending update_fee), l2 would
+    # either see "peer updated fee" in logs (which would be wrong for zero-fee)
+    # or would reject with an error about update_fee on zero-fee channel
+    assert not l2.daemon.is_in_log('peer updated fee'), \
+        "BUG: update_fee was sent on zero-fee channel during reconnection"
+
+    # Also verify l2 didn't reject with update_fee error
+    assert not l2.daemon.is_in_log('update_fee not allowed on zero-fee'), \
+        "BUG: update_fee was received and rejected on zero-fee channel"
+
+    # Verify channel is still healthy after reconnection
+    l1_chan = only_one(l1.rpc.listpeerchannels()['channels'])
+    assert l1_chan['state'] == 'CHANNELD_NORMAL', \
+        f"Channel not healthy after reconnect: {l1_chan['state']}"
+
+    # Verify the payment completed (if pending, wait for it)
+    l1.rpc.waitsendpay(rhash)
+    assert only_one(l2.rpc.listinvoices('test_reconnect')['invoices'])['status'] == 'paid'
+
+    print("test_zero_fee_commitments_reconnect PASSED")
+    print("  - Zero-fee channel opened successfully")
+    print("  - Multiple disconnects/reconnects during payment")
+    print("  - No update_fee sent during channel_reestablish")
+    print("  - Channel recovered and payment completed")
