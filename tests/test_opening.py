@@ -4647,3 +4647,118 @@ def test_zero_fee_commitments_reconnect(node_factory, bitcoind):
     print("  - Multiple disconnects/reconnects during payment")
     print("  - No update_fee sent during channel_reestablish")
     print("  - Channel recovered and payment completed")
+
+
+@unittest.skipIf(TEST_NETWORK != 'regtest', 'elementsd doesnt yet support PSBT features we need')
+@pytest.mark.openchannel('v2')
+def test_zero_fee_commitments_cpfp_rbf(node_factory, bitcoind):
+    """BOLT PR #1228: Test RBF bumping of CPFP child for zero-fee commitments.
+
+    This is Recommendation #6 from the zero-fee commitments audit plan (section 5.2):
+    "Consider RBF support for CPFP child if initial feerate estimate is too low."
+
+    When a zero-fee commitment is broadcast, a CPFP child transaction is created
+    to pay the fees. If the initial feerate estimate was too low and the package
+    doesn't get mined, the rebroadcast mechanism should create a new CPFP child
+    with a higher feerate (RBF).
+
+    Test scenario:
+    1. Open a zero-fee channel
+    2. Force close - verify initial CPFP broadcast
+    3. Wait for rebroadcast timer and verify RBF'd CPFP is created with higher fee
+    4. Verify the package eventually gets mined
+    """
+    STATIC_REMOTEKEY = 12
+    ANCHORS_ZERO_FEE_HTLC_TX = 22
+    ZERO_FEE_COMMITMENTS = 40
+
+    # Create nodes with zero-fee channels enabled
+    opts = {'experimental-zero-fee-channels': None, 'allow_warning': True}
+    l1, l2 = node_factory.get_nodes(2, opts=opts)
+
+    # Fund l1's wallet with enough for channel and CPFP
+    l1.fundwallet(FUNDAMOUNT * 2)
+
+    l1.connect(l2)
+
+    # Open a zero-fee channel
+    ret = l1.rpc.fundchannel(l2.info['id'], FUNDAMOUNT)
+    expected_bits = [STATIC_REMOTEKEY, ANCHORS_ZERO_FEE_HTLC_TX, ZERO_FEE_COMMITMENTS]
+    assert ret['channel_type']['bits'] == expected_bits
+    assert 'zero_fee_commitments/even' in ret['channel_type']['names']
+
+    # Confirm funding and wait for channel to be active
+    bitcoind.generate_block(6, wait_for_mempool=1)
+    l1.daemon.wait_for_log('to CHANNELD_NORMAL')
+    l2.daemon.wait_for_log('to CHANNELD_NORMAL')
+
+    # Stop l2 so l1 is forced to do unilateral close
+    l2.stop()
+
+    # Clear logs before force close
+    l1.daemon.logsearch_start = len(l1.daemon.logs)
+
+    # Force close the channel - this should create initial CPFP
+    l1.rpc.close(l2.info['id'], unilateraltimeout=1)
+
+    # Verify initial CPFP broadcast with submitpackage
+    l1.daemon.wait_for_log(r'Broadcasting zero-fee commitment .* with CPFP child via submitpackage \(feerate (\d+)\)')
+
+    # Get the initial feerate from the log
+    import re
+    logs = l1.daemon.logs
+    for log in reversed(logs):
+        match = re.search(r'Broadcasting zero-fee commitment .* via submitpackage \(feerate (\d+)\)', log)
+        if match:
+            initial_feerate = int(match.group(1))
+            break
+    else:
+        pytest.fail("Could not find initial feerate in logs")
+
+    print(f"Initial CPFP feerate: {initial_feerate}")
+
+    # Don't mine any blocks - let the rebroadcast timer trigger
+    # The rebroadcast happens every 30-60 seconds, so we wait
+    # for the RBF'd CPFP to be logged (wait up to 90 seconds)
+    l1.daemon.wait_for_log(r'Rebroadcasting zero-fee commitment .* with RBF.*d CPFP \(feerate (\d+)\)', timeout=90)
+
+    # Get the new feerate from the RBF log
+    for log in reversed(l1.daemon.logs):
+        match = re.search(r'Rebroadcasting zero-fee commitment .* with RBF.*d CPFP \(feerate (\d+)\)', log)
+        if match:
+            rbf_feerate = int(match.group(1))
+            break
+    else:
+        pytest.fail("Could not find RBF feerate in logs")
+
+    print(f"RBF'd CPFP feerate: {rbf_feerate}")
+
+    # Verify the RBF feerate is higher than initial (at least 25% bump)
+    assert rbf_feerate > initial_feerate, \
+        f"RBF feerate ({rbf_feerate}) should be higher than initial ({initial_feerate})"
+
+    # Calculate expected minimum bump (25% increase or at least 250 sat/kw)
+    expected_min_bump = max(initial_feerate + initial_feerate // 4, initial_feerate + 250)
+    assert rbf_feerate >= expected_min_bump, \
+        f"RBF feerate ({rbf_feerate}) should be at least {expected_min_bump}"
+
+    # Now mine blocks to confirm the package
+    bitcoind.generate_block(1, wait_for_mempool=1)
+
+    # Wait for channel to go onchain
+    l1.daemon.wait_for_log(' to ONCHAIN')
+
+    # Verify funds are eventually recovered
+    bitcoind.generate_block(6)  # CSV delay
+    l1.daemon.wait_for_log('sendrawtx exit 0')  # Sweep tx
+    bitcoind.generate_block(100, wait_for_mempool=1)
+    l1.daemon.wait_for_log('onchaind complete, forgetting peer')
+
+    # Verify no channels remain
+    assert l1.rpc.listpeerchannels()['channels'] == []
+
+    print("test_zero_fee_commitments_cpfp_rbf PASSED")
+    print(f"  - Initial CPFP feerate: {initial_feerate}")
+    print(f"  - RBF'd CPFP feerate: {rbf_feerate}")
+    print(f"  - Feerate increase: {((rbf_feerate - initial_feerate) / initial_feerate * 100):.1f}%")
+    print("  - Package eventually mined and funds recovered")

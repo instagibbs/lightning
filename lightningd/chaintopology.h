@@ -26,6 +26,14 @@ struct outgoing_tx {
 			 bool success, const char *err, void *arg);
 	bool (*refresh)(struct channel *, const struct bitcoin_tx **, void *arg);
 	void *cbarg;
+
+	/* BOLT PR #1228: For zero-fee commitment CPFP RBF support.
+	 * If this is a zero-fee commitment tx, we track the CPFP info
+	 * so we can RBF it with a higher fee if needed. */
+	bool is_zero_fee_commit;
+	int p2a_output_idx;  /* Index of P2A output in commitment tx */
+	struct amount_sat p2a_amount;  /* Amount of P2A anchor */
+	u32 cpfp_feerate;  /* Current CPFP feerate (for RBF bumping) */
 };
 
 struct block {

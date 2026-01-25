@@ -133,6 +133,11 @@ struct tx_rebroadcast {
 /* Timer recursion: declare now. */
 static void rebroadcast_txs(struct chain_topology *topo);
 
+/* Forward declaration for zero-fee commitment RBF rebroadcast */
+static bool rebroadcast_zero_fee_commitment(struct chain_topology *topo,
+					    struct outgoing_tx *otx,
+					    struct tx_rebroadcast *txrb);
+
 /* We are last.  Refresh timer, and free refcnt */
 static void rebroadcasts_complete(struct chain_topology *topo,
 				  size_t *num_rebroadcast_remaining)
@@ -197,12 +202,30 @@ static void rebroadcast_txs(struct chain_topology *topo)
 		txrb->num_rebroadcast_remaining = num_rebroadcast_remaining;
 		(*num_rebroadcast_remaining)++;
 		tal_add_destructor2(txrb, destroy_tx_broadcast, topo);
-		bitcoind_sendrawtx(txrb, topo->bitcoind,
-				   tal_strdup_or_null(tmpctx, otx->cmd_id),
-				   fmt_bitcoin_tx(tmpctx, otx->tx),
-				   otx->allowhighfees,
-				   rebroadcast_done,
-				   txrb);
+
+		/* BOLT PR #1228: Zero-fee commitment txs need package relay with CPFP.
+		 * On rebroadcast, we RBF the CPFP child with a higher feerate. */
+		if (otx->is_zero_fee_commit
+		    && otx->p2a_output_idx >= 0
+		    && bitcoind_has_method(topo->bitcoind, "submitpackage")) {
+			if (!rebroadcast_zero_fee_commitment(topo, otx, txrb)) {
+				/* If CPFP creation failed, fall through to normal rebroadcast
+				 * which will fail but keeps the tx in the rebroadcast queue */
+				bitcoind_sendrawtx(txrb, topo->bitcoind,
+						   tal_strdup_or_null(tmpctx, otx->cmd_id),
+						   fmt_bitcoin_tx(tmpctx, otx->tx),
+						   otx->allowhighfees,
+						   rebroadcast_done,
+						   txrb);
+			}
+		} else {
+			bitcoind_sendrawtx(txrb, topo->bitcoind,
+					   tal_strdup_or_null(tmpctx, otx->cmd_id),
+					   fmt_bitcoin_tx(tmpctx, otx->tx),
+					   otx->allowhighfees,
+					   rebroadcast_done,
+					   txrb);
+		}
 	}
 	tal_free(cleanup_ctx);
 
@@ -413,6 +436,80 @@ static void package_broadcast_done(struct bitcoind *bitcoind,
 	tal_add_destructor2(otx, destroy_outgoing_tx, bitcoind->ld->topology);
 }
 
+/* Callback for zero-fee commitment package rebroadcast.
+ * For RBF, we don't need to re-add to the outgoing_txs map since it's already there. */
+static void package_rebroadcast_done(struct bitcoind *bitcoind,
+				     bool success, const char *msg,
+				     struct tx_rebroadcast *txrb)
+{
+	if (!success) {
+		/* Log as debug since RBF failures are common (e.g., insufficient fee bump) */
+		log_debug(bitcoind->log,
+			  "Zero-fee commitment package rebroadcast: %s",
+			  msg);
+	}
+
+	/* Last one freed calls rebroadcasts_complete */
+	tal_free(txrb);
+}
+
+/* Rebroadcast a zero-fee commitment tx with an RBF'd CPFP child.
+ * BOLT PR #1228: When rebroadcasting, bump the CPFP feerate by 25% to help
+ * the package get mined if the original feerate was too low. */
+static bool rebroadcast_zero_fee_commitment(struct chain_topology *topo,
+					    struct outgoing_tx *otx,
+					    struct tx_rebroadcast *txrb)
+{
+	struct bitcoin_tx *cpfp_tx;
+	u32 new_feerate;
+	const char **hextxs;
+
+	/* Bump feerate by 25% for RBF, minimum 1 sat/vB increase */
+	new_feerate = otx->cpfp_feerate + (otx->cpfp_feerate / 4);
+	if (new_feerate <= otx->cpfp_feerate)
+		new_feerate = otx->cpfp_feerate + 250;  /* ~1 sat/vB in sat/kw */
+
+	/* Also check current recommended feerate and use it if higher */
+	{
+		u32 recommended = unilateral_feerate(topo, true);
+		if (recommended == 0)
+			recommended = get_feerate_floor(topo);
+		if (recommended > new_feerate)
+			new_feerate = recommended;
+	}
+
+	/* Create new CPFP tx with higher fee */
+	cpfp_tx = create_p2a_cpfp_tx(tmpctx, topo->ld, otx->tx,
+				     &otx->txid, otx->p2a_output_idx,
+				     otx->p2a_amount, new_feerate);
+
+	if (!cpfp_tx) {
+		log_debug(topo->log,
+			  "Cannot create RBF'd CPFP for zero-fee commitment %s "
+			  "(feerate %u -> %u), will retry later",
+			  fmt_bitcoin_txid(tmpctx, &otx->txid),
+			  otx->cpfp_feerate, new_feerate);
+		return false;
+	}
+
+	/* Update stored feerate for next RBF attempt */
+	otx->cpfp_feerate = new_feerate;
+
+	/* Submit as package */
+	hextxs = tal_arr(tmpctx, const char *, 2);
+	hextxs[0] = fmt_bitcoin_tx(hextxs, otx->tx);
+	hextxs[1] = fmt_bitcoin_tx(hextxs, cpfp_tx);
+
+	log_info(topo->log,
+		 "Rebroadcasting zero-fee commitment %s with RBF'd CPFP (feerate %u)",
+		 fmt_bitcoin_txid(tmpctx, &otx->txid), new_feerate);
+
+	bitcoind_submitpackage(txrb, topo->bitcoind,
+			       tal_strdup_or_null(tmpctx, otx->cmd_id),
+			       hextxs, package_rebroadcast_done, txrb);
+	return true;
+}
+
 static void broadcast_done(struct bitcoind *bitcoind,
 			   bool success, const char *msg,
 			   struct outgoing_tx *otx)
@@ -466,6 +563,12 @@ void broadcast_tx_(const tal_t *ctx,
 	if (taken(otx->cbarg))
 		tal_steal(otx, otx->cbarg);
 	otx->cmd_id = tal_strdup_or_null(otx, cmd_id);
+
+	/* Initialize zero-fee CPFP tracking fields */
+	otx->is_zero_fee_commit = false;
+	otx->p2a_output_idx = -1;
+	otx->p2a_amount = AMOUNT_SAT(0);
+	otx->cpfp_feerate = 0;
 
 	/* Note that if the minimum block is N, we broadcast it when
 	 * we have block N-1! */
@@ -524,9 +627,16 @@ void broadcast_tx_(const tal_t *ctx,
 					hextxs[0] = fmt_bitcoin_tx(hextxs, otx->tx);
 					hextxs[1] = fmt_bitcoin_tx(hextxs, cpfp_tx);
 
+					/* Store CPFP info for potential RBF bumping later */
+					otx->is_zero_fee_commit = true;
+					otx->p2a_output_idx = p2a_idx;
+					otx->p2a_amount = p2a_amount;
+					otx->cpfp_feerate = feerate_target;
+
 					log_info(topo->log,
-						 "Broadcasting zero-fee commitment %s with CPFP child via submitpackage",
-						 fmt_bitcoin_txid(tmpctx, &otx->txid));
+						 "Broadcasting zero-fee commitment %s with CPFP child via submitpackage (feerate %u)",
+						 fmt_bitcoin_txid(tmpctx, &otx->txid),
+						 feerate_target);
 
 					bitcoind_submitpackage(otx, topo->bitcoind, otx->cmd_id,
 							       hextxs, package_broadcast_done, otx);
