@@ -230,6 +230,9 @@ struct state {
 	struct short_channel_id local_alias;
 
 	bool dev_accept_any_channel_type;
+
+	/* --dev-force-max-htlcs: bypass 114 cap on zero-fee channels for testing */
+	bool dev_force_max_htlcs;
 };
 
 /* psbt_changeset_get_next - Get next message to send
@@ -2685,9 +2688,11 @@ static void accepter_start(struct state *state, const u8 *oc2_msg)
 
 	/* BOLT PR #1228:
 	 * For `zero_fee_commitments`, max_accepted_htlcs is limited
-	 * to 114 due to v3 transaction 10kvB size constraint. */
+	 * to 114 due to v3 transaction 10kvB size constraint.
+	 * (Bypass for testing with dev_force_max_htlcs) */
 	if (channel_type_has(state->channel_type, OPT_ZERO_FEE_COMMITMENTS)
-	    && tx_state->localconf.max_accepted_htlcs > 114)
+	    && tx_state->localconf.max_accepted_htlcs > 114
+	    && !state->dev_force_max_htlcs)
 		tx_state->localconf.max_accepted_htlcs = 114;
 
 	/* If we have an upfront shutdown script, send it to our peer */
@@ -3017,8 +3022,10 @@ static void opener_start(struct state *state, u8 *msg)
 		state->feerate_per_kw_commitment = 0;
 		/* BOLT PR #1228:
 		 * For `zero_fee_commitments`, max_accepted_htlcs is limited
-		 * to 114 due to v3 transaction 10kvB size constraint. */
-		if (tx_state->localconf.max_accepted_htlcs > 114)
+		 * to 114 due to v3 transaction 10kvB size constraint.
+		 * (Bypass for testing with dev_force_max_htlcs) */
+		if (tx_state->localconf.max_accepted_htlcs > 114
+		    && !state->dev_force_max_htlcs)
 			tx_state->localconf.max_accepted_htlcs = 114;
 	} else if (channel_type_has_anchors(state->channel_type))
 		state->feerate_per_kw_commitment = anchor_feerate;
@@ -4408,7 +4415,8 @@ int main(int argc, char *argv[])
 				    &state->minimum_depth,
 				    &state->require_confirmed_inputs[LOCAL],
 				    &state->local_alias,
-				    &state->dev_accept_any_channel_type)) {
+				    &state->dev_accept_any_channel_type,
+				    &state->dev_force_max_htlcs)) {
 		/*~ Initially we're not associated with a channel, but
 		 * handle_peer_gossip_or_error compares this. */
 		memset(&state->channel_id, 0, sizeof(state->channel_id));
@@ -4473,7 +4481,8 @@ int main(int argc, char *argv[])
 					     &state->channel_type,
 					     &state->require_confirmed_inputs[LOCAL],
 					     &state->require_confirmed_inputs[REMOTE],
-					     &state->local_alias)) {
+					     &state->local_alias,
+					     &state->dev_force_max_htlcs)) {
 
 		bool ok;
 

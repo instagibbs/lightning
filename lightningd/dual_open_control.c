@@ -4211,7 +4211,8 @@ bool peer_start_dualopend(struct peer *peer,
 				    channel->minimum_depth,
 				    peer->ld->config.require_confirmed_inputs,
 				    *channel->alias[LOCAL],
-				    peer->ld->dev_any_channel_type);
+				    peer->ld->dev_any_channel_type,
+				    peer->ld->dev_force_max_htlcs);
 	subd_send_msg(channel->owner, take(msg));
 	return true;
 }
@@ -4337,7 +4338,8 @@ bool peer_restart_dualopend(struct peer *peer,
 				      channel->type,
 				      channel->req_confirmed_ins[LOCAL],
 				      channel->req_confirmed_ins[REMOTE],
-				      *channel->alias[LOCAL]);
+				      *channel->alias[LOCAL],
+				      peer->ld->dev_force_max_htlcs);
 
 	subd_send_msg(channel->owner, take(msg));
 	return true;

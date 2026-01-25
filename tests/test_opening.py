@@ -4207,3 +4207,61 @@ def test_zero_fee_commitments_mutual_close(node_factory, bitcoind):
     print(f"  - No P2A anchor in close tx: VERIFIED")
     print(f"  - l1 final funds: {l1_final_funds}")
     print(f"  - l2 final funds: {l2_final_funds}")
+
+
+@unittest.skipIf(TEST_NETWORK != 'regtest', 'elementsd doesnt yet support PSBT features we need')
+@pytest.mark.openchannel('v2')
+def test_zero_fee_commitments_max_htlcs_rejected(node_factory, bitcoind):
+    """BOLT PR #1228: Verify that max_accepted_htlcs > 114 is rejected for zero-fee channels.
+
+    This is Recommendation #7 from the zero-fee commitments audit plan (section 1.2).
+
+    Security Implication: Exceeding 114 HTLCs creates commitment tx >10kvB,
+    violating v3 relay rules (TRUC).
+
+    Test scenario:
+    1. l1 is configured with --dev-force-max-htlcs to bypass the 114 cap
+    2. l1 (opener) tries to open a zero-fee channel advertising max_accepted_htlcs > 114
+    3. l2 (accepter) MUST reject the channel with an appropriate error
+
+    BOLT PR #1228: The receiving node MUST fail the channel if:
+    - channel_type includes zero_fee_commitments and
+    - max_accepted_htlcs is greater than 114
+    """
+    # l1: Misbehaving node that will send max_accepted_htlcs > 114
+    # Uses dev-force-max-htlcs to bypass the normal 114 cap
+    l1_opts = {
+        'experimental-zero-fee-channels': None,
+        'dev-force-max-htlcs': None,
+        'max-concurrent-htlcs': 200,  # Try to advertise 200 HTLCs
+        'may_fail': True,  # l1 will lose connection when l2 rejects
+    }
+
+    # l2: Normal node that should reject the invalid offer
+    l2_opts = {
+        'experimental-zero-fee-channels': None,
+    }
+
+    l1, l2 = node_factory.get_nodes(2, opts=[l1_opts, l2_opts])
+
+    l1.fundwallet(FUNDAMOUNT * 2)
+    l1.rpc.connect(l2.info['id'], 'localhost', l2.port)
+
+    # l1 attempts to open a zero-fee channel with max_accepted_htlcs > 114
+    # This should fail because l2 will reject the offer
+    with pytest.raises(RpcError) as exc_info:
+        l1.rpc.fundchannel(l2.info['id'], FUNDAMOUNT)
+
+    # Verify the error message indicates rejection due to max_accepted_htlcs
+    # The error should mention "max_accepted_htlcs" and "114" or "too large"
+    error_msg = str(exc_info.value)
+    assert 'max_accepted_htlcs' in error_msg.lower() or 'too large' in error_msg.lower(), \
+        f"Expected error about max_accepted_htlcs, got: {error_msg}"
+
+    # Also check l2's log for the rejection
+    l2.daemon.wait_for_log(r'max_accepted_htlcs.*too large.*zero_fee_commitments', timeout=10)
+
+    print("test_zero_fee_commitments_max_htlcs_rejected PASSED")
+    print("  - l1 attempted to open channel with max_accepted_htlcs > 114")
+    print("  - l2 correctly rejected the channel offer")
+    print(f"  - Error message: {error_msg[:100]}...")
