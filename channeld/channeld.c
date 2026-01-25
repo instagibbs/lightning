@@ -740,11 +740,14 @@ static void handle_peer_feechange(struct peer *peer, const u8 *msg)
 	u32 feerate;
 
 	/* BOLT PR #1228:
-	 * For zero-fee-commitment channels, update_fee is not used.
-	 * Receiving one is a protocol violation. */
+	 * - if `channel_type` includes `zero_fee_commitments`:
+	 *   - MUST ignore the message
+	 *   - SHOULD send a `warning`
+	 *   - SHOULD close the connection
+	 */
 	if (channel_has(peer->channel, OPT_ZERO_FEE_COMMITMENTS)) {
-		peer_failed_err(peer->pps, &peer->channel_id,
-				"update_fee not allowed on zero-fee-commitment channel");
+		peer_failed_warn(peer->pps, &peer->channel_id,
+				 "update_fee not allowed on zero-fee-commitment channel");
 	}
 
 	if (!fromwire_update_fee(msg, &channel_id, &feerate)) {
