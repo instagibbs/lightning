@@ -4422,3 +4422,60 @@ def test_zero_fee_commitments_low_wallet_balance(node_factory, bitcoind):
     print("  - Verified graceful degradation when wallet has no UTXOs for CPFP")
     print("  - Verified appropriate log messages for CPFP failure")
     print("  - Verified fallback to sendrawtx fails gracefully for 0-fee tx")
+
+
+@unittest.skipIf(TEST_NETWORK != 'regtest', 'elementsd doesnt yet support PSBT features we need')
+@pytest.mark.openchannel('v2')
+def test_zero_fee_commitments_nonzero_feerate_rejected(node_factory, bitcoind):
+    """BOLT PR #1228: Verify that commitment_feerate_perkw != 0 is rejected for zero-fee channels.
+
+    This is Recommendation #8 from the zero-fee commitments audit plan (section 1.3).
+
+    Security Implication: A non-zero commitment feerate on a zero-fee channel would
+    cause protocol desync between peers, as the commitment transaction calculations
+    would differ.
+
+    Test scenario:
+    1. l1 is configured with --dev-force-nonzero-feerate to bypass the zero feerate check
+    2. l1 (opener) tries to open a zero-fee channel with commitment_feerate_perkw != 0
+    3. l2 (accepter) MUST fail the channel with an appropriate error (tx_abort)
+
+    BOLT PR #1228: The receiving node MUST fail the channel if:
+    - channel_type includes zero_fee_commitments and
+    - commitment_feerate_perkw is not 0
+    """
+    # l1: Misbehaving node that will send non-zero commitment_feerate_perkw
+    # Uses dev-force-nonzero-feerate to bypass the normal zero feerate setting
+    l1_opts = {
+        'experimental-zero-fee-channels': None,
+        'dev-force-nonzero-feerate': None,
+        'may_fail': True,  # l1 will lose connection when l2 rejects
+    }
+
+    # l2: Normal node that should reject the invalid feerate
+    l2_opts = {
+        'experimental-zero-fee-channels': None,
+    }
+
+    l1, l2 = node_factory.get_nodes(2, opts=[l1_opts, l2_opts])
+
+    l1.fundwallet(FUNDAMOUNT * 2)
+    l1.rpc.connect(l2.info['id'], 'localhost', l2.port)
+
+    # l1 attempts to open a zero-fee channel with non-zero commitment_feerate_perkw
+    # This should fail because l2 will reject the offer with tx_abort
+    with pytest.raises(RpcError) as exc_info:
+        l1.rpc.fundchannel(l2.info['id'], FUNDAMOUNT)
+
+    # Verify the error message indicates rejection due to non-zero feerate
+    error_msg = str(exc_info.value)
+    assert 'feerate' in error_msg.lower() or 'not 0' in error_msg.lower() or 'zero_fee' in error_msg.lower(), \
+        f"Expected error about feerate on zero_fee channel, got: {error_msg}"
+
+    # Also check l2's log for the rejection
+    l2.daemon.wait_for_log(r'zero_fee_commitments.*commitment_feerate.*not 0', timeout=10)
+
+    print("test_zero_fee_commitments_nonzero_feerate_rejected PASSED")
+    print("  - l1 attempted to open channel with commitment_feerate_perkw != 0")
+    print("  - l2 correctly rejected the channel offer with tx_abort")
+    print(f"  - Error message: {error_msg[:100]}...")

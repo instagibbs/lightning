@@ -351,6 +351,9 @@ struct lightningd {
 	/* Tell dualopend to send max_accepted_htlcs > 114 on zero-fee channels (for testing). */
 	bool dev_force_max_htlcs;
 
+	/* Tell dualopend to send non-zero commitment_feerate_perkw on zero-fee channels (for testing). */
+	bool dev_force_nonzero_feerate;
+
 	/* Tell channeld not to worry about pings. */
 	bool dev_no_ping_timer;
 

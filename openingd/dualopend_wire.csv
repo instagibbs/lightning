@@ -33,6 +33,7 @@ msgdata,dualopend_init,require_confirmed_inputs,bool,
 msgdata,dualopend_init,local_alias,short_channel_id,
 msgdata,dualopend_init,dev_accept_any_channel_type,bool,
 msgdata,dualopend_init,dev_force_max_htlcs,bool,
+msgdata,dualopend_init,dev_force_nonzero_feerate,bool,
 
 # master-dualopend: peer has reconnected
 msgtype,dualopend_reinit,7001
@@ -82,6 +83,7 @@ msgdata,dualopend_reinit,we_require_confirmed_inputs,bool,
 msgdata,dualopend_reinit,they_require_confirmed_inputs,bool,
 msgdata,dualopend_reinit,local_alias,short_channel_id,
 msgdata,dualopend_reinit,dev_force_max_htlcs,bool,
+msgdata,dualopend_reinit,dev_force_nonzero_feerate,bool,
 
 # dualopend->master: they offered channel, should we continue?
 msgtype,dualopend_got_offer,7005

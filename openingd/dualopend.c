@@ -233,6 +233,9 @@ struct state {
 
 	/* --dev-force-max-htlcs: bypass 114 cap on zero-fee channels for testing */
 	bool dev_force_max_htlcs;
+
+	/* --dev-force-nonzero-feerate: bypass zero feerate on zero-fee channels for testing */
+	bool dev_force_nonzero_feerate;
 };
 
 /* psbt_changeset_get_next - Get next message to send
@@ -3017,9 +3020,13 @@ static void opener_start(struct state *state, u8 *msg)
 
 	/* Given channel type, which feerate do we use?
 	 * BOLT PR #1228:
-	 * For `zero_fee_commitments`, commitment_feerate_perkw MUST be 0. */
+	 * For `zero_fee_commitments`, commitment_feerate_perkw MUST be 0.
+	 * (Bypass for testing with dev_force_nonzero_feerate) */
 	if (channel_type_has(state->channel_type, OPT_ZERO_FEE_COMMITMENTS)) {
-		state->feerate_per_kw_commitment = 0;
+		if (!state->dev_force_nonzero_feerate)
+			state->feerate_per_kw_commitment = 0;
+		else
+			state->feerate_per_kw_commitment = anchor_feerate;
 		/* BOLT PR #1228:
 		 * For `zero_fee_commitments`, max_accepted_htlcs is limited
 		 * to 114 due to v3 transaction 10kvB size constraint.
@@ -4416,7 +4423,8 @@ int main(int argc, char *argv[])
 				    &state->require_confirmed_inputs[LOCAL],
 				    &state->local_alias,
 				    &state->dev_accept_any_channel_type,
-				    &state->dev_force_max_htlcs)) {
+				    &state->dev_force_max_htlcs,
+				    &state->dev_force_nonzero_feerate)) {
 		/*~ Initially we're not associated with a channel, but
 		 * handle_peer_gossip_or_error compares this. */
 		memset(&state->channel_id, 0, sizeof(state->channel_id));
@@ -4482,7 +4490,8 @@ int main(int argc, char *argv[])
 					     &state->require_confirmed_inputs[LOCAL],
 					     &state->require_confirmed_inputs[REMOTE],
 					     &state->local_alias,
-					     &state->dev_force_max_htlcs)) {
+					     &state->dev_force_max_htlcs,
+					     &state->dev_force_nonzero_feerate)) {
 
 		bool ok;
 

@@ -878,6 +878,10 @@ static void dev_register_opts(struct lightningd *ld)
 		     opt_set_bool,
 		     &ld->dev_force_max_htlcs,
 		     "Send max_accepted_htlcs > 114 on zero-fee channels (for testing)");
+	clnopt_noarg("--dev-force-nonzero-feerate", OPT_DEV,
+		     opt_set_bool,
+		     &ld->dev_force_nonzero_feerate,
+		     "Send non-zero commitment_feerate_perkw on zero-fee channels (for testing)");
 	clnopt_noarg("--dev-no-ping-timer", OPT_DEV,
 		     opt_set_bool,
 		     &ld->dev_no_ping_timer,

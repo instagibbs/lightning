@@ -143,6 +143,7 @@ static struct lightningd *new_lightningd(const tal_t *ctx)
 	ld->dev_disable_commit = -1;
 	ld->dev_force_update_fee = false;
 	ld->dev_force_max_htlcs = false;
+	ld->dev_force_nonzero_feerate = false;
 	ld->dev_no_ping_timer = false;
 	ld->dev_any_channel_type = false;
 	ld->dev_allow_shutdown_destination_change = false;
