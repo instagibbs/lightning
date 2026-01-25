@@ -4062,3 +4062,148 @@ def test_zero_fee_commitments_htlc_limit(node_factory, bitcoind, executor):
     # Test has verified all objectives - cleanup not required for test validity
     # The pending HTLCs will be cleaned up by test framework shutdown
     print("test_zero_fee_commitments_htlc_limit PASSED: All parts verified successfully")
+
+
+@unittest.skipIf(TEST_NETWORK != 'regtest', 'elementsd doesnt yet support PSBT features we need')
+@pytest.mark.openchannel('v2')
+def test_zero_fee_commitments_mutual_close(node_factory, bitcoind):
+    """BOLT PR #1228: Test cooperative (mutual) close of zero-fee commitment channel.
+
+    Verify that mutual close works correctly for zero-fee channels:
+    1. Open zero-fee channel
+    2. Make some payments to move funds
+    3. Initiate cooperative close (not force close)
+    4. Verify close_tx version is 2 (standard, NOT v3)
+    5. Verify funds returned to both parties
+    6. Verify no CPFP needed (close tx has embedded fee)
+    7. Verify no P2A anchor in mutual close tx
+
+    This is Recommendation 12 from the zero-fee commitments audit plan (section 4.2).
+    """
+    STATIC_REMOTEKEY = 12
+    ANCHORS_ZERO_FEE_HTLC_TX = 22
+    ZERO_FEE_COMMITMENTS = 40
+
+    # Create two nodes with zero-fee channels enabled
+    opts = {'experimental-zero-fee-channels': None}
+    l1, l2 = node_factory.get_nodes(2, opts=opts)
+
+    # Fund l1's wallet
+    l1.fundwallet(FUNDAMOUNT * 2)
+
+    # Record initial wallet balance
+    l1_initial_funds = Millisatoshi(sum([int(o['amount_msat']) for o in l1.rpc.listfunds()['outputs']]))
+
+    l1.connect(l2)
+
+    # Open a zero-fee channel
+    ret = l1.rpc.fundchannel(l2.info['id'], FUNDAMOUNT)
+    expected_bits = [STATIC_REMOTEKEY, ANCHORS_ZERO_FEE_HTLC_TX, ZERO_FEE_COMMITMENTS]
+    assert ret['channel_type']['bits'] == expected_bits
+    assert 'zero_fee_commitments/even' in ret['channel_type']['names']
+
+    # Confirm funding and wait for channel to be active
+    bitcoind.generate_block(6, wait_for_mempool=1)
+    l1.daemon.wait_for_log('to CHANNELD_NORMAL')
+    l2.daemon.wait_for_log('to CHANNELD_NORMAL')
+
+    # Make a payment from l1 to l2 to move some funds
+    # This ensures both parties have outputs in the close tx
+    payment_amount = 100000000  # 0.001 BTC in msat
+    inv = l2.rpc.invoice(payment_amount, 'test_mutual_close', 'test')['bolt11']
+    l1.rpc.pay(inv)
+
+    # Wait for HTLCs to resolve
+    wait_for(lambda: only_one(l1.rpc.listpeerchannels()['channels'])['htlcs'] == [])
+    wait_for(lambda: only_one(l2.rpc.listpeerchannels()['channels'])['htlcs'] == [])
+
+    # Initiate cooperative close (l2 is still online, so this will be mutual)
+    l1.rpc.close(l2.info['id'])
+
+    # Wait for both nodes to enter closing negotiation states
+    l1.daemon.wait_for_log(' to CHANNELD_SHUTTING_DOWN')
+    l2.daemon.wait_for_log(' to CHANNELD_SHUTTING_DOWN')
+
+    l1.daemon.wait_for_log(' to CLOSINGD_SIGEXCHANGE')
+    l2.daemon.wait_for_log(' to CLOSINGD_SIGEXCHANGE')
+
+    # Wait for close tx to be broadcast
+    l1.daemon.wait_for_log('sendrawtx exit 0')
+
+    # Get the close transaction from mempool
+    assert bitcoind.rpc.getmempoolinfo()['size'] == 1, "Expected exactly one tx in mempool (the close tx)"
+
+    closetxid = only_one(bitcoind.rpc.getrawmempool(False))
+    close_tx = bitcoind.rpc.getrawtransaction(closetxid, True)
+
+    # CRITICAL CHECK: Verify close tx version is 2 (standard), NOT v3
+    # Per BOLT PR #1228 section 4.2 audit: mutual close transactions must be v2
+    # because they embed fees (unlike v3 commitment txs which are 0-fee)
+    assert close_tx['version'] == 2, \
+        f"Mutual close tx should be version 2, got {close_tx['version']}"
+
+    # Verify NO P2A anchor in mutual close tx
+    # P2A script: OP_1 <0x4e73> -> scriptPubKey: "51024e73"
+    P2A_SCRIPTPUBKEY = "51024e73"
+    for vout in close_tx['vout']:
+        assert vout['scriptPubKey']['hex'] != P2A_SCRIPTPUBKEY, \
+            "Mutual close tx should NOT have P2A anchor output"
+
+    # Verify exactly 2 outputs (one for each party)
+    # Note: If one party's balance is below dust, there will be only 1 output
+    # In this test we made a payment so both should have outputs
+    assert len(close_tx['vout']) == 2, \
+        f"Expected 2 outputs in mutual close tx (one per party), got {len(close_tx['vout'])}"
+
+    # Verify the close tx has an embedded fee (not 0-fee)
+    # Calculate fee: sum(inputs) - sum(outputs)
+    total_input = 0
+    for vin in close_tx['vin']:
+        prev_tx = bitcoind.rpc.getrawtransaction(vin['txid'], True)
+        total_input += int(prev_tx['vout'][vin['vout']]['value'] * 10**8)  # Convert to sats
+
+    total_output = sum(int(vout['value'] * 10**8) for vout in close_tx['vout'])
+    close_tx_fee = total_input - total_output
+
+    assert close_tx_fee > 0, \
+        f"Mutual close tx should have non-zero fee, got {close_tx_fee} sats"
+
+    # Confirm the close transaction
+    bitcoind.generate_block(1)
+
+    # Wait for both nodes to detect the confirmed close
+    l1.daemon.wait_for_log('Owning output.* txid %s.* CONFIRMED' % closetxid)
+    l2.daemon.wait_for_log('Owning output.* txid %s.* CONFIRMED' % closetxid)
+
+    # Verify funds are back in both wallets
+    assert closetxid in set([o['txid'] for o in l1.rpc.listfunds()['outputs']]), \
+        "l1 should have received close tx output"
+    assert closetxid in set([o['txid'] for o in l2.rpc.listfunds()['outputs']]), \
+        "l2 should have received close tx output"
+
+    # Wait for onchaind to track the mutual close
+    wait_for(lambda: 'ONCHAIN:Tracking mutual close transaction' in
+             str(only_one(l1.rpc.listpeerchannels(l2.info['id'])['channels'])['status']))
+
+    # Generate blocks to forget the channel
+    bitcoind.generate_block(100)
+    wait_for(lambda: l1.rpc.listpeerchannels()['channels'] == [])
+    wait_for(lambda: l2.rpc.listpeerchannels()['channels'] == [])
+
+    # Final verification: check total funds recovered make sense
+    l1_final_funds = Millisatoshi(sum([int(o['amount_msat']) for o in l1.rpc.listfunds()['outputs']]))
+    l2_final_funds = Millisatoshi(sum([int(o['amount_msat']) for o in l2.rpc.listfunds()['outputs']]))
+
+    # l1 should have: initial - channel_amount + (channel_amount - payment - close_fee)
+    # l2 should have: payment amount
+    # Allow some tolerance for fee variance
+    assert l2_final_funds >= Millisatoshi(payment_amount) - Millisatoshi(10000000), \
+        f"l2 should have received approximately {payment_amount} msat, got {l2_final_funds}"
+
+    print("test_zero_fee_commitments_mutual_close PASSED: All checks verified")
+    print(f"  - Close tx version: {close_tx['version']} (expected 2)")
+    print(f"  - Close tx outputs: {len(close_tx['vout'])} (expected 2)")
+    print(f"  - Close tx fee: {close_tx_fee} sats (expected > 0)")
+    print(f"  - No P2A anchor in close tx: VERIFIED")
+    print(f"  - l1 final funds: {l1_final_funds}")
+    print(f"  - l2 final funds: {l2_final_funds}")
