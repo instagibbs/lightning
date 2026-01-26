@@ -167,11 +167,10 @@ u32 marginal_feerate(u32 current_feerate)
 {
 	const u32 minfeerate = 253, maxfeerate = 45000;
 
-#ifdef TEST_ALLOW_ZERO_FEERATE
-	/* The BOLT test for commitment transactions does this. */
+	/* Zero-fee commitment channels (option_zero_fee_commitments) have
+	 * feerate=0. Return 0 since there's no fee spike buffer needed. */
 	if (current_feerate == 0)
 		return 0;
-#endif
 	assert(current_feerate >= minfeerate);
 	if (current_feerate > maxfeerate)
 		return current_feerate * 1.1;
