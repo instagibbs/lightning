@@ -159,9 +159,24 @@ int main(int argc, char *argv[])
 			"static_remotekey/even");
 	assert_names_eq(channel_type_name(tmpctx, channel_type_anchors_zero_fee_htlc(tmpctx)),
 			"static_remotekey/even anchors/even");
-	/* BOLT PR #1228: Zero-fee commitment channels */
+
+	/* BOLT PR #1228: Zero-fee commitment channels.
+	 * The channel_type only contains the zero_fee_commitments bit;
+	 * static_remotekey and anchors behavior are IMPLIED. */
 	assert_names_eq(channel_type_name(tmpctx, channel_type_zero_fee_commitments(tmpctx)),
-			"static_remotekey/even anchors/even zero_fee_commitments/even");
+			"zero_fee_commitments/even");
+
+	/* Test that channel_type_has returns true for implied features */
+	struct channel_type *zfc = channel_type_zero_fee_commitments(tmpctx);
+	/* Zero-fee implies static_remotekey behavior */
+	assert(channel_type_has(zfc, OPT_STATIC_REMOTEKEY));
+	/* Zero-fee has the zero_fee_commitments bit explicitly */
+	assert(channel_type_has(zfc, OPT_ZERO_FEE_COMMITMENTS));
+	/* Zero-fee has anchor behavior */
+	assert(channel_type_has_anchors(zfc));
+	/* But zero-fee does NOT have the anchors bit explicitly */
+	assert(!feature_offered(zfc->features, OPT_ANCHORS_ZERO_FEE_HTLC_TX));
+	assert(!feature_offered(zfc->features, OPT_STATIC_REMOTEKEY));
 
 	assert(calc_channel_state_max() == CHANNEL_STATE_MAX);
 

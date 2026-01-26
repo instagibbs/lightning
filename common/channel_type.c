@@ -75,7 +75,8 @@ struct channel_type *channel_type_anchors_zero_fee_htlc(const tal_t *ctx)
 
 /* BOLT PR #1228: Zero-fee commitment channels
  * This channel type uses v3/TRUC transactions and P2A anchors.
- * It includes anchors_zero_fee_htlc_tx and static_remotekey as prerequisites.
+ * The channel_type only contains the zero_fee_commitments bit;
+ * static_remotekey behavior is implied.
  */
 struct channel_type *channel_type_zero_fee_commitments(const tal_t *ctx)
 {
@@ -83,22 +84,26 @@ struct channel_type *channel_type_zero_fee_commitments(const tal_t *ctx)
 
 	set_feature_bit(&type->features,
 			COMPULSORY_FEATURE(OPT_ZERO_FEE_COMMITMENTS));
-	set_feature_bit(&type->features,
-			COMPULSORY_FEATURE(OPT_ANCHORS_ZERO_FEE_HTLC_TX));
-	set_feature_bit(&type->features,
-			COMPULSORY_FEATURE(OPT_STATIC_REMOTEKEY));
 	return type;
 }
 
 bool channel_type_has(const struct channel_type *type, int feature)
 {
+	/* BOLT PR #1228: zero_fee_commitments implies static_remotekey
+	 * and anchors behavior, even though those bits aren't in the
+	 * channel_type (for Eclair compatibility). */
+	if (feature == OPT_STATIC_REMOTEKEY
+	    && feature_offered(type->features, OPT_ZERO_FEE_COMMITMENTS))
+		return true;
 	return feature_offered(type->features, feature);
 }
 
 bool channel_type_has_anchors(const struct channel_type *type)
 {
+	/* BOLT PR #1228: zero_fee_commitments uses P2A anchors */
 	return feature_offered(type->features, OPT_ANCHOR_OUTPUTS_DEPRECATED)
-		|| feature_offered(type->features, OPT_ANCHORS_ZERO_FEE_HTLC_TX);
+		|| feature_offered(type->features, OPT_ANCHORS_ZERO_FEE_HTLC_TX)
+		|| feature_offered(type->features, OPT_ZERO_FEE_COMMITMENTS);
 }
 
 bool channel_type_eq(const struct channel_type *a,
