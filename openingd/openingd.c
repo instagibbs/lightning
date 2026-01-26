@@ -309,8 +309,11 @@ static u8 *funder_channel_start(struct state *state, u8 channel_flags,
 		channel_type_set_scid_alias(state->channel_type);
 	}
 
-	/* Which feerate do we use?  (We can lowball fees if using anchors!) */
-	if (channel_type_has_anchors(state->channel_type)) {
+	/* BOLT PR #1228: Zero-fee channels use feerate=0 */
+	if (channel_type_has(state->channel_type, OPT_ZERO_FEE_COMMITMENTS)) {
+		state->feerate_per_kw = 0;
+	} else if (channel_type_has_anchors(state->channel_type)) {
+		/* Which feerate do we use?  (We can lowball fees if using anchors!) */
 		state->feerate_per_kw = anchor_feerate;
 	} else {
 		state->feerate_per_kw = nonanchor_feerate;
@@ -968,15 +971,19 @@ static u8 *fundee_channel(struct state *state, const u8 *open_channel_msg)
 	 *...
 	 *  - it considers `feerate_per_kw` too small for timely processing or
 	 *    unreasonably large.
+	 *
+	 * BOLT PR #1228: Zero-fee channels send feerate=0, which is valid.
 	 */
-	if (state->feerate_per_kw < state->min_feerate) {
+	if (!channel_type_has(state->channel_type, OPT_ZERO_FEE_COMMITMENTS)
+	    && state->feerate_per_kw < state->min_feerate) {
 		negotiation_failed(state,
 				   "feerate_per_kw %u below minimum %u",
 				   state->feerate_per_kw, state->min_feerate);
 		return NULL;
 	}
 
-	if (state->feerate_per_kw > state->max_feerate) {
+	if (!channel_type_has(state->channel_type, OPT_ZERO_FEE_COMMITMENTS)
+	    && state->feerate_per_kw > state->max_feerate) {
 		negotiation_failed(state,
 				   "feerate_per_kw %u above maximum %u",
 				   state->feerate_per_kw, state->max_feerate);
