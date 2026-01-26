@@ -30,6 +30,8 @@ msgdata,openingd_init,dev_temporary_channel_id,?byte,32
 # reasons, but some implementations and users keep asking for it.
 msgdata,openingd_init,allowdustreserve,bool,
 msgdata,openingd_init,dev_accept_any_channel_type,bool,
+# Allow sending max_accepted_htlcs > 114 for zero_fee_commitments testing
+msgdata,openingd_init,dev_force_max_htlcs,bool,
 
 # Openingd->master: they offered channel, should we continue?
 msgtype,openingd_got_offer,6005

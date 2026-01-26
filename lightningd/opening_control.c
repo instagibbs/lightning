@@ -1003,7 +1003,8 @@ bool peer_start_openingd(struct peer *peer, struct peer_fd *peer_fd)
 				   minrate, maxrate,
 				   peer->ld->dev_force_tmp_channel_id,
 				   peer->ld->config.allowdustreserve,
-				   peer->ld->dev_any_channel_type);
+				   peer->ld->dev_any_channel_type,
+				   peer->ld->dev_force_max_htlcs);
 	subd_send_msg(uc->open_daemon, take(msg));
 	return true;
 }

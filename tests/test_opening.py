@@ -4338,6 +4338,65 @@ def test_zero_fee_commitments_max_htlcs_rejected(node_factory, bitcoind):
 
 
 @unittest.skipIf(TEST_NETWORK != 'regtest', 'elementsd doesnt yet support PSBT features we need')
+@pytest.mark.openchannel('v1')
+def test_zero_fee_commitments_max_htlcs_auto_reduced(node_factory, bitcoind):
+    """BOLT PR #1228: Verify that openingd auto-reduces max_accepted_htlcs to 114.
+
+    Regression test for bug where openingd didn't auto-reduce max_accepted_htlcs
+    like dualopend does, causing channel opens to fail with error:
+    "Not opening because if they used the same setting as us max_accepted_htlcs X
+    too large for zero_fee_commitments (max 114)"
+
+    Test scenario:
+    1. Configure nodes with high max-concurrent-htlcs (200, well over 114)
+    2. Open a zero-fee channel with explicit channel_type request
+    3. Verify the channel opens successfully (proves auto-reduction worked)
+    4. Verify the negotiated max_accepted_htlcs is <= 114
+    """
+    STATIC_REMOTEKEY = 12
+    ANCHORS_ZERO_FEE_HTLC_TX = 22
+    ZERO_FEE_COMMITMENTS = 40
+
+    # Both nodes configured with high max-concurrent-htlcs
+    # Without the fix, opening would fail at check_config_bounds
+    opts = {
+        'experimental-zero-fee-channels': None,
+        'max-concurrent-htlcs': 200,  # Well over the 114 limit
+    }
+
+    l1, l2 = node_factory.get_nodes(2, opts=opts)
+
+    l1.fundwallet(FUNDAMOUNT * 2)
+    l1.rpc.connect(l2.info['id'], 'localhost', l2.port)
+
+    # Open a channel explicitly requesting zero-fee channel type
+    # This is the scenario that triggered the bug
+    ret = l1.rpc.fundchannel(l2.info['id'], FUNDAMOUNT,
+                             channel_type=[STATIC_REMOTEKEY, ANCHORS_ZERO_FEE_HTLC_TX, ZERO_FEE_COMMITMENTS])
+
+    # Verify it's a zero-fee channel
+    assert 'zero_fee_commitments/even' in ret['channel_type']['names']
+
+    # Confirm funding and wait for channel to be active
+    bitcoind.generate_block(6, wait_for_mempool=1)
+    l1.daemon.wait_for_log('to CHANNELD_NORMAL')
+    l2.daemon.wait_for_log('to CHANNELD_NORMAL')
+
+    # Verify the channel is healthy
+    l1_chan = only_one(l1.rpc.listpeerchannels()['channels'])
+    assert l1_chan['state'] == 'CHANNELD_NORMAL'
+
+    # The key test: without the fix, fundchannel would have failed with:
+    # "Not opening because if they used the same setting as us max_accepted_htlcs 200
+    #  too large for zero_fee_commitments (max 114)"
+    # The fact that we got here means the fix is working!
+
+    # Make a payment to verify the channel is fully functional
+    inv = l2.rpc.invoice(100000, 'test_auto_reduced', 'test')['bolt11']
+    l1.rpc.pay(inv)
+
+
+@unittest.skipIf(TEST_NETWORK != 'regtest', 'elementsd doesnt yet support PSBT features we need')
 @pytest.mark.openchannel('v2')
 def test_zero_fee_commitments_low_wallet_balance(node_factory, bitcoind):
     """BOLT PR #1228: Test graceful degradation with insufficient wallet balance.

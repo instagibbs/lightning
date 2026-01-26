@@ -101,6 +101,9 @@ struct state {
 	bool allowdustreserve;
 
 	bool dev_accept_any_channel_type;
+
+	/* Allow max_accepted_htlcs > 114 for zero_fee_commitments testing */
+	bool dev_force_max_htlcs;
 };
 
 /*~ If we can't agree on parameters, we fail to open the channel.
@@ -312,6 +315,15 @@ static u8 *funder_channel_start(struct state *state, u8 channel_flags,
 	} else {
 		state->feerate_per_kw = nonanchor_feerate;
 	}
+
+	/* BOLT PR #1228:
+	 * For `zero_fee_commitments`, max_accepted_htlcs is limited
+	 * to 114 due to v3 transaction 10kvB size constraint.
+	 * (Bypass for testing with dev_force_max_htlcs) */
+	if (channel_type_has(state->channel_type, OPT_ZERO_FEE_COMMITMENTS)
+	    && state->localconf.max_accepted_htlcs > 114
+	    && !state->dev_force_max_htlcs)
+		state->localconf.max_accepted_htlcs = 114;
 
 	/* If they use the same settings as us, would we fail?  If so, do that now. */
 	if (!check_config_bounds(tmpctx, state->funding_sats,
@@ -1070,6 +1082,15 @@ static u8 *fundee_channel(struct state *state, const u8 *open_channel_msg)
 				     *reserve);
 	}
 
+	/* BOLT PR #1228:
+	 * For `zero_fee_commitments`, max_accepted_htlcs is limited
+	 * to 114 due to v3 transaction 10kvB size constraint.
+	 * (Bypass for testing with dev_force_max_htlcs) */
+	if (channel_type_has(state->channel_type, OPT_ZERO_FEE_COMMITMENTS)
+	    && state->localconf.max_accepted_htlcs > 114
+	    && !state->dev_force_max_htlcs)
+		state->localconf.max_accepted_htlcs = 114;
+
 	/* OK, we accept! */
 	accept_tlvs = tlv_accept_channel_tlvs_new(tmpctx);
 	accept_tlvs->upfront_shutdown_script
@@ -1461,7 +1482,8 @@ int main(int argc, char *argv[])
 				    &state->min_feerate, &state->max_feerate,
 				    &state->dev_force_tmp_channel_id,
 				    &state->allowdustreserve,
-				    &state->dev_accept_any_channel_type))
+				    &state->dev_accept_any_channel_type,
+				    &state->dev_force_max_htlcs))
 		master_badmsg(WIRE_OPENINGD_INIT, msg);
 
 	/* 3 == peer, 4 = hsmd */
