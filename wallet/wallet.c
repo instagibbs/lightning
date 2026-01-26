@@ -643,8 +643,10 @@ static u32 calc_feerate(struct amount_sat excess_sats,
 
 	if (!amount_sat_sub(&fee, excess_sats, output_sats_required))
 		return 0;
+	/* If fee overflows feerate calculation (very large UTXO), cap at max.
+	 * This UTXO alone provides more than enough feerate. */
 	if (!amount_feerate(&feerate, fee, weight))
-		abort();
+		return UINT32_MAX;
 	return feerate;
 }
 
